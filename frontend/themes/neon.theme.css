@@ -1,0 +1,16 @@
+:root, [data-theme="neon"] {
+  --primary: #00ffcc; --primary-dim: rgba(0,255,204,.12); --primary-glow: rgba(0,255,204,.08);
+  --accent: #ff00ff; --green: #00ffaa; --red: #ff1155; --amber: #ffcc00;
+  --bg: #050508; --bg2: #0a0d14; --bg3: #0f1520;
+  --glass: rgba(5,5,8,.82); --card: rgba(10,13,20,.92);
+  --border: rgba(0,255,204,.12); --border2: rgba(0,255,204,.28); --borderHi: rgba(0,255,204,.6);
+  --t1: #eeffee; --t2: #70b090; --t3: #306050;
+  --glow: 0 0 26px rgba(0,255,204,.5); --glow-sm: 0 0 12px rgba(0,255,204,.3);
+  --sh: 0 8px 32px rgba(0,0,0,.6);
+}
+[data-theme="neon"] .btn-primary { animation: neonPulse 2.5s infinite; }
+@keyframes neonPulse {
+  0%,100% { box-shadow: 0 0 16px rgba(0,255,204,.4); }
+  50%      { box-shadow: 0 0 30px rgba(0,255,204,.7), 0 0 50px rgba(255,0,255,.3); }
+}
+[data-theme="neon"] .glass-card:hover { box-shadow: var(--glow); }

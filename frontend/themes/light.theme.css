@@ -1,0 +1,14 @@
+:root, [data-theme="light"] {
+  --primary: #0077cc; --primary-dim: rgba(0,119,204,.1); --primary-glow: rgba(0,119,204,.08);
+  --accent: #7c4dff; --green: #00a854; --red: #e53935; --amber: #f57c00;
+  --bg: #f0f4f8; --bg2: #e2eaf3; --bg3: #d2dce8;
+  --glass: rgba(240,244,248,.9); --card: rgba(255,255,255,.95);
+  --border: rgba(0,100,180,.12); --border2: rgba(0,100,180,.25); --borderHi: rgba(0,100,180,.5);
+  --t1: #0f2035; --t2: #4a6080; --t3: #8aa0b8;
+  --glow: 0 0 20px rgba(0,119,204,.2); --glow-sm: 0 0 10px rgba(0,119,204,.15);
+  --sh: 0 8px 32px rgba(0,0,0,.12);
+}
+[data-theme="light"] .cyber-bg { background: linear-gradient(135deg,#f0f4f8,#e2eaf3) !important; }
+[data-theme="light"] .grid-overlay { opacity: .25; }
+[data-theme="light"] .gradient-orb { opacity: .07; }
+[data-theme="light"] .glass-nav { background: rgba(240,244,248,.88) !important; }

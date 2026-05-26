@@ -1,0 +1,69 @@
+{
+  "version": "2.0.0",
+  "app_name": "GhostChat",
+  "aes": {
+    "key_size": 32,
+    "block_size": 16,
+    "iv_size": 16,
+    "salt_size": 32,
+    "pbkdf2_iterations": 100000,
+    "padding_scheme": "PKCS7",
+    "cipher_mode": "CBC"
+  },
+  "session": {
+    "duration_seconds": 3600,
+    "max_messages_per_key": 1000,
+    "auto_rotation": true,
+    "rotation_threshold": 0.8,
+    "inactivity_timeout": 1800
+  },
+  "emoji": {
+    "deterministic_by_default": false,
+    "max_display_length": 100,
+    "supported_charset": "base64",
+    "duplicate_handling": "position",
+    "random_seed_enabled": false
+  },
+  "logging": {
+    "log_dir": "logs",
+    "log_file": "ghostchat.log",
+    "max_log_size_bytes": 10485760,
+    "backup_count": 5,
+    "log_level": "INFO",
+    "log_format": "%(asctime)s | %(levelname)-8s | %(message)s",
+    "date_format": "%Y-%m-%d %H:%M:%S",
+    "console_logging": false,
+    "mask_sensitive_data": true,
+    "sensitive_patterns": [
+      "password=\\S+",
+      "key[\\s]*=[\\s]*\\S+"
+    ]
+  },
+  "ai": {
+    "enabled": false,
+    "model": "none",
+    "sentiment_analysis": false,
+    "anomaly_detection": false,
+    "pattern_analysis": false,
+    "confidence_threshold": 0.7,
+    "api_endpoint": null,
+    "api_key": null
+  },
+  "storage": {
+    "storage_dir": "messages",
+    "storage_format": "json",
+    "max_messages": 1000,
+    "auto_cleanup": false,
+    "cleanup_age_days": 30
+  },
+  "ui": {
+    "menu_width": 60,
+    "separator_char": "\u2500",
+    "enable_colors": true,
+    "enable_emoji": true,
+    "max_message_length": 10000,
+    "input_timeout": 0
+  },
+  "debug": false,
+  "production": true
+}

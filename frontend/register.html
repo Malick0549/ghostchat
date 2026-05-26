@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b12" />
+  <title>Create Account — GhostChat</title>
+  <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+  <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body data-theme="dark">
+
+<div class="cyber-bg" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+<div class="gradient-orb orb-1" aria-hidden="true"></div>
+<div class="gradient-orb orb-2" aria-hidden="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<div class="auth-page">
+  <div class="auth-wrapper">
+
+    <!-- BRAND PANEL -->
+    <aside class="auth-brand" aria-hidden="true">
+      <a href="index.html" class="brand-logo">
+        <i class="fas fa-ghost"></i>
+        <span>GhostChat</span>
+        <span class="badge badge-secure" style="margin-left:8px;">SECURE</span>
+      </a>
+      <div class="brand-headline">
+        <h2>Join the<br/><span>invisible network</span></h2>
+        <p>One account unlocks AES-256 encryption, emoji obfuscation, and a secure message history — all free.</p>
+        <div class="session-previews">
+          <div class="session-preview"><i class="fas fa-lock"></i><span>Write a message → AES-256 encrypts it</span></div>
+          <div class="session-preview"><i class="fas fa-face-smile"></i><span>Ciphertext → innocent emoji stream</span></div>
+          <div class="session-preview"><i class="fas fa-share-nodes"></i><span>Share anywhere — decode with your key</span></div>
+        </div>
+      </div>
+      <div class="brand-trust">
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>Password hashed with bcrypt on server</span></div>
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>Session tokens rotated on every login</span></div>
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>CSRF protection on all authenticated routes</span></div>
+      </div>
+      <div class="brand-footer-tag">// GHOSTCHAT PROTOCOL — ACCOUNT CREATION</div>
+    </aside>
+
+    <!-- FORM PANEL -->
+    <section class="auth-form-panel" aria-labelledby="reg-heading" style="overflow-y:auto;">
+      <div class="auth-form-wrap">
+        <h1 class="form-title" id="reg-heading">Create Account</h1>
+        <p class="form-subtitle">Already have one? <a href="login.html">Sign in instead</a></p>
+
+        <div class="alert alert-error"   id="alertErr" role="alert"><i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span></div>
+        <div class="alert alert-success" id="alertOk"  role="status"><i class="fas fa-check-circle"></i><span id="okMsg"></span></div>
+
+        <!-- Avatar upload -->
+        <div class="avatar-upload">
+          <div class="avatar-preview" id="avatarPreview">
+            <i class="fas fa-user" aria-hidden="true"></i>
+          </div>
+          <div>
+            <button type="button" class="btn btn-ghost btn-sm" id="avatarBtn">
+              <i class="fas fa-upload"></i> Upload photo
+            </button>
+            <p class="text-ghost" style="font-size:.7rem;margin-top:4px;">Optional · JPG/PNG/WEBP · max 2 MB</p>
+          </div>
+          <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp" style="display:none;" />
+        </div>
+
+        <form id="regForm" novalidate autocomplete="on">
+          <input type="hidden" id="csrfToken" />
+          <input type="hidden" id="avatarData" />
+
+          <div class="field-row">
+            <div class="form-group">
+              <label class="form-label" for="firstName">First name</label>
+              <div class="input-wrap">
+                <i class="fas fa-id-badge icon"></i>
+                <input type="text" id="firstName" class="form-input" placeholder="Ama" autocomplete="given-name" required />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="lastName">Last name</label>
+              <div class="input-wrap">
+                <i class="fas fa-id-badge icon"></i>
+                <input type="text" id="lastName" class="form-input" placeholder="Asante" autocomplete="family-name" required />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="regUsername">Username</label>
+            <div class="input-wrap">
+              <i class="fas fa-at icon"></i>
+              <input type="text" id="regUsername" class="form-input" placeholder="ghost_ama" autocomplete="username" required minlength="3" maxlength="30" pattern="[a-zA-Z0-9_]+" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="regEmail">Email address</label>
+            <div class="input-wrap">
+              <i class="fas fa-envelope icon"></i>
+              <input type="email" id="regEmail" class="form-input" placeholder="ama@example.com" autocomplete="email" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="regPw">Password</label>
+            <div class="input-wrap">
+              <i class="fas fa-lock icon"></i>
+              <input type="password" id="regPw" class="form-input" placeholder="Create a strong password" autocomplete="new-password" required minlength="8" />
+            </div>
+            <div class="pw-strength">
+              <div class="pw-bar"><div class="pw-fill" id="pwFill"></div></div>
+              <span class="pw-label" id="pwLabel" aria-live="polite"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="regPwConfirm">Confirm password</label>
+            <div class="input-wrap">
+              <i class="fas fa-lock-open icon"></i>
+              <input type="password" id="regPwConfirm" class="form-input" placeholder="Repeat your password" autocomplete="new-password" required />
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom:24px;">
+            <label class="form-check" for="terms">
+              <input type="checkbox" id="terms" required />
+              <span>I understand this is an academic project and agree to responsible use of encryption tools.</span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn-submit" id="btnRegister">
+            <i class="fas fa-user-plus"></i>
+            <span>CREATE ACCOUNT</span>
+          </button>
+        </form>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script>
+(function(){
+  // CSRF
+  fetch('/api/csrf-token',{credentials:'include'})
+    .then(r=>r.ok?r.json():null)
+    .then(d=>{ if(d?.csrf_token) document.getElementById('csrfToken').value=d.csrf_token; })
+    .catch(()=>{});
+
+  // Avatar
+  document.getElementById('avatarBtn').addEventListener('click', () => document.getElementById('avatarInput').click());
+  document.getElementById('avatarInput').addEventListener('change', function(){
+    const file = this.files[0];
+    if(!file) return;
+    if(file.size > 2*1024*1024){ UI.showToast('Image must be under 2 MB','error'); return; }
+    const r = new FileReader();
+    r.onload = e => {
+      document.getElementById('avatarPreview').innerHTML = `<img src="${e.target.result}" alt="Avatar preview" />`;
+      document.getElementById('avatarData').value = e.target.result;
+    };
+    r.readAsDataURL(file);
+  });
+
+  // Password strength
+  document.getElementById('regPw').addEventListener('input', function(){
+    const v=this.value, fill=document.getElementById('pwFill'), lbl=document.getElementById('pwLabel');
+    let s=0;
+    if(v.length>=8)s++; if(/[A-Z]/.test(v))s++; if(/[0-9]/.test(v))s++; if(/[^A-Za-z0-9]/.test(v))s++;
+    const levels=[,'weak','fair','good','strong'], labels=[,'Too weak','Fair','Good','Strong ✓'];
+    fill.className=`pw-fill ${levels[s]||''}`;
+    lbl.textContent = v.length ? `Strength: ${labels[s]||'Too weak'}` : '';
+  });
+
+  function showErr(m){ document.getElementById('errMsg').textContent=m; document.getElementById('alertErr').classList.add('show'); document.getElementById('alertOk').classList.remove('show'); }
+  function showOk(m) { document.getElementById('okMsg').textContent=m;  document.getElementById('alertOk').classList.add('show');  document.getElementById('alertErr').classList.remove('show'); }
+
+  document.getElementById('regForm').addEventListener('submit', async function(e){
+    e.preventDefault();
+    document.getElementById('alertErr').classList.remove('show');
+    document.getElementById('alertOk').classList.remove('show');
+
+    const fn=document.getElementById('firstName').value.trim();
+    const ln=document.getElementById('lastName').value.trim();
+    const un=document.getElementById('regUsername').value.trim();
+    const em=document.getElementById('regEmail').value.trim();
+    const pw=document.getElementById('regPw').value;
+    const pc=document.getElementById('regPwConfirm').value;
+
+    if(!fn||!ln){ showErr('Please enter your first and last name.'); return; }
+    if(!/^[a-zA-Z0-9_]{3,30}$/.test(un)){ showErr('Username: 3–30 chars, letters/numbers/underscores only.'); return; }
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){ showErr('Please enter a valid email address.'); return; }
+    if(pw.length<8){ showErr('Password must be at least 8 characters.'); return; }
+    if(pw!==pc){ showErr('Passwords do not match.'); return; }
+    if(!document.getElementById('terms').checked){ showErr('Please agree to the terms to continue.'); return; }
+
+    const btn=document.getElementById('btnRegister');
+    btn.classList.add('btn-loading'); btn.disabled=true;
+
+    try{
+      const payload={ first_name:fn, last_name:ln, username:un, email:em, password:pw };
+      const av=document.getElementById('avatarData').value;
+      if(av) payload.avatar_data=av;
+
+      const res  = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/register`,{
+        method:'POST', credentials:'include',
+        headers:{
+          'Content-Type':'application/json',
+          'X-Requested-With':'XMLHttpRequest',
+          'X-CSRF-Token': document.getElementById('csrfToken').value,
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if(res.ok && data.success){
+        if(data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+        showOk('Account created! Redirecting to dashboard…');
+        setTimeout(()=>window.location.href='dashboard.html', 1000);
+      } else {
+        showErr(data.error || data.message || 'Registration failed. Please try again.');
+      }
+    } catch(err){
+      showErr('Cannot reach server. Make sure Flask is running on port 5000.');
+    } finally {
+      btn.classList.remove('btn-loading'); btn.disabled=false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

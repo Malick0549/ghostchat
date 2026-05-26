@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b12" />
+  <title>Dashboard — GhostChat</title>
+  <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+  <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="css/mobile-responsive.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body data-theme="dark">
+
+<div class="cyber-bg" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+<div class="gradient-orb orb-1" aria-hidden="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<!-- ════════════════════════════════════════════════════════
+     PAGE TEMPLATES  (hidden; injected into #pageContainer)
+     ════════════════════════════════════════════════════════ -->
+
+<!-- ENCRYPT PAGE -->
+<template id="encrypt-page">
+  <div class="cyber-panel">
+    <h2><i class="fas fa-lock"></i> Encrypt Message</h2>
+    <p class="section-desc text-muted" style="margin-bottom:24px;">Write your message → AES-256-GCM encryption → emoji obfuscation. Copy and share anywhere.</p>
+    <div class="input-section">
+      <label for="plaintext">Your Message</label>
+      <textarea id="plaintext" rows="5" placeholder="Type the message you want to encrypt…"></textarea>
+    </div>
+    <div class="input-section">
+      <label for="encryptPassword">Session Password (shared secret)</label>
+      <input type="password" id="encryptPassword" placeholder="Password used to encrypt/decrypt" />
+    </div>
+    <div class="options-section">
+      <label class="checkbox">
+        <input type="checkbox" id="useDecoys" />
+        <span>Add decoy emoji camouflage (AI obfuscation)</span>
+      </label>
+    </div>
+    <button id="encryptBtn" class="btn btn-primary btn-lg">
+      <i class="fas fa-ghost"></i> Encrypt &amp; Obfuscate
+    </button>
+    <div id="encryptResult"></div>
+    <div id="exportSection" style="display:none;margin-top:24px;">
+      <p class="form-label" style="margin-bottom:10px;">Share encrypted message via:</p>
+      <div class="export-buttons">
+        <button id="exportWhatsApp" class="export-btn" style="color:#25d366;border-color:rgba(37,211,102,.3);"><i class="fab fa-whatsapp"></i> WhatsApp</button>
+        <button id="exportTelegram" class="export-btn" style="color:#0088cc;border-color:rgba(0,136,204,.3);"><i class="fab fa-telegram"></i> Telegram</button>
+        <button id="exportDiscord"  class="export-btn" style="color:#7289da;border-color:rgba(114,137,218,.3);"><i class="fab fa-discord"></i> Discord</button>
+        <button id="exportEmail"    class="export-btn" style="color:var(--primary);border-color:var(--border2);"><i class="fas fa-envelope"></i> Email</button>
+        <button id="exportSMS"      class="export-btn" style="color:var(--green);border-color:rgba(0,255,136,.3);"><i class="fas fa-sms"></i> SMS</button>
+        <button id="exportCopy"     class="export-btn" style="color:var(--t2);border-color:var(--border);"><i class="fas fa-copy"></i> Copy</button>
+        <button id="exportSave"     class="export-btn" style="color:var(--t2);border-color:var(--border);"><i class="fas fa-download"></i> Save</button>
+      </div>
+    </div>
+  </div>
+  <div class="activity-logs">
+    <div class="log-header"><span><i class="fas fa-terminal"></i> Activity Log</span><span id="logTime" style="font-family:var(--mono);font-size:.7rem;color:var(--t3);">Live</span></div>
+    <div class="log-list" id="encryptLogList"><div class="log-item">// Waiting for encryption operation…</div></div>
+  </div>
+</template>
+
+<!-- DECRYPT PAGE -->
+<template id="decrypt-page">
+  <div class="cyber-panel">
+    <h2><i class="fas fa-lock-open"></i> Decrypt Message</h2>
+    <p class="section-desc text-muted" style="margin-bottom:24px;">Paste the emoji-encoded message you received. Provide the session password to reveal it.</p>
+    <div class="input-section">
+      <label for="ciphertext">Emoji-Encoded Message</label>
+      <textarea id="ciphertext" rows="5" placeholder="Paste the full GhostChat package here: JSON or emoji-only package"></textarea>
+      <p class="text-muted" style="font-size:.85rem;margin-top:.5rem;">You can paste either the saved JSON package or the self-contained emoji-only package.</p>
+    </div>
+    <div class="input-section">
+      <label for="decryptPassword">Session Password</label>
+      <input type="password" id="decryptPassword" placeholder="Same password used to encrypt" />
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      <button id="decryptBtn" class="btn btn-primary btn-lg">
+        <i class="fas fa-ghost"></i> Decrypt Message
+      </button>
+      <button id="importBtn" class="btn btn-outline">
+        <i class="fas fa-file-import"></i> Import File
+      </button>
+      <input type="file" id="importFile" accept=".txt" style="display:none;" />
+    </div>
+    <div id="decryptResult"></div>
+  </div>
+</template>
+
+<!-- HISTORY PAGE -->
+<template id="history-page">
+  <div style="margin-bottom:20px;">
+    <h2 style="font-size:1.2rem;font-weight:700;letter-spacing:-.02em;margin-bottom:4px;"><i class="fas fa-history" style="color:var(--primary);margin-right:10px;"></i>Message History</h2>
+    <p class="text-muted text-sm">Your local encryption/decryption activity.</p>
+  </div>
+  <div class="history-controls">
+    <button id="exportHistoryBtn" class="btn btn-outline btn-sm"><i class="fas fa-download"></i> Export</button>
+    <button id="importHistoryBtn" class="btn btn-ghost btn-sm"><i class="fas fa-upload"></i> Import</button>
+    <button id="clearHistoryBtn"  class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Clear All</button>
+  </div>
+  <div class="history-list" id="historyList">
+    <div class="empty-state">
+      <i class="fas fa-inbox"></i>
+      <p>No messages yet.<br/>Encrypt your first message to see it here.</p>
+    </div>
+  </div>
+</template>
+
+<!-- INTEGRATIONS PAGE -->
+<template id="integrations-page">
+  <div style="margin-bottom:20px;">
+    <h2 style="font-size:1.2rem;font-weight:700;letter-spacing:-.02em;margin-bottom:4px;"><i class="fas fa-plug" style="color:var(--primary);margin-right:10px;"></i>Integrations</h2>
+    <p class="text-muted text-sm">Send your encrypted emoji strings directly to these platforms.</p>
+  </div>
+  <div class="integrations-grid">
+    <div class="integration-card" data-service="whatsapp"><i class="fab fa-whatsapp" style="color:#25d366;"></i><h3>WhatsApp</h3><p>Send encrypted messages to any contact via WhatsApp web.</p><button class="btn-integration">Connect</button></div>
+    <div class="integration-card" data-service="telegram"><i class="fab fa-telegram" style="color:#0088cc;"></i><h3>Telegram</h3><p>Send to any Telegram user or channel by username.</p><button class="btn-integration">Connect</button></div>
+    <div class="integration-card" data-service="discord"><i class="fab fa-discord" style="color:#7289da;"></i><h3>Discord</h3><p>Post to any Discord channel via webhook.</p><button class="btn-integration">Connect</button></div>
+    <div class="integration-card" data-service="email"><i class="fas fa-envelope" style="color:var(--primary);"></i><h3>Email</h3><p>Open your email client with the encrypted message pre-filled.</p><button class="btn-integration">Connect</button></div>
+    <div class="integration-card" data-service="google"><i class="fab fa-google" style="color:#ea4335;"></i><h3>Google Drive</h3><p>Save encrypted message files to your Google Drive.</p><button class="btn-integration">Coming Soon</button></div>
+    <div class="integration-card" data-service="clipboard"><i class="fas fa-clipboard" style="color:var(--amber);"></i><h3>Clipboard</h3><p>Copy encrypted text to clipboard for secure manual sharing.</p><button class="btn-integration">Use Now</button></div>
+  </div>
+</template>
+
+<!-- PROFILE PAGE -->
+<template id="profile-page">
+  <div style="max-width:600px;">
+    <h2 style="font-size:1.2rem;font-weight:700;letter-spacing:-.02em;margin-bottom:24px;"><i class="fas fa-user-circle" style="color:var(--primary);margin-right:10px;"></i>Profile</h2>
+    <div class="profile-avatar-section">
+      <div class="profile-avatar-img"><img id="profileAvatar" src="/assets/images/default-avatar.png" alt="Profile avatar" onerror="this.style.display='none';this.parentElement.innerHTML='<i class=\'fas fa-user\'></i>';" /></div>
+      <button id="changeAvatarBtn" class="btn btn-ghost btn-sm"><i class="fas fa-camera"></i> Change Photo</button>
+      <input type="file" id="avatarUpload" accept="image/*" style="display:none;" />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="profileUsername">Username</label>
+      <div class="input-wrap"><i class="fas fa-at icon"></i><input type="text" id="profileUsername" class="form-input" placeholder="ghost_user" /></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="profileEmail">Email Address</label>
+      <div class="input-wrap"><i class="fas fa-envelope icon"></i><input type="email" id="profileEmail" class="form-input" placeholder="user@ghostchat.local" /></div>
+    </div>
+    <div class="form-group">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);">
+        <div><div style="font-size:.875rem;">Two-Factor Authentication</div><div class="text-ghost text-sm">Extra layer of security on login</div></div>
+        <label class="toggle-sw" for="twoFactorToggle"><input type="checkbox" id="twoFactorToggle" /><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+    </div>
+    <button id="saveProfileBtn" class="btn btn-primary" style="margin-top:8px;"><i class="fas fa-save"></i> Save Changes</button>
+  </div>
+</template>
+
+<!-- SETTINGS PAGE -->
+<template id="settings-page">
+  <div style="max-width:600px;">
+    <h2 style="font-size:1.2rem;font-weight:700;letter-spacing:-.02em;margin-bottom:24px;"><i class="fas fa-cog" style="color:var(--primary);margin-right:10px;"></i>Settings</h2>
+    <div class="settings-group">
+      <h3>Encryption</h3>
+      <div class="setting-row">
+        <div><div class="setting-label">Algorithm</div><div class="setting-sub">Encryption method for all messages</div></div>
+        <select id="encryptionAlgorithm"><option value="AES-256-GCM" selected>AES-256-GCM (Recommended)</option></select>
+      </div>
+      <div class="setting-row">
+        <div><div class="setting-label">Auto-clear clipboard</div><div class="setting-sub">Wipe clipboard after copying encrypted data</div></div>
+        <select id="autoClear"><option value="never">Never</option><option value="30s">After 30 seconds</option><option value="1m">After 1 minute</option><option value="5m">After 5 minutes</option></select>
+      </div>
+    </div>
+    <div class="settings-group">
+      <h3>Notifications</h3>
+      <div class="setting-row">
+        <div><div class="setting-label">Encrypt notifications</div><div class="setting-sub">Notify when a message is encrypted</div></div>
+        <label class="toggle-sw"><input type="checkbox" id="notifyEncrypt" checked /><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+      <div class="setting-row">
+        <div><div class="setting-label">Decrypt notifications</div><div class="setting-sub">Notify when a message is decrypted</div></div>
+        <label class="toggle-sw"><input type="checkbox" id="notifyDecrypt" checked /><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+      <div class="setting-row">
+        <div><div class="setting-label">Sound effects</div><div class="setting-sub">Play audio feedback on operations</div></div>
+        <label class="toggle-sw"><input type="checkbox" id="soundEffects" /><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
+      </div>
+    </div>
+    <div class="settings-group">
+      <h3>Appearance</h3>
+      <div class="theme-switcher">
+        <div class="theme-switcher-header"><i class="fas fa-palette"></i><span>Theme</span></div>
+        <div class="theme-options">
+          <button class="theme-option active" data-theme="dark"><i class="fas fa-moon"></i><span>Dark</span></button>
+          <button class="theme-option" data-theme="light"><i class="fas fa-sun"></i><span>Light</span></button>
+          
+        </div>
+      </div>
+    </div>
+    <button id="saveSettingsBtn" class="btn btn-primary"><i class="fas fa-save"></i> Save Settings</button>
+  </div>
+</template>
+
+<!-- ════════════════════════════════════════════════════════
+     DASHBOARD SHELL
+     ════════════════════════════════════════════════════════ -->
+<div class="dashboard" role="application" aria-label="GhostChat dashboard">
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar" id="sidebar" aria-label="Dashboard navigation">
+    <div class="sidebar-header">
+      <a href="index.html" class="sidebar-logo" aria-label="GhostChat home">
+        <i class="fas fa-ghost"></i>
+        <span class="sidebar-logo-text">GhostChat</span>
+      </a>
+      <div class="session-status" role="status">
+        <div class="status-dot" aria-hidden="true"></div>
+        <span id="sessionText">Secure Session</span>
+      </div>
+    </div>
+
+    <div class="sidebar-nav" role="list">
+      <button class="nav-item active" data-page="encrypt" role="listitem"><i class="fas fa-lock"></i><span>Encrypt</span></button>
+      <button class="nav-item"        data-page="decrypt" role="listitem"><i class="fas fa-lock-open"></i><span>Decrypt</span></button>
+      <button class="nav-item"        data-page="history" role="listitem">
+        <i class="fas fa-history"></i><span>History</span>
+        <span class="nav-badge" id="notificationCount" style="display:none;">0</span>
+      </button>
+
+      <div class="sidebar-section-label">Tools</div>
+      <button class="nav-item" data-page="integrations" role="listitem"><i class="fas fa-plug"></i><span>Integrations</span></button>
+
+      <div class="sidebar-section-label">Account</div>
+      <button class="nav-item" data-page="profile"  role="listitem"><i class="fas fa-user-circle"></i><span>Profile</span></button>
+      <button class="nav-item" data-page="settings" role="listitem"><i class="fas fa-cog"></i><span>Settings</span></button>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="encryption-info"><i class="fas fa-shield-halved"></i><span>AES-256-GCM Active</span></div>
+      <button class="logout-btn" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content" role="main">
+
+    <!-- TOP NAVBAR -->
+    <header class="top-navbar" role="banner">
+      <div class="hamburger-menu" id="hamburger" aria-label="Toggle sidebar" role="button" tabindex="0">
+        <span></span><span></span><span></span>
+      </div>
+
+      <div class="search-bar" role="search">
+        <i class="fas fa-search" aria-hidden="true"></i>
+        <input type="search" id="globalSearch" placeholder="Search history…" aria-label="Search message history" />
+      </div>
+
+      <div class="user-menu">
+        <button class="theme-toggle-btn" id="themeToggle" aria-label="Switch theme">
+          <i class="fas fa-moon" aria-hidden="true"></i>
+        </button>
+        <div class="notification-btn" role="button" tabindex="0" aria-label="Notifications">
+          <i class="fas fa-bell" aria-hidden="true"></i>
+          <span class="notif-badge" id="notifBadge" style="display:none;">0</span>
+        </div>
+        <div class="user-avatar-btn" id="avatarToggle" role="button" tabindex="0" aria-label="User menu" aria-haspopup="true" aria-expanded="false">
+          <span id="avatarInitials">GH</span>
+        </div>
+      </div>
+
+      <!-- Profile dropdown -->
+      <div class="profile-dropdown" id="profileDropdown" role="menu">
+        <div class="dropdown-header">
+          <div class="dropdown-name"  id="ddName">Ghost User</div>
+          <div class="dropdown-email" id="ddEmail">user@ghostchat.local</div>
+        </div>
+        <button class="dropdown-item" role="menuitem" data-page-nav="profile"><i class="fas fa-user-circle"></i> Profile</button>
+        <button class="dropdown-item" role="menuitem" data-page-nav="settings"><i class="fas fa-cog"></i> Settings</button>
+        <div style="height:1px;background:var(--border);margin:6px 0;"></div>
+        <button class="dropdown-item danger" role="menuitem" id="ddLogout"><i class="fas fa-sign-out-alt"></i> Sign Out</button>
+      </div>
+    </header>
+
+    <!-- PAGE CONTENT -->
+    <div class="page-container" id="pageContainer" aria-live="polite">
+      <div class="loader-container"><div class="loader"></div></div>
+    </div>
+
+  </main>
+</div>
+
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script src="js/encrypt.js"></script>
+<script src="js/decrypt.js"></script>
+<script src="js/history.js"></script>
+<script src="js/integrations.js"></script>
+<script src="js/profile.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/dashboard.js"></script>
+<script>
+/* ── Dashboard bootstrap ─────────────────────────────────────── */
+(function(){
+  const API = window.GhostChatAPI;
+
+  /* ── Load user profile into navbar ──────────────────────────── */
+  async function loadUserUI(){
+    try{
+      const d = await API.getProfile();
+      const u = d.user || {};
+      const fn = u.firstName || u.username || 'Ghost';
+      const initials = ((u.firstName?.[0]||'')+(u.lastName?.[0]||u.username?.[1]||'')).toUpperCase()||'GH';
+      document.getElementById('avatarInitials').textContent = initials;
+      document.getElementById('ddName').textContent  = [u.firstName,u.lastName].filter(Boolean).join(' ')||u.username||'Ghost User';
+      document.getElementById('ddEmail').textContent = u.email||'—';
+      if(u.avatar){
+        const el=document.getElementById('avatarInitials');
+        el.outerHTML=`<img src="${u.avatar}" alt="${fn}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.style.display='none';" />`;
+      }
+    }catch(_){}
+  }
+
+  /* ── Page routing ────────────────────────────────────────────── */
+  function navigate(page){
+    const tpl = document.getElementById(`${page}-page`);
+    const container = document.getElementById('pageContainer');
+    if(!tpl){ container.innerHTML='<div class="empty-state"><i class="fas fa-ghost"></i><p>Page not found.</p></div>'; return; }
+    container.innerHTML = tpl.innerHTML;
+
+    // Update nav items
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach(b=>{
+      const active = b.dataset.page===page;
+      b.classList.toggle('active',active);
+      if(active) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
+    });
+
+    // Init module
+    const map={
+      encrypt:    ()=>window.EncryptionModule?.init(),
+      decrypt:    ()=>window.DecryptionModule?.init(),
+      history:    ()=>window.HistoryModule?.load(),
+      integrations:()=>window.IntegrationsModule?.init(),
+      profile:    ()=>window.ProfileModule?.init(),
+      settings:   ()=>window.SettingsModule?.init(),
+    };
+    map[page]?.();
+
+    // Re-wire theme option chips (injected by settings template)
+    document.querySelectorAll('.theme-option[data-theme]').forEach(btn=>{
+      btn.addEventListener('click',()=>window.themeManager?.set(btn.dataset.theme));
+    });
+
+    // Re-sync active theme chip
+    if(window.themeManager){
+      const cur=window.themeManager.get();
+      document.querySelectorAll('.theme-option').forEach(b=>b.classList.toggle('active',b.dataset.theme===cur));
+    }
+
+    closeSidebar();
+  }
+
+  /* ── Sidebar events ──────────────────────────────────────────── */
+  document.querySelectorAll('.sidebar-nav .nav-item[data-page]').forEach(btn=>{
+    btn.addEventListener('click',()=>navigate(btn.dataset.page));
+  });
+  document.querySelectorAll('[data-page-nav]').forEach(btn=>{
+    btn.addEventListener('click',()=>navigate(btn.dataset.pageNav));
+  });
+
+  /* ── Mobile sidebar ──────────────────────────────────────────── */
+  const ham     = document.getElementById('hamburger');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+
+  function openSidebar(){
+    sidebar.classList.add('mobile-open');
+    overlay.classList.add('active');
+    ham.classList.add('active');
+    ham.setAttribute('aria-expanded','true');
+  }
+  function closeSidebar(){
+    sidebar.classList.remove('mobile-open');
+    overlay.classList.remove('active');
+    ham.classList.remove('active');
+    ham.setAttribute('aria-expanded','false');
+  }
+  ham.addEventListener('click',()=>sidebar.classList.contains('mobile-open')?closeSidebar():openSidebar());
+  ham.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); ham.click(); } });
+  overlay.addEventListener('click',closeSidebar);
+
+  /* ── Profile dropdown ────────────────────────────────────────── */
+  const avatarBtn  = document.getElementById('avatarToggle');
+  const dropdown   = document.getElementById('profileDropdown');
+  avatarBtn.addEventListener('click',e=>{ e.stopPropagation(); const open=dropdown.classList.toggle('open'); avatarBtn.setAttribute('aria-expanded',open); });
+  avatarBtn.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); avatarBtn.click(); } });
+  document.addEventListener('click',()=>{ dropdown.classList.remove('open'); avatarBtn.setAttribute('aria-expanded','false'); });
+
+  /* ── Logout ──────────────────────────────────────────────────── */
+  async function doLogout(){
+    await API.logout();
+    localStorage.removeItem('ghostchat_user');
+    window.location.href='login.html';
+  }
+  document.getElementById('logoutBtn')?.addEventListener('click',doLogout);
+  document.getElementById('ddLogout')?.addEventListener('click',doLogout);
+
+  /* ── Global search ───────────────────────────────────────────── */
+  document.getElementById('globalSearch')?.addEventListener('input',function(){
+    if(this.value.trim().length>1){ navigate('history'); }
+  });
+
+  /* ── Keyboard shortcuts ──────────────────────────────────────── */
+  document.addEventListener('keydown',e=>{
+    if(e.target.tagName==='INPUT' && (e.key !== 'Enter')) return;
+    if(e.target.tagName==='TEXTAREA' && !(e.ctrlKey || e.metaKey)) return;
+    if(e.altKey){
+      if(e.key==='e'){ e.preventDefault(); navigate('encrypt'); }
+      if(e.key==='d'){ e.preventDefault(); navigate('decrypt'); }
+      if(e.key==='h'){ e.preventDefault(); navigate('history'); }
+      if(e.key==='?'){ e.preventDefault(); alert('Keyboard Shortcuts:\nAlt+E: Encrypt\nAlt+D: Decrypt\nAlt+H: History\nCtrl+Enter or Cmd+Enter: Submit form\nEscape: Close sidebar'); }
+    }
+    if(e.key==='Escape') closeSidebar();
+  });
+
+  /* ── Init ─────────────────────────────────────────────────────── */
+  loadUserUI();
+  navigate('encrypt');
+  API.ensureSession().catch(()=>{});
+})();
+
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('Service Worker registered:', reg.scope))
+      .catch(err => console.log('Service Worker failed:', err));
+  });
+}
+
+// Detect if running as PWA (installed)
+if (window.matchMedia('(display-mode: standalone)').matches) {
+  console.log('Running as installed PWA app');
+  document.body.classList.add('pwa-mode');
+}
+</script>
+
+</body>
+</html>

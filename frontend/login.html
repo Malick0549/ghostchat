@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b12" />
+  <title>Sign In — GhostChat</title>
+  <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+  <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body data-theme="dark">
+
+<div class="cyber-bg" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+<div class="gradient-orb orb-1" aria-hidden="true"></div>
+<div class="gradient-orb orb-2" aria-hidden="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<div class="auth-page">
+  <div class="auth-wrapper">
+
+    <!-- BRAND PANEL -->
+    <aside class="auth-brand" aria-hidden="true">
+      <a href="index.html" class="brand-logo">
+        <i class="fas fa-ghost"></i>
+        <span>GhostChat</span>
+        <span class="badge badge-secure" style="margin-left:8px;">SECURE</span>
+      </a>
+      <div class="brand-headline">
+        <h2>Welcome <span>back</span>,<br/>Ghost.</h2>
+        <p>Your encrypted workspace is waiting. Sign in to access your secure sessions, message history, and crypto dashboard.</p>
+        <div class="session-previews">
+          <div class="session-preview"><i class="fas fa-shield-halved"></i><span>AES-256-GCM session encryption</span></div>
+          <div class="session-preview"><i class="fas fa-rotate"></i><span>Auto-rotating HKDF session keys</span></div>
+          <div class="session-preview"><i class="fas fa-eye-slash"></i><span>Zero-knowledge server architecture</span></div>
+        </div>
+      </div>
+      <div class="brand-trust">
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>Password hashed with bcrypt — never stored plaintext</span></div>
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>Session tokens rotated on every login</span></div>
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>CSRF protection on all authenticated routes</span></div>
+      </div>
+      <div class="brand-footer-tag">// GHOSTCHAT PROTOCOL — SECURE LOGIN</div>
+    </aside>
+
+    <!-- FORM PANEL -->
+    <section class="auth-form-panel" aria-labelledby="login-heading">
+      <div class="auth-form-wrap">
+        <h1 class="form-title" id="login-heading">Sign In</h1>
+        <p class="form-subtitle">No account? <a href="register.html">Create one free</a></p>
+
+        <div class="alert alert-error"   id="alertErr" role="alert"><i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span></div>
+        <div class="alert alert-success" id="alertOk"  role="status"><i class="fas fa-check-circle"></i><span id="okMsg"></span></div>
+
+        <form id="loginForm" novalidate autocomplete="on">
+          <input type="hidden" id="csrfToken" />
+
+          <div class="form-group">
+            <label class="form-label" for="loginId">Username or Email</label>
+            <div class="input-wrap">
+              <i class="fas fa-user icon"></i>
+              <input type="text" id="loginId" name="username" class="form-input"
+                placeholder="ghost_user or email@domain.com"
+                autocomplete="username" required aria-required="true" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <label class="form-label" for="loginPw" style="margin:0;">Password</label>
+              <a href="forgot-password.html" class="forgot-link">Forgot password?</a>
+            </div>
+            <div class="input-wrap">
+              <i class="fas fa-lock icon"></i>
+              <input type="password" id="loginPw" name="password" class="form-input"
+                placeholder="Your password" autocomplete="current-password"
+                required aria-required="true" />
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom:24px;">
+            <label class="form-check" for="rememberMe">
+              <input type="checkbox" id="rememberMe" name="remember_me" />
+              <span>Keep me signed in for 30 days</span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn-submit" id="btnLogin">
+            <i class="fas fa-right-to-bracket"></i>
+            <span>SIGN IN SECURELY</span>
+          </button>
+        </form>
+
+        <p style="text-align:center;margin-top:20px;font-size:.8125rem;color:var(--t3);">
+          <a href="index.html" style="color:var(--t2);">
+            <i class="fas fa-arrow-left" style="font-size:.7rem;"></i> Back to home
+          </a>
+        </p>
+
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script>
+(function () {
+  // Fetch CSRF token from server
+  fetch('/api/csrf-token', { credentials: 'include' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
+    .catch(() => {});
+
+  function showErr(m) {
+    document.getElementById('errMsg').textContent = m;
+    document.getElementById('alertErr').classList.add('show');
+    document.getElementById('alertOk').classList.remove('show');
+  }
+  function showOk(m) {
+    document.getElementById('okMsg').textContent = m;
+    document.getElementById('alertOk').classList.add('show');
+    document.getElementById('alertErr').classList.remove('show');
+  }
+  function hideAlerts() {
+    document.getElementById('alertErr').classList.remove('show');
+    document.getElementById('alertOk').classList.remove('show');
+  }
+
+  ['loginId', 'loginPw'].forEach(id =>
+    document.getElementById(id)?.addEventListener('input', hideAlerts)
+  );
+
+  document.getElementById('loginForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    hideAlerts();
+
+    const id = document.getElementById('loginId').value.trim();
+    const pw = document.getElementById('loginPw').value;
+    if (!id) { showErr('Please enter your username or email.'); return; }
+    if (!pw) { showErr('Please enter your password.'); return; }
+
+    const btn = document.getElementById('btnLogin');
+    btn.classList.add('btn-loading');
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/login`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRF-Token': document.getElementById('csrfToken').value,
+        },
+        body: JSON.stringify({
+          username:    id,
+          password:    pw,
+          remember_me: document.getElementById('rememberMe').checked,
+        }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        if (data.user)  localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+        if (data.token) sessionStorage.setItem('gc_token', data.token);
+        showOk('Login successful! Redirecting…');
+        setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
+      } else {
+        showErr(data.error || data.message || 'Invalid credentials. Please try again.');
+      }
+    } catch (_) {
+      showErr('Cannot reach the server. Please check your connection and try again.');
+    } finally {
+      btn.classList.remove('btn-loading');
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
