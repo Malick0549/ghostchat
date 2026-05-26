@@ -9,6 +9,13 @@ Run from inside the backend/ folder:
 Then open:
     http://127.0.0.1:5000
 """
+# At the very end of the file, after all other code
+app = create_app()
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    
+
 # Add at the top of flask_app.py
 import os
 import sys
