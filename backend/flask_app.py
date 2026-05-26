@@ -9,6 +9,10 @@ Run from inside the backend/ folder:
 Then open:
     http://127.0.0.1:5000
 """
+# Add at the top of flask_app.py
+import os
+import sys
+from pathlib import Path
 
 import os
 import logging
@@ -26,6 +30,10 @@ from api import crypto_bp, session_bp
 from api.errors import register_error_handlers
 from api.middleware import add_security_headers
 from obfuscation.emoji_mapper import EmojiMapper
+
+# Add backend to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 # ── Database models ───────────────────────────────────────────────────────────
 try:
