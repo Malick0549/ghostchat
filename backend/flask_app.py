@@ -10,17 +10,14 @@ Then open:
     http://127.0.0.1:5000
 """
 
-# Add at the top of flask_app.py
 import os
 import sys
-from pathlib import Path
-
-import os
 import logging
 import secrets
 import json
 import base64
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from flask import Flask, jsonify, send_from_directory, request, session
 from flask_cors import CORS
@@ -75,7 +72,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
     # Server-side sessions
-    app.config['SESSION_TYPE']      = 'filesystem'
+    app.config['SESSION_TYPE'] = 'filesystem'
     app.config['SESSION_PERMANENT'] = False
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
 
@@ -144,7 +141,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         if request.path in ('/api/csrf-token', '/health'):
             return None, None
 
-        client_token  = (
+        client_token = (
             request.headers.get('X-CSRF-Token')
             or (request.get_json(silent=True) or {}).get('csrf_token')
         )
@@ -178,11 +175,11 @@ def create_app(test_config: dict | None = None) -> Flask:
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
 
-            username   = (data.get('username') or '').strip()
-            email      = (data.get('email')    or '').strip()
-            password   = data.get('password')  or ''
+            username = (data.get('username') or '').strip()
+            email = (data.get('email') or '').strip()
+            password = data.get('password') or ''
             first_name = (data.get('first_name') or '').strip()
-            last_name  = (data.get('last_name')  or '').strip()
+            last_name = (data.get('last_name') or '').strip()
 
             if not username or not email or not password:
                 return jsonify({'error': 'Username, email and password are required'}), 400
@@ -202,7 +199,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             db.session.add(user)
             db.session.commit()
 
-            session['user_id']       = user.id
+            session['user_id'] = user.id
             session['authenticated'] = True
             # Rotate CSRF token on login/register
             session['csrf_token'] = secrets.token_hex(32)
@@ -211,7 +208,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify({
                 'success': True,
                 'message': 'Registration successful',
-                'user':    user.to_dict(),
+                'user': user.to_dict(),
             }), 201
 
         except Exception as exc:
@@ -260,15 +257,15 @@ def create_app(test_config: dict | None = None) -> Flask:
             user.last_login = datetime.utcnow()
             db.session.commit()
 
-            session['user_id']       = user.id
+            session['user_id'] = user.id
             session['authenticated'] = True
-            session['csrf_token']    = secrets.token_hex(32)  # rotate on login
+            session['csrf_token'] = secrets.token_hex(32)  # rotate on login
 
             log.info(f"User logged in: {user.username}")
             return jsonify({
                 'success': True,
                 'message': 'Login successful',
-                'user':    user.to_dict(),
+                'user': user.to_dict(),
             }), 200
 
         except Exception as exc:
@@ -302,60 +299,39 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
     def forgot_password():
-       if request.method == 'OPTIONS':
+        if request.method == 'OPTIONS':
             return '', 200
-       if not DB_AVAILABLE:
+        if not DB_AVAILABLE:
             return jsonify({'error': 'Database not available'}), 500
 
-       try:
+        try:
             data = request.get_json() or {}
             email = (data.get('email') or '').strip()
 
-       if not email:
-            return jsonify({'error': 'Email is required'}), 400
+            if not email:
+                return jsonify({'error': 'Email is required'}), 400
 
+            # Always respond identically regardless of whether email exists
+            # (prevents user enumeration)
             user = User.query.filter_by(email=email).first()
-        
-       if user:
-            token = user.generate_reset_token()
-            user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
-            db.session.commit()
-            log.info(f"Password reset requested for: {email}")
-            
-            # Build reset link
-            reset_link = f"https://ghostchat.onrender.com/reset-password.html?token={token}"
-            # Or for local development:
-            # reset_link = f"http://localhost:5000/reset-password.html?token={token}"
-            
-            # For development, log the link (so you can see it in Render logs)
-            log.info(f"RESET LINK: {reset_link}")
-            
-            # For production, uncomment when you have SMTP configured:
-            """
-            from flask_mail import Mail, Message
-            mail = Mail(app)
-            msg = Message('GhostChat Password Reset',
-                          sender='noreply@ghostchat.com',
-                          recipients=[email])
-            msg.body = f'Click this link to reset your password: {reset_link}\n\nThis link expires in 15 minutes.'
-            mail.send(msg)
-            """
-            
-            # For now, return the link in response (for testing)
+            if user:
+                token = user.generate_reset_token()
+                user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
+                db.session.commit()
+                log.info(f"Password reset requested for: {email}")
+
+                # Build reset link
+                reset_link = f"https://ghostchat.onrender.com/reset-password.html?token={token}"
+                log.info(f"RESET LINK: {reset_link}")
+
             return jsonify({
                 'success': True,
                 'message': 'If that email is registered, a reset link has been sent.',
-                'reset_link': reset_link  # Remove this in production!
             }), 200
 
-        return jsonify({
-            'success': True,
-            'message': 'If that email is registered, a reset link has been sent.',
-        }), 200
-
-    except Exception as exc:
-           log.error(f"Forgot password error: {exc}")
-           return jsonify({'error': 'Request failed. Please try again.'}), 500
+        except Exception as exc:
+            log.error(f"Forgot password error: {exc}")
+            return jsonify({'error': 'Request failed. Please try again.'}), 500
 
     @app.route('/api/auth/reset-password', methods=['POST', 'OPTIONS'])
     def reset_password():
@@ -365,8 +341,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify({'error': 'Database not available'}), 500
 
         try:
-            data         = request.get_json() or {}
-            token        = (data.get('token')        or '').strip()
+            data = request.get_json() or {}
+            token = (data.get('token') or '').strip()
             new_password = (data.get('new_password') or '')
 
             if not token or not new_password:
@@ -380,7 +356,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return jsonify({'error': 'Invalid or expired reset link'}), 400
 
             user.set_password(new_password)
-            user.reset_token         = None
+            user.reset_token = None
             user.reset_token_expires = None
             db.session.commit()
 
@@ -428,7 +404,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         data = request.get_json() or {}
 
         new_username = (data.get('username') or '').strip()
-        new_email    = (data.get('email')    or '').strip()
+        new_email = (data.get('email') or '').strip()
 
         if new_username and new_username != user.username:
             if User.query.filter_by(username=new_username).first():
@@ -454,7 +430,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         if err:
             return err
 
-        data         = request.get_json() or {}
+        data = request.get_json() or {}
         old_password = data.get('old_password') or ''
         new_password = data.get('new_password') or ''
 
@@ -518,7 +494,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         return jsonify({
             'success': True,
-            'avatar':  user.avatar,
+            'avatar': user.avatar,
             'message': 'Avatar updated successfully',
         }), 200
 
@@ -547,8 +523,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             if not data:
                 return jsonify({'success': False, 'error': 'No data provided'}), 400
 
-            message    = (data.get('message')  or '').strip()
-            password   = (data.get('password') or '').strip()
+            message = (data.get('message') or '').strip()
+            password = (data.get('password') or '').strip()
             use_decoys = bool(data.get('use_decoys', False))
 
             if not message:
@@ -557,28 +533,28 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return jsonify({'success': False, 'error': 'Password is required'}), 400
 
             from ghostchat import GhostChat
-            ghost        = GhostChat(password)
-            result       = ghost.send(message, deterministic=False)
-            package      = json.dumps({
-                'emojis':    result['emoji_message'],
-                'iv':        result['metadata']['iv'],
+            ghost = GhostChat(password)
+            result = ghost.send(message, deterministic=False)
+            package = json.dumps({
+                'emojis': result['emoji_message'],
+                'iv': result['metadata']['iv'],
                 'signature': result['metadata']['signature'],
-                'key_id':    result['metadata']['key_id'],
-                'salt':      result['metadata']['salt'],
+                'key_id': result['metadata']['key_id'],
+                'salt': result['metadata']['salt'],
             }, ensure_ascii=False)
             emoji_package = EmojiMapper.text_to_emojis(
                 base64.b64encode(package.encode('utf-8')).decode('ascii')
             )
 
             return jsonify({
-                'success':       True,
+                'success': True,
                 'emoji_message': result['emoji_message'],
-                'package':       package,
+                'package': package,
                 'emoji_package': emoji_package,
-                'metadata':      result['metadata'],
-                'emoji_count':   len(result['emoji_message']),
-                'algorithm':     'AES-256-CBC',
-                'key_derivation':'PBKDF2-HMAC-SHA256',
+                'metadata': result['metadata'],
+                'emoji_count': len(result['emoji_message']),
+                'algorithm': 'AES-256-CBC',
+                'key_derivation': 'PBKDF2-HMAC-SHA256',
             }), 200
 
         except ValueError as exc:
@@ -601,7 +577,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return jsonify({'success': False, 'error': 'No data provided'}), 400
 
             emoji_message = (data.get('emoji_message') or '').strip()
-            password      = (data.get('password')      or '').strip()
+            password = (data.get('password') or '').strip()
 
             if not emoji_message:
                 return jsonify({'success': False, 'error': 'Emoji message is required'}), 400
@@ -609,16 +585,16 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return jsonify({'success': False, 'error': 'Password is required'}), 400
 
             from ghostchat import GhostChat
-            ghost     = GhostChat(password)
+            ghost = GhostChat(password)
             plaintext = ghost.receive_message(emoji_message)
 
             if plaintext.startswith('Decryption failed'):
                 return jsonify({'success': False, 'error': plaintext}), 400
 
             return jsonify({
-                'success':           True,
+                'success': True,
                 'decrypted_message': plaintext,
-                'algorithm':         'AES-256-CBC',
+                'algorithm': 'AES-256-CBC',
             }), 200
 
         except ValueError as exc:
@@ -642,8 +618,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         if err:
             return err
 
-        limit  = request.args.get('limit',  50, type=int)
-        offset = request.args.get('offset',  0, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
 
         messages = (
             Message.query.filter_by(user_id=user.id)
@@ -653,9 +629,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         total = Message.query.filter_by(user_id=user.id).count()
 
         return jsonify({
-            'success':  True,
+            'success': True,
             'messages': [m.to_dict() for m in messages],
-            'total':    total,
+            'total': total,
         }), 200
 
     @app.route('/api/messages', methods=['POST', 'OPTIONS'])
@@ -671,10 +647,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         data = request.get_json() or {}
         message = Message(
-            user_id           = user.id,
-            encrypted_content = data.get('encrypted_content', ''),
-            emoji_content     = data.get('emoji_content', ''),
-            message_type      = data.get('message_type', 'encryption'),
+            user_id=user.id,
+            encrypted_content=data.get('encrypted_content', ''),
+            emoji_content=data.get('emoji_content', ''),
+            message_type=data.get('message_type', 'encryption'),
         )
         db.session.add(message)
         db.session.commit()
@@ -719,8 +695,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         return jsonify({
             'success': True,
             'integrations': [{
-                'service':     i.service,
-                'is_active':   i.is_active,
+                'service': i.service,
+                'is_active': i.is_active,
                 'has_webhook': bool(i.webhook_url),
             } for i in items],
         }), 200
@@ -761,10 +737,10 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.route('/health', methods=['GET'])
     def health():
         return jsonify({
-            'status':   'ok',
-            'service':  'GhostChat API',
+            'status': 'ok',
+            'service': 'GhostChat API',
             'database': 'connected' if DB_AVAILABLE else 'disabled',
-            'version':  '2.0.0',
+            'version': '2.0.0',
         }), 200
 
     @app.route('/', methods=['GET'])
@@ -788,6 +764,9 @@ def create_app(test_config: dict | None = None) -> Flask:
     return app
 
 
+# Create the app instance for gunicorn
+app = create_app()
+
 if __name__ == '__main__':
     print("=" * 60)
     print("GhostChat Server")
@@ -795,16 +774,8 @@ if __name__ == '__main__':
     print("Install deps: pip install flask flask-cors flask-session "
           "flask-sqlalchemy flask-bcrypt cryptography")
     print("=" * 60)
-
-    application = create_app()
-    application.run(
-        host  = '0.0.0.0',
-        port  = int(os.environ.get('PORT', 5000)),
-        debug = os.environ.get('FLASK_DEBUG', '0') == '1',
+    app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
+        debug=os.environ.get('FLASK_DEBUG', '0') == '1',
     )
-# At the very end of the file, after all other code
-app = create_app()
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-    
