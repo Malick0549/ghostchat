@@ -743,21 +743,20 @@ def create_app(test_config: dict | None = None) -> Flask:
             return send_from_directory(frontend_dir, filename)
         return jsonify({'error': 'Not Found'}), 404
 
+    
     log.info("GhostChat ready → http://127.0.0.1:5000")
     return app
 
+
+# Create the app instance for gunicorn (module-level, NOT inside if block)
+app = create_app()
 
 if __name__ == '__main__':
     print("=" * 60)
     print("GhostChat Server")
     print("=" * 60)
-    print("Install deps: pip install flask flask-cors flask-session "
-          "flask-sqlalchemy flask-bcrypt cryptography")
-    print("=" * 60)
-
-    application = create_app()
-    application.run(
-        host  = '0.0.0.0',
-        port  = int(os.environ.get('PORT', 5000)),
-        debug = os.environ.get('FLASK_DEBUG', '0') == '1',
+    app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
+        debug=os.environ.get('FLASK_DEBUG', '0') == '1',
     )
