@@ -202,6 +202,12 @@ def create_app(test_config=None):
 
         return None, None
 
+    @app.before_request
+    def enforce_csrf():
+        err, code = _check_csrf()
+        if err:
+            return err, code
+
     # ═══════════════════════════════════════════════════════════════════════════
     # AUTH HELPERS
     # ═══════════════════════════════════════════════════════════════════════════

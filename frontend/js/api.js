@@ -20,11 +20,8 @@
 
 class GhostChatAPI {
     constructor() {
-        // Auto-detect base URL — works locally and on Render
-        this.baseURL = (
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1'
-        ) ? 'http://127.0.0.1:5000' : window.location.origin;
+        // Use the current page origin so cookies and CSRF tokens stay same-origin.
+        this.baseURL = window.location.origin;
 
         this._csrfToken = null;
         this._sessionId = sessionStorage.getItem('gc_session_id') || null;
@@ -54,7 +51,14 @@ class GhostChatAPI {
         const url = `${this.baseURL}${path}`;
 
         // Use in-memory token first, fall back to reading from cookie
-        const csrf = this._csrfToken || this._getCsrfFromCookie();
+        let csrf = this._csrfToken || this._getCsrfFromCookie();
+
+        // If a mutating request is being made and we still do not have a token,
+        // fetch one before sending the request.
+        if (options.method && options.method !== 'GET' && !csrf) {
+            await this.fetchCsrfToken();
+            csrf = this._csrfToken || this._getCsrfFromCookie();
+        }
 
         const headers = {
             'X-Requested-With': 'XMLHttpRequest',
@@ -107,6 +111,10 @@ class GhostChatAPI {
     _post(path, body){ return this._request(path, { method: 'POST',   body: body instanceof FormData ? body : JSON.stringify(body) }); }
     _put(path, body) { return this._request(path, { method: 'PUT',    body: JSON.stringify(body) }); }
     _del(path)       { return this._request(path, { method: 'DELETE' }); }
+
+    getCsrfToken() {
+        return this._csrfToken || this._getCsrfFromCookie();
+    }
 
     // ── Health ────────────────────────────────────────────────────
 

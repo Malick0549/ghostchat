@@ -12,13 +12,8 @@ window.ProfileModule = {
     
     async loadProfile() {
         try {
-            const response = await fetch('/api/auth/me');
-            if (response.ok) {
-                const data = await response.json();
-                this.user = data.user;
-            } else {
-                throw new Error('Not authenticated');
-            }
+            const data = await window.GhostChatAPI.getCurrentUser();
+            this.user = data.user;
         } catch (error) {
             console.error('Failed to load profile:', error);
             // Fallback to localStorage
@@ -66,26 +61,15 @@ window.ProfileModule = {
         this.setLoading(true);
         
         try {
-            const response = await fetch('/api/profile', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    username, 
-                    email, 
-                    two_factor_enabled: twoFactorEnabled 
-                })
+            const data = await window.GhostChatAPI.updateProfile({
+                username,
+                email,
+                two_factor_enabled: twoFactorEnabled,
             });
-            
-            if (response.ok) {
-                const data = await response.json();
-                this.user = data.user;
-                localStorage.setItem('ghostchat_user', JSON.stringify(this.user));
-                this.showToast('Profile saved successfully!', 'success');
-                this.updateNavbarAvatar();
-            } else {
-                const error = await response.json();
-                throw new Error(error.error || 'Save failed');
-            }
+            this.user = data.user;
+            localStorage.setItem('ghostchat_user', JSON.stringify(this.user));
+            this.showToast('Profile saved successfully!', 'success');
+            this.updateNavbarAvatar();
         } catch (error) {
             this.showToast(error.message, 'error');
         } finally {
@@ -100,23 +84,15 @@ window.ProfileModule = {
         this.showToast('Uploading...', 'info');
         
         try {
-            const response = await fetch('/api/profile/avatar', {
-                method: 'POST',
-                body: formData
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                if (data.avatar) {
-                    this.user.avatar = data.avatar;
-                    localStorage.setItem('ghostchat_user', JSON.stringify(this.user));
-                    this.render();
-                    this.updateNavbarAvatar();
-                    this.showToast('Avatar updated successfully!', 'success');
-                }
+            const data = await window.GhostChatAPI.uploadAvatar(formData);
+            if (data.avatar) {
+                this.user.avatar = data.avatar;
+                localStorage.setItem('ghostchat_user', JSON.stringify(this.user));
+                this.render();
+                this.updateNavbarAvatar();
+                this.showToast('Avatar updated successfully!', 'success');
             } else {
-                const error = await response.json();
-                throw new Error(error.error || 'Upload failed');
+                throw new Error(data.error || 'Upload failed');
             }
         } catch (error) {
             this.showToast(error.message, 'error');
