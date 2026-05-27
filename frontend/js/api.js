@@ -1,114 +1,34 @@
 /**
- * GHOSTCHAT API CLIENT  v3.2
+ * GHOSTCHAT API CLIENT  v3.3
  * ─────────────────────────────────────────────────────────────────
- * Single source of truth for all backend communication.
+ * Works on both http://localhost:5000 and https://ghostchat-5slo.onrender.com
  *
- * Endpoint map (matches flask_app.py exactly):
- *   POST /api/csrf-token            ← fetch CSRF token
- *   POST /api/auth/login            ← authenticate
- *   POST /api/auth/register         ← create account
- *   POST /api/auth/logout           ← sign out
- *   POST /api/auth/forgot-password  ← request reset link
- *   POST /api/auth/reset-password   ← set new password
- *   GET  /api/auth/me               ← current user
- *   GET  /api/profile               ← profile data
- *   PUT  /api/profile               ← update profile
- *   PUT  /api/profile/password      ← change password
- *   POST /api/profile/avatar        ← upload avatar
- *   POST /api/encrypt               ← password-based AES-256 + emoji
- *   POST /api/decrypt               ← password-based decrypt
- *   POST /new-session               ← crypto session create
- *   POST /session-info              ← crypto session query
- *   POST /rotate-session            ← rotate session keys
- *   POST /end-session               ← terminate session
- *   GET  /api/messages              ← message history
- *   POST /api/messages              ← save message
- *   DEL  /api/messages/:id          ← delete message
- *   GET  /health                    ← health check
+ * CSRF — double-submit cookie pattern:
+ *   1. fetchCsrfToken() calls GET /api/csrf-token
+ *      → server sets gc_csrf cookie (JS-readable) AND returns token in JSON
+ *   2. Every mutating request sends the token as X-CSRF-Token header
+ *   3. Server compares header to cookie (constant-time)
+ *   → No session lookup needed, no race condition with OPTIONS preflight
  *
- * SECURITY RULES:
- *   • CSRF token fetched once per page, sent on every mutating request.
- *   • 401 responses always redirect to login.html.
- *   • Session IDs stored in sessionStorage (tab-scoped — cleared on tab close).
- *   • Passwords and keys are NEVER stored — they travel to the server and
- *     are used only within request scope.
- *   • Auto-clear clipboard 30 s after copying encrypted content.
+ * SECURITY:
+ *   • Passwords never stored — live only inside the HTTP request
+ *   • Session IDs stored in sessionStorage (tab-scoped)
+ *   • Auto-clear clipboard after 30 s for encrypted content
+ *   • 401 anywhere → redirect to login.html
  * ─────────────────────────────────────────────────────────────────
  */
 
 class GhostChatAPI {
     constructor() {
+        // Auto-detect base URL — works locally and on Render
         this.baseURL = (
-            window.location.origin.includes('localhost') ||
-            window.location.origin.includes('127.0.0.1')
-        )
-            ? 'http://127.0.0.1:5000'
-            : window.location.origin;
+            window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1'
+        ) ? 'http://127.0.0.1:5000' : window.location.origin;
 
-        // Tab-scoped storage — cleared when the tab closes
+        this._csrfToken = null;
         this._sessionId = sessionStorage.getItem('gc_session_id') || null;
-        this._csrfToken = null;   // fetched lazily
     }
-
-    // ── Core HTTP helper ──────────────────────────────────────────
-
-    async _request(path, options = {}) {
-        const url = `${this.baseURL}${path}`;
-
-        const headers = {
-            'Content-Type':    'application/json',
-            'X-Requested-With':'XMLHttpRequest',
-            ...options.headers,
-        };
-
-        // Attach CSRF token to every mutating request
-        if (options.method && options.method !== 'GET') {
-            if (this._csrfToken) {
-                headers['X-CSRF-Token'] = this._csrfToken;
-            }
-        }
-
-        const config = {
-            credentials: 'include',
-            ...options,
-            headers,
-        };
-
-        const res  = await fetch(url, config);
-
-        // ── Global 401 handler ────────────────────────────────────
-        if (res.status === 401) {
-            const isAuthPage = ['login.html', 'register.html', 'forgot-password.html']
-                .some(p => window.location.pathname.endsWith(p));
-            if (!isAuthPage) {
-                sessionStorage.clear();
-                window.location.href = 'login.html';
-                throw new Error('Session expired. Redirecting to login.');
-            }
-        }
-
-        let data;
-        const ct = res.headers.get('content-type') || '';
-        if (ct.includes('application/json')) {
-            data = await res.json();
-        } else {
-            data = { message: await res.text() };
-        }
-
-        if (!res.ok) {
-            const err     = new Error(data.error || data.message || `HTTP ${res.status}`);
-            err.status    = res.status;
-            err.data      = data;
-            throw err;
-        }
-
-        return data;
-    }
-
-    _get(path)          { return this._request(path, { method: 'GET' }); }
-    _post(path, body)   { return this._request(path, { method: 'POST',   body: JSON.stringify(body) }); }
-    _put(path, body)    { return this._request(path, { method: 'PUT',    body: JSON.stringify(body) }); }
-    _delete(path)       { return this._request(path, { method: 'DELETE' }); }
 
     // ── CSRF ──────────────────────────────────────────────────────
 
@@ -122,23 +42,90 @@ class GhostChatAPI {
         }
     }
 
+    _getCsrfFromCookie() {
+        // Read the gc_csrf cookie that the server set
+        const match = document.cookie.match(/(?:^|;\s*)gc_csrf=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    // ── Core HTTP ─────────────────────────────────────────────────
+
+    async _request(path, options = {}) {
+        const url = `${this.baseURL}${path}`;
+
+        // Use in-memory token first, fall back to reading from cookie
+        const csrf = this._csrfToken || this._getCsrfFromCookie();
+
+        const headers = {
+            'X-Requested-With': 'XMLHttpRequest',
+            ...options.headers,
+        };
+
+        // Only set Content-Type for JSON bodies (not FormData)
+        if (!(options.body instanceof FormData)) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        // Attach CSRF to every mutating request
+        if (options.method && options.method !== 'GET' && csrf) {
+            headers['X-CSRF-Token'] = csrf;
+        }
+
+        const res = await fetch(url, {
+            credentials: 'include',
+            ...options,
+            headers,
+        });
+
+        // Global 401 handler
+        if (res.status === 401) {
+            const isAuthPage = ['login.html', 'register.html', 'forgot-password.html']
+                .some(p => window.location.pathname.endsWith(p));
+            if (!isAuthPage) {
+                sessionStorage.clear();
+                window.location.href = 'login.html';
+                throw new Error('Session expired');
+            }
+        }
+
+        const ct = res.headers.get('content-type') || '';
+        const data = ct.includes('application/json')
+            ? await res.json()
+            : { message: await res.text() };
+
+        if (!res.ok) {
+            const err  = new Error(data.error || data.message || `HTTP ${res.status}`);
+            err.status = res.status;
+            err.data   = data;
+            throw err;
+        }
+
+        return data;
+    }
+
+    _get(path)       { return this._request(path, { method: 'GET' }); }
+    _post(path, body){ return this._request(path, { method: 'POST',   body: body instanceof FormData ? body : JSON.stringify(body) }); }
+    _put(path, body) { return this._request(path, { method: 'PUT',    body: JSON.stringify(body) }); }
+    _del(path)       { return this._request(path, { method: 'DELETE' }); }
+
     // ── Health ────────────────────────────────────────────────────
 
-    async checkHealth()  { return this._get('/health'); }
+    checkHealth() { return this._get('/health'); }
 
     // ── Auth ──────────────────────────────────────────────────────
 
     async login(username, password, rememberMe = false) {
-        const d = await this._post('/api/auth/login', {
-            username, password, remember_me: rememberMe,
-        });
+        const d = await this._post('/api/auth/login', { username, password, remember_me: rememberMe });
         if (d.user) localStorage.setItem('ghostchat_user', JSON.stringify(d.user));
+        // Server issues a fresh CSRF cookie on login — update in-memory token
+        this._csrfToken = this._getCsrfFromCookie() || this._csrfToken;
         return d;
     }
 
     async register(payload) {
         const d = await this._post('/api/auth/register', payload);
         if (d.user) localStorage.setItem('ghostchat_user', JSON.stringify(d.user));
+        this._csrfToken = this._getCsrfFromCookie() || this._csrfToken;
         return d;
     }
 
@@ -148,28 +135,27 @@ class GhostChatAPI {
         localStorage.removeItem('ghostchat_user');
     }
 
-    async getCurrentUser()                    { return this._get('/api/auth/me'); }
-    async forgotPassword(email)               { return this._post('/api/auth/forgot-password', { email }); }
-    async resetPassword(token, new_password)  { return this._post('/api/auth/reset-password', { token, new_password }); }
+    getCurrentUser()                   { return this._get('/api/auth/me'); }
+    forgotPassword(email)              { return this._post('/api/auth/forgot-password', { email }); }
+    resetPassword(token, new_password) { return this._post('/api/auth/reset-password', { token, new_password }); }
 
     // ── Profile ───────────────────────────────────────────────────
 
     async getProfile() {
-        // Try server first; fall back to localStorage for offline UX
         try {
             return await this._get('/api/profile');
         } catch (_) {
             const saved = localStorage.getItem('ghostchat_user');
-            const user  = saved ? JSON.parse(saved) : {};
+            const u     = saved ? JSON.parse(saved) : {};
             return {
                 user: {
-                    id:                 user.id       || '',
-                    username:           user.username  || 'ghost_user',
-                    email:              user.email     || '',
-                    firstName:          user.firstName || '',
-                    lastName:           user.lastName  || '',
-                    avatar:             user.avatar    || null,
-                    two_factor_enabled: user.two_factor_enabled || false,
+                    id:                 u.id       || '',
+                    username:           u.username  || 'ghost_user',
+                    email:              u.email     || '',
+                    firstName:          u.firstName || u.first_name || '',
+                    lastName:           u.lastName  || u.last_name  || '',
+                    avatar:             u.avatar    || null,
+                    two_factor_enabled: u.two_factor_enabled || false,
                 },
             };
         }
@@ -181,96 +167,64 @@ class GhostChatAPI {
         return d;
     }
 
-    async changePassword(old_password, new_password) {
+    changePassword(old_password, new_password) {
         return this._put('/api/profile/password', { old_password, new_password });
     }
 
     async uploadAvatar(file) {
         const form = new FormData();
         form.append('avatar', file);
-        return this._request('/api/profile/avatar', {
-            method:  'POST',
-            body:    form,
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        });
+        return this._request('/api/profile/avatar', { method: 'POST', body: form });
     }
 
-    // ── Encryption / Decryption (password-based — used by encrypt.js/decrypt.js) ──
+    // ── Encrypt / Decrypt (password-based) ───────────────────────
 
     /**
-     * encryptSimple — called by encrypt.js
-     * Sends message + password to /api/encrypt.
-     * The server runs GhostChat(password).send_message() → AES-256 + emoji.
-     *
-     * Returns shape expected by encrypt.js:
-     *   { success, emoji_message, emoji_count, algorithm, key_derivation }
+     * Called by encrypt.js
+     * Returns: { success, emoji_message, emoji_count, algorithm, key_derivation }
      */
     async encryptSimple(message, password, useDecoys = false) {
         try {
-            const d = await this._post('/api/encrypt', {
+            return await this._post('/api/encrypt', {
                 message,
                 password,
                 use_decoys: useDecoys,
             });
-            return {
-                success:        d.success !== false,
-                emoji_message:  d.emoji_message  || '',
-                emoji_count:    d.emoji_count    || 0,
-                algorithm:      d.algorithm      || 'AES-256-CBC',
-                key_derivation: d.key_derivation || 'PBKDF2-HMAC-SHA256',
-            };
         } catch (err) {
-            return {
-                success: false,
-                error:   err.message || 'Encryption failed',
-            };
+            return { success: false, error: err.message || 'Encryption failed' };
         }
     }
 
     /**
-     * decryptSimple — called by decrypt.js
-     * Sends emoji_message + password to /api/decrypt.
-     * The server runs GhostChat(password).receive_message() → plaintext.
-     *
-     * Returns shape expected by decrypt.js:
-     *   { success, decrypted_message, algorithm }
+     * Called by decrypt.js
+     * Returns: { success, decrypted_message, algorithm }
      */
     async decryptSimple(emojiMessage, password) {
         try {
-            const d = await this._post('/api/decrypt', {
+            return await this._post('/api/decrypt', {
                 emoji_message: emojiMessage,
                 password,
             });
-            return {
-                success:           d.success !== false,
-                decrypted_message: d.decrypted_message || '',
-                algorithm:         d.algorithm          || 'AES-256-CBC',
-            };
         } catch (err) {
-            return {
-                success: false,
-                error:   err.message || 'Decryption failed',
-            };
+            return { success: false, error: err.message || 'Decryption failed' };
         }
     }
 
-    // ── Session-key crypto (session-based API — routes_crypto.py) ─
+    // ── Session-key crypto (routes_crypto.py / routes_session.py) ─
 
     async createSession() {
         const d = await this._post('/new-session', {});
         if (d.session_id) {
             this._sessionId = d.session_id;
-            sessionStorage.setItem('gc_session_id', this._sessionId);
+            sessionStorage.setItem('gc_session_id', d.session_id);
         }
         return d;
     }
 
     async ensureSession() {
         if (this._sessionId) {
-            try {
-                await this.getSessionInfo(this._sessionId);
-                return this._sessionId;
-            } catch (_) {
+            try { await this.getSessionInfo(); return this._sessionId; }
+            catch (_) {
                 this._sessionId = null;
                 sessionStorage.removeItem('gc_session_id');
             }
@@ -279,79 +233,69 @@ class GhostChatAPI {
         return this._sessionId;
     }
 
-    async getSessionInfo(sessionId) {
-        const sid = sessionId || this._sessionId;
-        if (!sid) throw new Error('No active session.');
-        return this._post('/session-info', { session_id: sid });
+    getSessionInfo() {
+        if (!this._sessionId) throw new Error('No active session');
+        return this._post('/session-info', { session_id: this._sessionId });
     }
 
     // Alias used by dashboard.js
-    async getSessions() { return this.getSessionInfo(); }
+    getSessions() { return this.getSessionInfo(); }
 
-    async rotateSession(sessionId) {
-        const sid = sessionId || this._sessionId;
-        if (!sid) throw new Error('No active session.');
-        return this._post('/rotate-session', { session_id: sid });
+    rotateSession() {
+        if (!this._sessionId) throw new Error('No active session');
+        return this._post('/rotate-session', { session_id: this._sessionId });
     }
 
-    async endSession(sessionId) {
-        const sid = sessionId || this._sessionId;
-        if (!sid) throw new Error('No active session.');
-        await this._post('/end-session', { session_id: sid });
+    async endSession() {
+        if (!this._sessionId) return;
+        await this._post('/end-session', { session_id: this._sessionId });
         this._sessionId = null;
         sessionStorage.removeItem('gc_session_id');
     }
 
     // ── Message history ───────────────────────────────────────────
 
-    async getMessageHistory(limit = 50, offset = 0) {
+    getMessageHistory(limit = 100, offset = 0) {
         return this._get(`/api/messages?limit=${limit}&offset=${offset}`);
     }
 
-    async saveMessage(data) {
-        return this._post('/api/messages', data);
-    }
+    saveMessage(data)       { return this._post('/api/messages', data); }
+    deleteMessage(id)       { return this._del(`/api/messages/${id}`); }
 
-    async deleteMessage(id) {
-        return this._delete(`/api/messages/${id}`);
-    }
-
-    // ── Activity log (local) ──────────────────────────────────────
+    // ── Local activity log ────────────────────────────────────────
 
     async logActivity(message, type = 'info') {
         try {
-            const raw    = localStorage.getItem('ghostchat_activity_logs') || '[]';
-            const parsed = JSON.parse(raw);
-            parsed.push({ timestamp: new Date().toISOString(), type, message });
-            if (parsed.length > 500) parsed.shift();
-            localStorage.setItem('ghostchat_activity_logs', JSON.stringify(parsed));
+            const raw    = localStorage.getItem('gc_activity') || '[]';
+            const logs   = JSON.parse(raw);
+            logs.push({ timestamp: new Date().toISOString(), type, message });
+            if (logs.length > 500) logs.shift();
+            localStorage.setItem('gc_activity', JSON.stringify(logs));
         } catch (_) {}
-        return { success: true };
     }
 
     async getActivityLogs(limit = 100) {
         try {
-            const raw    = localStorage.getItem('ghostchat_activity_logs') || '[]';
-            const parsed = JSON.parse(raw);
-            return { success: true, logs: parsed.slice(-limit), total: parsed.length };
+            const raw  = localStorage.getItem('gc_activity') || '[]';
+            const logs = JSON.parse(raw);
+            return { success: true, logs: logs.slice(-limit), total: logs.length };
         } catch (_) {
             return { success: true, logs: [], total: 0 };
         }
     }
 }
 
-// ── Global singleton ─────────────────────────────────────────────────────────
+// ── Singleton ─────────────────────────────────────────────────────
 
 window.GhostChatAPI = new GhostChatAPI();
 
-// Fetch CSRF token immediately on every page load
-// (silently — auth pages call this before every form submit anyway)
+// Fetch CSRF token on every page load (silent — errors are non-fatal)
 window.GhostChatAPI.fetchCsrfToken();
 
 
-// ── Clipboard helper with auto-clear ─────────────────────────────────────────
+// ── Secure clipboard copy (auto-clears after 30 s) ────────────────
 
-window.secureCopy = async function (text, clearAfterMs = 30000) {
+window.secureCopy = async function(text, clearAfterMs = 30000) {
     try {
         await navigator.clipboard.writeText(text);
         if (window.UI) UI.showToast('Copied to clipboard', 'success');
@@ -364,10 +308,10 @@ window.secureCopy = async function (text, clearAfterMs = 30000) {
             }, clearAfterMs);
         }
     } catch (_) {
-        // Fallback for older browsers / non-HTTPS
+        // Fallback for non-HTTPS / older browsers
         const ta = document.createElement('textarea');
         ta.value = text;
-        ta.style.cssText = 'position:fixed;opacity:0;';
+        ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
@@ -377,34 +321,18 @@ window.secureCopy = async function (text, clearAfterMs = 30000) {
 };
 
 
-// ── Password visibility toggle helper ────────────────────────────────────────
+// ── Auto-attach password visibility toggles ────────────────────────
 
-window.togglePasswordVisibility = function (inputId, btn) {
-    const inp  = document.getElementById(inputId);
-    if (!inp) return;
-    const show = inp.type === 'password';
-    inp.type   = show ? 'text' : 'password';
-    const icon = btn instanceof HTMLElement
-        ? (btn.querySelector('i') || btn)
-        : btn;
-    if (icon) {
-        icon.className = show ? 'fas fa-eye-slash' : 'fas fa-eye';
-    }
-};
-
-
-// ── Auto-attach password toggles ─────────────────────────────────────────────
-
-document.addEventListener('DOMContentLoaded', function () {
-    document.querySelectorAll('input[type="password"]').forEach(function (inp) {
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('input[type="password"]').forEach(function(inp) {
         const wrap = inp.closest('.input-wrap');
-        if (wrap && !wrap.querySelector('.toggle-pw, .input-toggle')) {
+        if (wrap && !wrap.querySelector('.input-toggle, .toggle-pw')) {
             const btn = document.createElement('button');
             btn.type      = 'button';
             btn.className = 'input-toggle';
-            btn.setAttribute('aria-label', 'Toggle password visibility');
+            btn.setAttribute('aria-label', 'Show password');
             btn.innerHTML = '<i class="fas fa-eye"></i>';
-            btn.addEventListener('click', function () {
+            btn.addEventListener('click', function() {
                 const show = inp.type === 'password';
                 inp.type   = show ? 'text' : 'password';
                 btn.querySelector('i').className = show ? 'fas fa-eye-slash' : 'fas fa-eye';

@@ -1,360 +1,175 @@
 # ghostchat.py
 """
-GhostChat - Complete Secure Messaging Pipeline
-Combines AES-256 encryption with emoji obfuscation
+GhostChat — Complete Secure Messaging Pipeline  v3.1
 
-ARCHITECTURE:
-- Crypto Layer:      AES-256 encryption (REAL security)
-- Obfuscation Layer: Emoji conversion  (visual camouflage only)
-- This file:         Pipeline orchestration
+SEND FLOW:
+  Plaintext → AES-256-CBC Encrypt → (ciphertext, iv, salt) →
+  Emoji-obfuscate ciphertext → Bundle as "emojis GHOST iv_b64 GHOST salt_b64"
 
-FLOW:
-  Send:    Plaintext → AES-256 Encrypt → Base64 → Emoji string
-  Receive: Emoji string → Base64 → AES-256 Decrypt → Plaintext
+RECEIVE FLOW:
+  Split on GHOST → emojis → ciphertext (Base64) →
+  Rebuild AES engine from (password + salt) → AES-256 Decrypt → Plaintext
+
+WHY A PACKET?
+  The AES engine produces ciphertext + IV + salt separately.
+  Without all three the receiver cannot decrypt. Bundling into one
+  opaque string means the frontend stores and passes one value,
+  and decryption always has everything it needs — across page reloads
+  and between different users.
 """
 
 import os
-import json
 import base64
-from typing import Dict, Optional
+from typing import Optional
 
-# ── Crypto / obfuscation layers ───────────────────────────────────────────────
-# NOTE: imports use local package names because flask_app.py runs from inside
-# backend/ — so crypto/, obfuscation/, ai/, utils/ are direct siblings.
-from crypto.aes_engine              import AES256Engine
-from crypto.session_key_manager     import SessionKeyManager
-from crypto.authenticated_encryption import AuthenticatedEncryption
-from obfuscation.emoji_mapper       import EmojiMapper
+from crypto.aes_engine          import AES256Engine
+from crypto.session_key_manager import SessionKeyManager
+from obfuscation.emoji_mapper   import EmojiMapper
 
-# ── Logging helpers ───────────────────────────────────────────────────────────
 try:
-    from utils.secure_logger import (
-        log_encryption, log_decryption, log_authentication
-    )
+    from utils.secure_logger import log_encryption, log_decryption
 except ImportError:
-    # Graceful fallback if logger not configured yet
     def log_encryption(length, success, error=None, user_id=None): pass
     def log_decryption(success, error=None, user_id=None): pass
-    def log_authentication(success, reason=None, user_id=None): pass
 
-# ── Configuration ─────────────────────────────────────────────────────────────
 try:
     from config import get_config
-    _cfg = get_config()
-    _SESSION_DURATION = _cfg.session.duration_seconds
+    _SESSION_DURATION = get_config().session.duration_seconds
 except Exception:
-    _SESSION_DURATION = 3600  # 1 hour fallback
+    _SESSION_DURATION = 3600
+
+# ── Packet separator ──────────────────────────────────────────────────────────
+# Never appears in Base64 output or in emoji characters.
+_SEP = "GHOST"
+
+
+class GhostChatError(Exception):
+    pass
 
 
 class GhostChat:
     """
-    Complete messaging pipeline: encryption + emoji obfuscation.
+    Complete messaging pipeline.
 
-    This class does NOT implement crypto or emoji logic — it only
-    orchestrates the two independent layers.
+        gc = GhostChat("shared_password")
+        packet = gc.send_message("Hello secret world!")
+        # packet is ONE string — share it anywhere
 
-    SEPARATION OF CONCERNS:
-      • Encryption/Decryption  → AES256Engine
-      • Emoji conversion       → EmojiMapper
-      • Session management     → SessionKeyManager
-      • This class             → Pipeline only
+        gc2 = GhostChat("shared_password")
+        plain = gc2.receive_message(packet)
+        # plain == "Hello secret world!"
     """
 
     def __init__(self, password: str):
-        """
-        Initialise GhostChat with a password.
-
-        Args:
-            password: Shared secret used for AES-256 key derivation.
-
-        Raises:
-            ValueError: If the password is empty or not a string.
-        """
         if not password or not isinstance(password, str):
             raise ValueError("Password must be a non-empty string")
         if not password.strip():
-            raise ValueError("Password cannot be empty or whitespace only")
-
-        self.password = password.strip()
-
-        # Session key management
+            raise ValueError("Password cannot be empty or whitespace")
+        self.password    = password.strip()
         self.key_manager = SessionKeyManager(session_duration=_SESSION_DURATION)
-        self.auth_enc    = AuthenticatedEncryption(self.key_manager)
-
-        # Generate the initial session key from the password
-        self.session_key = self.key_manager.generate_session_key(self.password)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def send(self, plaintext_message: str, deterministic: bool = False) -> Dict:
-        """
-        Encrypt a plaintext message and obfuscate it as emojis.
-
-        Steps:
-          1. Rotate session key if threshold reached.
-          2. AES-256-CBC encrypt + HMAC sign (AuthenticatedEncryption).
-          3. Base64 ciphertext → emoji string (EmojiMapper).
-
-        Args:
-            plaintext_message: The secret message to send.
-            deterministic:     Use deterministic emoji mapping (for tests).
-
-        Returns:
-            {
-              'emoji_message': str,    # share this
-              'metadata': {
-                  'iv':        str,   # base64
-                  'signature': str,   # hex HMAC
-                  'key_id':    str,
-                  'salt':      str,   # base64
-              }
-            }
-
-        Raises:
-            ValueError:   Bad input or encryption failure.
-            RuntimeError: Unexpected internal error.
-        """
-        if plaintext_message is None:
-            raise ValueError("Message cannot be None")
-        if not isinstance(plaintext_message, str):
-            raise ValueError("Message must be a string")
-
-        plaintext_message = plaintext_message.strip()
-        if not plaintext_message:
-            raise ValueError("Message cannot be empty")
-
-        # Rotate session key if needed (forward secrecy)
-        try:
-            rotated = self.key_manager.rotate_if_needed(
-                self.session_key.key_id, self.password
-            )
-            if rotated:
-                self.session_key = rotated
-        except Exception:
-            pass  # Non-fatal — continue with existing key
-
-        try:
-            # Step 1: Authenticated AES-256 encryption
-            encrypted = self.auth_enc.encrypt(
-                self.session_key.key_id, plaintext_message
-            )
-
-            ciphertext_b64 = encrypted['ciphertext']
-            iv_b64         = encrypted['iv']
-            signature      = encrypted['signature']
-            key_id         = encrypted['key_id']
-            salt_b64       = base64.b64encode(self.session_key.salt).decode('utf-8')
-
-            # Step 2: Emoji obfuscation (camouflage layer — NOT security)
-            emoji_message = EmojiMapper.text_to_emojis(
-                ciphertext_b64, deterministic=deterministic
-            )
-
-            log_encryption(len(plaintext_message), True)
-
-            return {
-                'emoji_message': emoji_message,
-                'metadata': {
-                    'iv':        iv_b64,
-                    'signature': signature,
-                    'key_id':    key_id,
-                    'salt':      salt_b64,
-                },
-            }
-
-        except ValueError:
-            log_encryption(len(plaintext_message), False, error="ValueError")
-            raise
-        except Exception as exc:
-            log_encryption(len(plaintext_message), False, error=str(exc))
-            raise RuntimeError(f"Unexpected error during message sending: {exc}") from exc
-
-    # Alias used by routes.py  (/api/encrypt calls ghost.send_message())
-    def send_message(self, plaintext_message: str,
+    def send_message(self, plaintext: str,
                      use_decoy_emojis: bool = False) -> str:
         """
-        Alias for send() that returns only the emoji string.
-        Used by the Flask route /api/encrypt.
-
-        Args:
-            plaintext_message: The secret message.
-            use_decoy_emojis:  Ignored — kept for API compatibility.
+        Encrypt and return a self-contained GHOST packet string.
 
         Returns:
-            Emoji-obfuscated encrypted message string.
+            "emojisGHOSTiv_b64GHOSTsalt_b64"
         """
-        result = self.send(plaintext_message, deterministic=False)
-        return result['emoji_message']
-
-    def receive(self, emoji_message: str, metadata: Dict) -> str:
-        """
-        Decode emojis, verify signature, and decrypt to plaintext.
-
-        Steps:
-          1. Emoji string → Base64 ciphertext (EmojiMapper).
-          2. Recover session key from shared salt.
-          3. Verify HMAC + AES-256 decrypt (AuthenticatedEncryption).
-
-        Args:
-            emoji_message: The emoji string received.
-            metadata:      Dict with 'iv', 'signature', 'key_id', 'salt'.
-
-        Returns:
-            Original plaintext message.
-
-        Raises:
-            ValueError:   Invalid input, bad signature, or wrong password.
-            RuntimeError: Unexpected internal error.
-        """
-        if not emoji_message or not isinstance(emoji_message, str):
-            raise ValueError("Emoji message must be a non-empty string")
-        if not metadata or not isinstance(metadata, dict):
-            raise ValueError("Metadata must be a non-empty dictionary")
-
-        required = ('iv', 'signature', 'key_id', 'salt')
-        missing  = [k for k in required if k not in metadata or not metadata[k]]
-        if missing:
-            raise ValueError(f"Metadata missing or empty fields: {missing}")
-
-        iv_b64    = metadata['iv']
-        signature = metadata['signature']
-        key_id    = metadata['key_id']
-        salt_b64  = metadata['salt']
+        if not plaintext or not isinstance(plaintext, str):
+            raise GhostChatError("Message must be a non-empty string")
+        plaintext = plaintext.strip()
+        if not plaintext:
+            raise GhostChatError("Message cannot be empty")
 
         try:
-            # Step 1: Reverse emoji obfuscation
-            ciphertext_b64 = EmojiMapper.emojis_to_text(emoji_message)
+            engine = AES256Engine(self.password)
+            result = engine.encrypt(plaintext)
 
-            # Step 2: Recover session key from shared salt
-            try:
-                salt_bytes = base64.b64decode(salt_b64)
-            except Exception:
-                raise ValueError("Invalid salt — not valid base64")
+            ciphertext_b64 = result['ciphertext']
+            iv_b64         = result['iv']
+            salt_b64       = result['salt']
 
-            self.key_manager.recover_session_key(key_id, self.password, salt_bytes)
+            emojis = EmojiMapper.text_to_emojis(ciphertext_b64, deterministic=False)
+            packet = _SEP.join([emojis, iv_b64, salt_b64])
 
-            # Step 3: Verify + decrypt
-            encrypted_package = {
-                'ciphertext': ciphertext_b64,
-                'iv':         iv_b64,
-                'signature':  signature,
-                'key_id':     key_id,
-            }
-            try:
-                plaintext = self.auth_enc.decrypt(encrypted_package)
-            except Exception as exc:
-                msg = str(exc).lower()
-                if 'signature' in msg or 'authentication' in msg or 'hmac' in msg:
-                    raise ValueError(
-                        "Message authentication failed — message may have been tampered with"
-                    )
-                raise ValueError(f"AES decryption error: {exc}")
+            log_encryption(len(plaintext), True)
+            return packet
 
-            log_decryption(True)
-            return plaintext
-
-        except ValueError:
-            log_decryption(False, error="ValueError")
+        except GhostChatError:
             raise
         except Exception as exc:
-            log_decryption(False, error=str(exc))
-            raise RuntimeError(f"Unexpected error during message reception: {exc}") from exc
+            log_encryption(len(plaintext) if plaintext else 0, False, error=str(exc))
+            raise GhostChatError(f"Encryption failed: {exc}") from exc
 
-    # Alias used by routes.py  (/api/decrypt calls ghost.receive_message())
-    def receive_message(self, emoji_message: str,
-                        metadata: Optional[Dict] = None) -> str:
+    def receive_message(self, packet: str) -> str:
         """
-        Alias for receive() used by Flask route /api/decrypt.
-
-        When called without metadata (e.g. from the simple API), attempts
-        to decode assuming the emoji string carries embedded metadata via
-        send_package format.
-
-        Args:
-            emoji_message: Emoji-obfuscated message OR JSON package string.
-            metadata:      Optional dict with iv / signature / key_id / salt.
-
-        Returns:
-            Original plaintext message, or an error string prefixed with
-            'Decryption failed:' so the route can detect failure.
+        Decrypt a GHOST packet. Never raises — returns error string on failure.
         """
         try:
-            if metadata:
-                return self.receive(emoji_message, metadata)
-
-            # Try to parse as JSON package (from send_package)
-            try:
-                pkg = json.loads(emoji_message)
-                if isinstance(pkg, dict) and 'emojis' in pkg:
-                    return self.receive(pkg['emojis'], {
-                        'iv':        pkg.get('iv', ''),
-                        'signature': pkg.get('signature', ''),
-                        'key_id':    pkg.get('key_id', ''),
-                        'salt':      pkg.get('salt', ''),
-                    })
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-            # Fallback: treat as raw emoji string with current session
-            return self.receive(emoji_message, {
-                'iv':        '',
-                'signature': '',
-                'key_id':    self.session_key.key_id,
-                'salt':      base64.b64encode(self.session_key.salt).decode(),
-            })
-
-        except (ValueError, RuntimeError) as exc:
+            return self._decrypt(packet)
+        except GhostChatError as exc:
+            log_decryption(False, error=str(exc))
             return f"Decryption failed: {exc}"
         except Exception as exc:
+            log_decryption(False, error=str(exc))
             return f"Decryption failed: Unexpected error — {exc}"
 
-    # ── JSON package helpers ──────────────────────────────────────────────────
+    # ── Internal ──────────────────────────────────────────────────────────────
 
-    def send_package(self, message: str, deterministic: bool = False) -> str:
-        """Encrypt and return a self-contained JSON string."""
-        result  = self.send(message, deterministic)
-        package = {
-            'emojis':    result['emoji_message'],
-            'iv':        result['metadata']['iv'],
-            'signature': result['metadata']['signature'],
-            'key_id':    result['metadata']['key_id'],
-            'salt':      result['metadata']['salt'],
-        }
-        return json.dumps(package, ensure_ascii=False)
+    def _decrypt(self, packet: str) -> str:
+        if not packet or not isinstance(packet, str):
+            raise GhostChatError("Packet must be a non-empty string")
 
-    def receive_package(self, package_json: str) -> str:
-        """Decrypt a JSON package produced by send_package()."""
-        if not package_json or not isinstance(package_json, str):
-            raise ValueError("Package JSON must be a non-empty string")
-        try:
-            pkg = json.loads(package_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSON package: {exc}") from exc
-        if not isinstance(pkg, dict):
-            raise ValueError("Package must be a JSON object")
-        missing = [k for k in ('emojis', 'iv', 'signature', 'key_id', 'salt') if k not in pkg]
-        if missing:
-            raise ValueError(f"Package missing keys: {missing}")
-        return self.receive(pkg['emojis'], {
-            'iv':        pkg['iv'],
-            'signature': pkg['signature'],
-            'key_id':    pkg['key_id'],
-            'salt':      pkg['salt'],
-        })
+        packet = packet.strip()
+        parts  = packet.split(_SEP)
 
-    # ── Session helpers ───────────────────────────────────────────────────────
-
-    def rotate_session(self) -> bool:
-        """Manually rotate the session key for forward secrecy."""
-        try:
-            new_key = self.key_manager.rotate_key(
-                self.session_key.key_id, self.password
+        if len(parts) != 3:
+            raise GhostChatError(
+                f"Invalid packet — expected 3 parts separated by '{_SEP}', "
+                f"got {len(parts)}. Paste the complete encrypted output."
             )
-            self.session_key = new_key
-            return True
-        except Exception:
-            return False
 
-    def get_session_info(self) -> Dict:
-        """Return public metadata about the current session (no keys)."""
-        return self.key_manager.get_key_info(self.session_key.key_id)
+        emojis, iv_b64, salt_b64 = [p.strip() for p in parts]
+
+        if not emojis:
+            raise GhostChatError("Packet emoji section is empty")
+        if not iv_b64:
+            raise GhostChatError("Packet IV section is empty")
+        if not salt_b64:
+            raise GhostChatError("Packet salt section is empty")
+
+        # Reverse emoji obfuscation
+        try:
+            ciphertext_b64 = EmojiMapper.emojis_to_text(emojis)
+        except Exception as exc:
+            raise GhostChatError(f"Emoji decode failed: {exc}") from exc
+
+        if not ciphertext_b64:
+            raise GhostChatError("Emoji decode produced empty result")
+
+        # Decode salt and rebuild engine with same key
+        try:
+            salt_bytes = base64.b64decode(salt_b64)
+        except Exception as exc:
+            raise GhostChatError(f"Invalid salt encoding: {exc}") from exc
+
+        try:
+            engine = AES256Engine(self.password, salt=salt_bytes)
+        except Exception as exc:
+            raise GhostChatError(f"Key derivation failed: {exc}") from exc
+
+        # AES-256-CBC decrypt
+        try:
+            plaintext = engine.decrypt(ciphertext_b64, iv_b64)
+        except ValueError as exc:
+            raise GhostChatError(
+                "Wrong password or corrupted packet."
+            ) from exc
+        except Exception as exc:
+            raise GhostChatError(f"AES error: {exc}") from exc
+
+        log_decryption(True)
+        return plaintext

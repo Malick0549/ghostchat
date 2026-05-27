@@ -1,170 +1,184 @@
+/**
+ * GHOSTCHAT DECRYPTION MODULE  v3.1
+ * Calls /api/decrypt (password-based AES-256 + emoji packet).
+ * All crypto happens server-side.
+ *
+ * INPUT FORMAT:
+ *   Paste the FULL packet produced by encrypt — the string that looks like:
+ *   "😀😃😉...GOSTiv_base64GOSTsalt_base64"
+ *   The packet is self-contained — no separate IV/metadata needed.
+ */
+
 window.DecryptionModule = {
+
     init() {
-        this.setupEventListeners();
+        this._wire();
     },
-    
-    setupEventListeners() {
-        const decryptBtn = document.getElementById('decryptBtn');
-        if (decryptBtn) {
-            const newBtn = decryptBtn.cloneNode(true);
-            decryptBtn.parentNode.replaceChild(newBtn, decryptBtn);
-            newBtn.addEventListener('click', () => this.decryptMessage());
+
+    _wire() {
+        const btn = document.getElementById('decryptBtn');
+        if (btn) {
+            const fresh = btn.cloneNode(true);
+            btn.parentNode.replaceChild(fresh, btn);
+            fresh.addEventListener('click', () => this._decrypt());
         }
-        
-        const ciphertext = document.getElementById('ciphertext');
-        if (ciphertext) {
-            ciphertext.addEventListener('keydown', (e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                    e.preventDefault();
-                    this.decryptMessage();
-                }
-            });
-        }
-        
+
         const importBtn = document.getElementById('importBtn');
         if (importBtn) {
-            const newImportBtn = importBtn.cloneNode(true);
-            importBtn.parentNode.replaceChild(newImportBtn, importBtn);
-            newImportBtn.addEventListener('click', () => this.importFromFile());
+            const fresh = importBtn.cloneNode(true);
+            importBtn.parentNode.replaceChild(fresh, importBtn);
+            fresh.addEventListener('click', () => this._importFile());
         }
-        
+
         const importFile = document.getElementById('importFile');
         if (importFile) {
-            importFile.addEventListener('change', (e) => this.handleFileSelect(e));
+            importFile.addEventListener('change', e => this._handleFile(e));
+        }
+
+        const clearBtn = document.getElementById('decClear');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => this._clear());
         }
     },
-    
-    importFromFile() {
-        document.getElementById('importFile').click();
+
+    _importFile() {
+        document.getElementById('importFile')?.click();
     },
-    
-    handleFileSelect(event) {
-        const file = event.target.files[0];
+
+    _handleFile(e) {
+        const file = e.target.files?.[0];
         if (!file) return;
-        
         const reader = new FileReader();
-        reader.onload = (e) => {
-            const content = e.target.result;
-            const textarea = document.getElementById('ciphertext');
-            if (textarea) {
-                textarea.value = content.trim();
-                this.showToast('File imported successfully!', 'success');
+        reader.onload = ev => {
+            const ta = document.getElementById('ciphertext');
+            if (ta) {
+                ta.value = (ev.target.result || '').trim();
+                if (window.UI) UI.showToast('File imported', 'success');
             }
         };
         reader.readAsText(file);
     },
-    
-    async decryptMessage() {
-        const ciphertext = document.getElementById('ciphertext').value;
-        const password = document.getElementById('decryptPassword').value;
-        
-        if (!ciphertext) {
-            this.showError('Please enter or import an encrypted message');
+
+    async _decrypt() {
+        const packet   = (document.getElementById('ciphertext')?.value       || '').trim();
+        const password = (document.getElementById('decryptPassword')?.value  || '').trim();
+
+        if (!packet) {
+            this._showError(
+                'Please paste the encrypted packet.<br>' +
+                '<small>It should look like: 😀😃😉…GOSTabc…GOSTdef…</small>'
+            );
             return;
         }
-        
         if (!password) {
-            this.showError('Please enter the decryption password');
+            this._showError('Please enter the decryption password');
             return;
         }
-        
-        this.setLoading(true);
-        
+
+        // Quick sanity check — packets must contain the GHOST separator
+        if (!packet.includes('GHOST')) {
+            this._showError(
+                'Invalid packet format — make sure you pasted the <strong>complete</strong> ' +
+                'encrypted output including the GHOST separator parts.'
+            );
+            return;
+        }
+
+        this._setLoading(true);
+
         try {
-            // Use decryptSimple which handles IV management
-            const result = await window.GhostChatAPI.decryptSimple(ciphertext, password);
-            
+            const result = await window.GhostChatAPI.decryptSimple(packet, password);
+
             if (result.success) {
-                this.displayResult(result);
-                this.showToast('Message decrypted successfully!', 'success');
-                
-                if (window.HistoryModule && window.HistoryModule.addMessage) {
-                    window.HistoryModule.addMessage(result.decrypted_message, ciphertext, 'decryption');
+                this._showResult(result.decrypted_message);
+                if (window.UI) UI.showToast('Message decrypted!', 'success');
+
+                // Save to history
+                if (window.HistoryModule?.addMessage) {
+                    window.HistoryModule.addMessage(
+                        result.decrypted_message,
+                        packet,
+                        'decryption'
+                    );
                 }
             } else {
-                const msg = result.error || 'Decryption failed. Wrong password or corrupted message.';
-                if (msg.includes('Metadata missing or empty fields')) {
-                    this.showError('Decryption failed: this message requires a full GhostChat package. Paste the JSON package or the emoji-only package string here.');
-                } else if (msg.includes('Message authentication failed') || msg.includes('Unexpected error')) {
-                    this.showError('Decryption failed: wrong password or corrupted message. Verify your password and try again.');
-                } else {
-                    this.showError(msg);
-                }
+                this._showError(
+                    result.error || 'Decryption failed — check your password and packet.'
+                );
             }
-        } catch (error) {
-            console.error('Decryption error:', error);
-            this.showError(`Decryption failed: ${error.message}. If this is a GhostChat package, make sure it includes iv, signature, key_id, and salt.`);
+        } catch (err) {
+            this._showError(`Decryption failed: ${err.message}`);
         } finally {
-            this.setLoading(false);
+            this._setLoading(false);
         }
     },
-    
-    displayResult(result) {
-        const resultDiv = document.getElementById('decryptResult');
-        if (resultDiv) {
-            resultDiv.innerHTML = `
-                <div class="result-header" style="margin-top: 20px; padding: 15px; background: rgba(0,255,136,0.1); border-radius: 8px;">
-                    <i class="fas fa-check-circle" style="color: #00ff88;"></i>
-                    <h3 style="display: inline; margin-left: 10px;">Decryption Complete</h3>
+
+    _showResult(plaintext) {
+        const div = document.getElementById('decryptResult');
+        if (!div) return;
+        div.innerHTML = `
+            <div style="margin-top:20px;padding:16px;
+                        background:rgba(0,255,136,0.07);
+                        border:1px solid rgba(0,255,136,0.2);
+                        border-radius:var(--r2);">
+                <p style="font-family:var(--mono);font-size:.75rem;
+                           color:var(--green);margin-bottom:12px;">
+                    ✓ DECRYPTION SUCCESSFUL — AES-256-CBC
+                </p>
+                <label style="font-family:var(--mono);font-size:.7rem;
+                              letter-spacing:.1em;text-transform:uppercase;
+                              color:var(--t2);display:block;margin-bottom:8px;">
+                    Original Message
+                </label>
+                <div style="background:rgba(0,0,0,.35);border:1px solid var(--border);
+                            border-radius:var(--r2);padding:14px;
+                            font-size:.9rem;line-height:1.7;color:var(--t1);
+                            white-space:pre-wrap;word-break:break-word;
+                            max-height:300px;overflow-y:auto;">
+                    ${this._esc(plaintext)}
                 </div>
-                <div class="result-content" style="margin-top: 15px;">
-                    <div class="info-group">
-                        <label style="display: block; margin-bottom: 5px; color: #00f0ff;">Decrypted Message:</label>
-                        <pre style="word-wrap: break-word; white-space: pre-wrap; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px;">${this.escapeHtml(result.decrypted_message)}</pre>
-                    </div>
-                    <div class="info-group" style="margin-top: 10px;">
-                        <label style="color: #00f0ff;">Algorithm:</label>
-                        <div style="margin-top: 5px;">${result.algorithm || 'AES-256-GCM'}</div>
-                    </div>
-                </div>
-            `;
-        }
+                <button onclick="HistoryModule._copyItem('${this._esc(plaintext).replace(/'/g,"\\'")}');"
+                    class="btn btn-ghost btn-sm" style="margin-top:10px;">
+                    <i class="fas fa-copy"></i> Copy plaintext
+                </button>
+            </div>`;
     },
-    
-    setLoading(isLoading) {
+
+    _showError(html) {
+        const div = document.getElementById('decryptResult');
+        if (!div) return;
+        div.innerHTML = `
+            <div style="color:var(--red);padding:14px;
+                        background:rgba(255,59,92,.08);
+                        border:1px solid rgba(255,59,92,.2);
+                        border-radius:var(--r2);margin-top:16px;
+                        font-size:.875rem;line-height:1.6;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span style="margin-left:8px;">${html}</span>
+            </div>`;
+    },
+
+    _setLoading(on) {
         const btn = document.getElementById('decryptBtn');
-        if (btn) {
-            if (isLoading) {
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Decrypting...';
-            } else {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-ghost"></i> Decrypt Message';
-            }
-        }
+        if (!btn) return;
+        btn.disabled  = on;
+        btn.innerHTML = on
+            ? '<i class="fas fa-spinner fa-spin"></i> Decrypting…'
+            : '<i class="fas fa-ghost"></i> Decrypt Message';
     },
-    
-    showError(message) {
-        const resultDiv = document.getElementById('decryptResult');
-        if (resultDiv) {
-            resultDiv.innerHTML = `
-                <div class="error-message" style="color: #ff0055; padding: 1rem; background: rgba(255,0,85,0.1); border-radius: 8px; margin-top: 20px;">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <span style="margin-left: 10px;">${message}</span>
-                </div>
-            `;
-        }
+
+    _clear() {
+        const ct = document.getElementById('ciphertext');
+        const pw = document.getElementById('decryptPassword');
+        const rs = document.getElementById('decryptResult');
+        if (ct) ct.value = '';
+        if (pw) pw.value = '';
+        if (rs) rs.innerHTML = '';
     },
-    
-    showToast(message, type) {
-        if (window.UI && window.UI.showToast) {
-            window.UI.showToast(message, type);
-        } else {
-            console.log(`[${type}] ${message}`);
-            alert(message);
-        }
+
+    _esc(str) {
+        const d = document.createElement('div');
+        d.textContent = String(str || '');
+        return d.innerHTML;
     },
-    
-    logActivity(message, type) {
-        console.log(`[${type.toUpperCase()}] ${message}`);
-        if (window.GhostChatAPI && window.GhostChatAPI.logActivity) {
-            window.GhostChatAPI.logActivity(message, type);
-        }
-    },
-    
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
 };

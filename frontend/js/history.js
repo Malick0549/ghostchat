@@ -1,286 +1,257 @@
 /**
- * GHOSTCHAT HISTORY MODULE - IMPROVED
- * Handles saving and displaying message history
+ * GHOSTCHAT HISTORY MODULE  v3.1
+ * Loads from server DB first, falls back to localStorage.
+ * render() uses only fields that actually exist on Message.to_dict():
+ *   { id, encrypted_content, message_type, created_at }
  */
 
 window.HistoryModule = {
     messages: [],
-    
+
     async load() {
-        await this.loadMessages();
-        this.setupEventListeners();
-        this.updateNotificationCount();
+        await this._loadMessages();
+        this._setupListeners();
+        this._updateBadge();
     },
-    
-    async loadMessages() {
-        // Try to load from server first
+
+    // ── Load ─────────────────────────────────────────────────────────────────
+
+    async _loadMessages() {
+        // Try server first
         try {
-            const response = await fetch('/api/messages', {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include'
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                if (data.success && data.messages) {
-                    this.messages = data.messages;
-                    this.saveMessages();
-                    this.render();
-                    return;
-                }
+            const d = await window.GhostChatAPI.getMessageHistory(100, 0);
+            if (d.success && Array.isArray(d.messages)) {
+                this.messages = d.messages;
+                this._saveLocal();
+                this.render();
+                return;
             }
-        } catch (error) {
-            console.log('Server history not available, using local storage');
+        } catch (_) {
+            // fall through to localStorage
         }
-        
-        // Fallback to localStorage
-        const saved = localStorage.getItem('ghostchat_history');
-        if (saved) {
-            this.messages = JSON.parse(saved);
-        } else {
+
+        // localStorage fallback
+        try {
+            const saved = localStorage.getItem('ghostchat_message_history');
+            this.messages = saved ? JSON.parse(saved) : [];
+        } catch (_) {
             this.messages = [];
         }
         this.render();
     },
-    
-    saveMessages() {
-        localStorage.setItem('ghostchat_history', JSON.stringify(this.messages));
-        
-        // Also try to save to server
-        for (const msg of this.messages.slice(0, 10)) {
-            this.saveToServer(msg);
-        }
-    },
-    
-    async saveToServer(message) {
+
+    _saveLocal() {
         try {
-            await fetch('/api/messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    encrypted_content: message.encrypted || message.encrypted_content || '',
-                    emoji_content: message.emoji_content || '',
-                    message_type: message.type || 'encryption'
-                })
-            });
-        } catch (error) {
-            console.log('Server save failed, keeping locally');
-        }
+            localStorage.setItem(
+                'ghostchat_message_history',
+                JSON.stringify(this.messages)
+            );
+        } catch (_) {}
     },
-    
-    addMessage(plaintext, encrypted, type = 'encryption') {
-        const now = new Date();
-        const timestamp = now.toISOString();
-        const displayTime = now.toLocaleString();
-        
-        const newMessage = {
-            id: Date.now(),
-            plaintext: plaintext,
-            encrypted: encrypted,
-            emoji_content: encrypted,
-            encrypted_content: encrypted,
-            type: type,
-            timestamp: timestamp,
-            displayTime: displayTime,
-            date_created: timestamp,
-            created_at: timestamp
+
+    // ── Add a new message (called from encrypt.js / decrypt.js) ──────────────
+
+    async addMessage(plaintext, encrypted, type = 'encryption') {
+        const item = {
+            id:                String(Date.now()),
+            encrypted_content: encrypted   || '',
+            emoji_content:     encrypted   || '',
+            plaintext_preview: plaintext   ? plaintext.substring(0, 80) : '',
+            message_type:      type,
+            created_at:        new Date().toISOString(),
         };
-        
-        this.messages.unshift(newMessage);
-        
-        // Keep only last 100 messages
-        if (this.messages.length > 100) {
-            this.messages = this.messages.slice(0, 100);
-        }
-        
-        this.saveMessages();
+
+        this.messages.unshift(item);
+        if (this.messages.length > 100) this.messages.pop();
+        this._saveLocal();
+
+        // Persist to server (non-blocking)
+        try {
+            await window.GhostChatAPI.saveMessage({
+                encrypted_content: item.encrypted_content,
+                emoji_content:     item.emoji_content,
+                message_type:      item.message_type,
+            });
+        } catch (_) {}
+
         this.render();
-        this.updateNotificationCount();
-        this.showToast(`${type === 'encryption' ? 'Encrypted' : 'Decrypted'} message saved to history`, 'success');
+        this._updateBadge();
+
+        if (window.UI) UI.showToast('Saved to history', 'success');
     },
-    
-    render() {
+
+    // ── Render ───────────────────────────────────────────────────────────────
+
+    render(filterQuery = '') {
         const container = document.getElementById('historyList');
         if (!container) return;
-        
-        if (this.messages.length === 0) {
+
+        let items = this.messages;
+
+        if (filterQuery) {
+            const q = filterQuery.toLowerCase();
+            items = items.filter(m =>
+                (m.encrypted_content || m.emoji_content || '').toLowerCase().includes(q) ||
+                (m.plaintext_preview || '').toLowerCase().includes(q)
+            );
+        }
+
+        if (!items.length) {
             container.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-inbox"></i>
-                    <p>No messages yet. Encrypt or decrypt your first message!</p>
-                </div>
-            `;
+                    <p>${filterQuery ? 'No messages match your search.' : 'No messages yet.<br/>Encrypt your first message to see it here.'}</p>
+                </div>`;
             return;
         }
-        
-        container.innerHTML = this.messages.map(msg => `
-            <div class="history-item glass" data-id="${msg.id}">
+
+        container.innerHTML = items.map(msg => {
+            const isEnc    = (msg.message_type || 'encryption') === 'encryption';
+            const typeLabel = isEnc ? 'ENCRYPTED' : 'DECRYPTED';
+            const typeIcon  = isEnc ? 'fa-lock' : 'fa-lock-open';
+            const typeCls   = isEnc ? 'encryption' : 'decryption';
+
+            const when    = msg.created_at
+                ? new Date(msg.created_at).toLocaleString([], {
+                    month: 'short', day: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })
+                : '—';
+
+            // Show plaintext preview if available, else show truncated ciphertext
+            const preview = msg.plaintext_preview
+                ? this._esc(msg.plaintext_preview) + (msg.plaintext_preview.length >= 80 ? '…' : '')
+                : this._esc((msg.encrypted_content || msg.emoji_content || '').substring(0, 60)) + '…';
+
+            const copyVal = this._esc(msg.encrypted_content || msg.emoji_content || '');
+
+            return `
+            <div class="history-item" role="listitem" tabindex="0"
+                 aria-label="${typeLabel} message from ${when}">
                 <div class="history-header">
-                    <span class="history-type ${msg.type}">
-                        <i class="fas ${msg.type === 'encryption' ? 'fa-lock' : 'fa-unlock-alt'}"></i>
-                        ${msg.type === 'encryption' ? 'ENCRYPTED' : 'DECRYPTED'}
+                    <span class="history-type ${typeCls}">
+                        <i class="fas ${typeIcon}" aria-hidden="true"></i>
+                        ${typeLabel}
                     </span>
-                    <span class="history-time">${msg.displayTime || new Date(msg.timestamp).toLocaleString()}</span>
+                    <span class="history-time">${when}</span>
                 </div>
                 <div class="history-content">
-                    <div class="history-plaintext">
-                        <strong>${msg.type === 'encryption' ? 'Original Message:' : 'Decrypted Message:'}</strong>
-                        <pre style="white-space: pre-wrap; word-break: break-word; margin: .5rem 0 0 0; padding: .75rem; background: rgba(255,255,255,0.06); border-radius: 8px;">${this.escapeHtml(msg.plaintext || '')}</pre>
-                    </div>
-                    <div class="history-encrypted" style="margin-top: 1rem;">
-                        <strong>${msg.type === 'encryption' ? 'Encrypted (Emoji) Output:' : 'Encrypted Message Received:'}</strong>
-                        <pre style="white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; margin: .5rem 0 0 0; padding: .75rem; background: rgba(255,255,255,0.06); border-radius: 8px;">${this.escapeHtml(msg.encrypted || msg.emoji_content || '')}</pre>
-                        <button class="btn-copy-small" onclick="HistoryModule.copyToClipboard('${this.escapeHtml(msg.encrypted || msg.emoji_content || '').replace(/'/g, "\\'")}')">
-                            <i class="fas fa-copy"></i> Copy
-                        </button>
-                    </div>
+                    <span class="text-muted" style="font-size:.8rem;">${preview}</span>
+                    ${msg.encrypted_content || msg.emoji_content ? `
+                    <button class="btn-copy-small" title="Copy encrypted output"
+                        onclick="HistoryModule._copyItem('${copyVal.substring(0,500)}')">
+                        <i class="fas fa-copy"></i> Copy
+                    </button>` : ''}
                 </div>
-                <button class="history-delete" onclick="HistoryModule.deleteMessage(${msg.id})">
+                <button class="history-delete" title="Delete"
+                    onclick="HistoryModule.deleteMessage('${msg.id}')"
+                    aria-label="Delete this message">
                     <i class="fas fa-trash"></i>
                 </button>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     },
-    
-    async copyToClipboard(text) {
-        try {
-            await navigator.clipboard.writeText(text);
-            this.showToast('Copied to clipboard!', 'success');
-        } catch (err) {
-            // Fallback for older browsers
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            document.body.appendChild(textarea);
-            textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
-            this.showToast('Copied to clipboard!', 'success');
-        }
-    },
-    
+
+    // ── Actions ──────────────────────────────────────────────────────────────
+
     async deleteMessage(id) {
-        if (confirm('Are you sure you want to delete this message?')) {
-            this.messages = this.messages.filter(m => m.id !== id);
-            localStorage.setItem('ghostchat_history', JSON.stringify(this.messages));
-            this.render();
-            this.showToast('Message deleted', 'info');
-            
-            // Try to delete from server
-            try {
-                await fetch(`/api/messages/${id}`, {
-                    method: 'DELETE',
-                    credentials: 'include'
-                });
-            } catch (error) {
-                console.log('Server delete failed');
-            }
-        }
+        this.messages = this.messages.filter(m => String(m.id) !== String(id));
+        this._saveLocal();
+        this.render();
+        this._updateBadge();
+
+        try { await window.GhostChatAPI.deleteMessage(id); } catch (_) {}
+
+        if (window.UI) UI.showToast('Message deleted', 'info');
     },
-    
+
     clearAll() {
-        if (confirm('Are you sure you want to clear ALL message history? This cannot be undone.')) {
-            this.messages = [];
-            localStorage.removeItem('ghostchat_history');
-            this.render();
-            this.showToast('All messages cleared', 'info');
-        }
+        if (!confirm('Clear ALL message history? This cannot be undone.')) return;
+        this.messages = [];
+        this._saveLocal();
+        this.render();
+        this._updateBadge();
+
+        if (window.UI) UI.showToast('History cleared', 'info');
     },
-    
+
     exportHistory() {
         const data = JSON.stringify(this.messages, null, 2);
         const blob = new Blob([data], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `ghostchat_history_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `ghostchat_history_${new Date().toISOString().slice(0,10)}.json`;
         a.click();
         URL.revokeObjectURL(url);
-        this.showToast('History exported', 'success');
+        if (window.UI) UI.showToast('History exported', 'success');
     },
-    
+
     importMessages() {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.json';
-        input.onchange = async (e) => {
+        const input    = document.createElement('input');
+        input.type     = 'file';
+        input.accept   = '.json';
+        input.onchange = e => {
             const file = e.target.files[0];
             if (!file) return;
-            
             const reader = new FileReader();
-            reader.onload = (event) => {
+            reader.onload = ev => {
                 try {
-                    const importedMessages = JSON.parse(event.target.result);
-                    if (Array.isArray(importedMessages)) {
-                        this.messages = [...importedMessages, ...this.messages];
-                        if (this.messages.length > 100) {
-                            this.messages = this.messages.slice(0, 100);
-                        }
-                        this.saveMessages();
-                        this.render();
-                        this.showToast(`Imported ${importedMessages.length} messages`, 'success');
-                    } else {
-                        this.showToast('Invalid file format', 'error');
-                    }
-                } catch (err) {
-                    this.showToast('Failed to parse file', 'error');
+                    const imported = JSON.parse(ev.target.result);
+                    if (!Array.isArray(imported)) throw new Error('Not an array');
+                    this.messages = [...imported, ...this.messages].slice(0, 100);
+                    this._saveLocal();
+                    this.render();
+                    this._updateBadge();
+                    if (window.UI) UI.showToast(`Imported ${imported.length} messages`, 'success');
+                } catch (_) {
+                    if (window.UI) UI.showToast('Invalid history file', 'error');
                 }
             };
             reader.readAsText(file);
         };
         input.click();
     },
-    
-    updateNotificationCount() {
-        const count = this.messages.filter(m => !m.read).length;
+
+    _copyItem(text) {
+        if (window.secureCopy) {
+            window.secureCopy(text);
+        } else {
+            navigator.clipboard.writeText(text)
+                .then(() => { if (window.UI) UI.showToast('Copied!', 'success'); });
+        }
+    },
+
+    // ── Badge + listeners ─────────────────────────────────────────────────────
+
+    _updateBadge() {
+        const count = this.messages.length;
         const badge = document.getElementById('notificationCount');
         if (badge) {
-            badge.textContent = count;
-            badge.style.display = count > 0 ? 'flex' : 'none';
+            badge.textContent   = count > 99 ? '99+' : count;
+            badge.style.display = count > 0 ? '' : 'none';
         }
     },
-    
-    setupEventListeners() {
-        const exportBtn = document.getElementById('exportHistoryBtn');
-        if (exportBtn) {
-            const newBtn = exportBtn.cloneNode(true);
-            exportBtn.parentNode.replaceChild(newBtn, exportBtn);
-            newBtn.onclick = () => this.exportHistory();
-        }
-        
-        const clearBtn = document.getElementById('clearHistoryBtn');
-        if (clearBtn) {
-            const newBtn = clearBtn.cloneNode(true);
-            clearBtn.parentNode.replaceChild(newBtn, clearBtn);
-            newBtn.onclick = () => this.clearAll();
-        }
-        
-        const importBtn = document.getElementById('importHistoryBtn');
-        if (importBtn) {
-            const newBtn = importBtn.cloneNode(true);
-            importBtn.parentNode.replaceChild(newBtn, importBtn);
-            newBtn.onclick = () => this.importMessages();
-        }
+
+    _setupListeners() {
+        const wire = (id, fn) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const fresh = el.cloneNode(true);
+            el.parentNode.replaceChild(fresh, el);
+            fresh.onclick = fn;
+        };
+        wire('exportHistoryBtn', () => this.exportHistory());
+        wire('clearHistoryBtn',  () => this.clearAll());
+        wire('importHistoryBtn', () => this.importMessages());
     },
-    
-    showToast(message, type) {
-        if (window.UI && window.UI.showToast) {
-            window.UI.showToast(message, type);
-        } else {
-            // Simple fallback toast
-            const toast = document.createElement('div');
-            toast.style.cssText = `position:fixed;bottom:20px;right:20px;background:#00f0ff;color:#000;padding:10px 20px;border-radius:8px;z-index:9999;`;
-            toast.textContent = message;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
-        }
+
+    // ── Utility ───────────────────────────────────────────────────────────────
+
+    _esc(str) {
+        if (!str) return '';
+        const d = document.createElement('div');
+        d.textContent = String(str);
+        return d.innerHTML;
     },
-    
-    escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
 };
