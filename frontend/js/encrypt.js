@@ -122,6 +122,11 @@ window.EncryptionModule = {
                 this.showError(result.error || 'Encryption failed');
                 this.showExportSection(false);
             }
+            // In encrypt.js, in the encryptMessage() method, after successful encryption:
+            if (window.HistoryModule && window.HistoryModule.addMessage) {
+                // Store original plaintext and encrypted emoji message
+                window.HistoryModule.addMessage(plaintext, result.emoji_message, 'encryption');
+            }
         } catch (error) {
             console.error('Encryption error:', error);
             this.showError(`Encryption failed: ${error.message}`);
