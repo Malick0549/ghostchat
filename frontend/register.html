@@ -144,6 +144,39 @@
 
 <script src="js/ui.js"></script>
 <script src="js/api.js"></script>
+// Add to register.html before closing </body>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('regForm');
+    if (form) {
+        const inputs = ['firstName', 'lastName', 'regUsername', 'regEmail', 'regPw', 'regPwConfirm', 'terms'];
+        inputs.forEach((id, index) => {
+            const input = document.getElementById(id);
+            if (input && input.type !== 'checkbox') {
+                input.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (index === inputs.length - 1) {
+                            document.getElementById('btnRegister').click();
+                        } else {
+                            const nextId = inputs[index + 1];
+                            const nextInput = document.getElementById(nextId);
+                            if (nextInput) {
+                                if (nextInput.type === 'checkbox') {
+                                    nextInput.focus();
+                                } else {
+                                    nextInput.focus();
+                                    nextInput.select();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }
+});
+</script>
 <script>
 (function(){
   // CSRF
