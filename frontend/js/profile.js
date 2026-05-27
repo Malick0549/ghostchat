@@ -43,14 +43,22 @@ window.ProfileModule = {
         if (emailInput) emailInput.value = this.user?.email || '';
         if (twoFactorToggle) twoFactorToggle.checked = this.user?.two_factor_enabled || false;
         
-        // Fix avatar URL
+        const avatarUrl = this.user?.avatar ? new URL(this.user.avatar, window.location.origin).href : '/assets/images/default-avatar.png';
+
         if (avatarImg) {
-            const avatarUrl = this.user?.avatar || '/assets/images/default-avatar.png';
-            avatarImg.src = avatarUrl + '?t=' + Date.now(); // Cache bust
+            avatarImg.src = `${avatarUrl}?t=${Date.now()}`;
             avatarImg.onerror = () => {
+                avatarImg.onerror = null;
                 avatarImg.src = '/assets/images/default-avatar.png';
             };
         }
+
+        const initials = (
+            (this.user?.firstName?.[0] || '') +
+            (this.user?.lastName?.[0]  || this.user?.username?.[1] || '')
+        ).toUpperCase() || 'GH';
+
+        this.updateNavbarAvatar(avatarUrl, initials);
     },
     
     async saveProfile() {
@@ -99,13 +107,26 @@ window.ProfileModule = {
         }
     },
     
-    updateNavbarAvatar() {
+    updateNavbarAvatar(avatarUrl = null, initials = 'GH') {
+        avatarUrl = avatarUrl || (this.user?.avatar ? new URL(this.user.avatar, window.location.origin).href : null);
+
         const avatarImg = document.getElementById('avatarImg');
-        if (avatarImg && this.user?.avatar) {
-            avatarImg.src = this.user.avatar + '?t=' + Date.now();
+        if (avatarImg && avatarUrl) {
+            avatarImg.src = `${avatarUrl}?t=${Date.now()}`;
             avatarImg.onerror = () => {
+                avatarImg.onerror = null;
                 avatarImg.src = '/assets/images/default-avatar.png';
             };
+            return;
+        }
+
+        const avatarInitials = document.getElementById('avatarInitials');
+        if (!avatarInitials) return;
+
+        if (avatarUrl) {
+            avatarInitials.outerHTML = `<img src="${avatarUrl}?t=${Date.now()}" alt="${initials}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span>${initials}</span>';" />`;
+        } else {
+            avatarInitials.textContent = initials;
         }
     },
     
