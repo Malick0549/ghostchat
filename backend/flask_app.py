@@ -16,7 +16,10 @@ Deployed on Render:
 import os
 import logging
 import secrets
+import smtplib
+import ssl
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 
 from flask import (
     Flask, jsonify, request, session,
@@ -238,6 +241,55 @@ def create_app(test_config=None):
         )
         return resp
 
+    def _get_reset_url(token: str) -> str:
+        base_url = os.environ.get('RESET_URL_BASE')
+        if base_url:
+            return f"{base_url.rstrip('/')}/forgot-password.html?token={token}"
+
+        host = request.headers.get('X-Forwarded-Host') or request.host
+        scheme = 'https' if _is_https() else 'http'
+        return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
+
+    def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
+        smtp_host = os.environ.get('SMTP_HOST')
+        smtp_port = int(os.environ.get('SMTP_PORT', '587'))
+        smtp_user = os.environ.get('SMTP_USER')
+        smtp_password = os.environ.get('SMTP_PASSWORD')
+        smtp_use_ssl = os.environ.get('SMTP_USE_SSL', '0').lower() in ('1', 'true', 'yes')
+        smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
+        mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
+
+        if not smtp_host or not smtp_user or not smtp_password:
+            log.warning('SMTP settings missing; password reset email not sent.')
+            log.info('Password reset link: %s', text_body)
+            return False
+
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = mail_from
+        msg['To'] = recipient
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype='html')
+
+        try:
+            if smtp_use_ssl:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=10) as smtp:
+                    smtp.login(smtp_user, smtp_password)
+                    smtp.send_message(msg)
+            else:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+                    if smtp_use_tls:
+                        smtp.starttls(context=context)
+                    smtp.login(smtp_user, smtp_password)
+                    smtp.send_message(msg)
+            return True
+        except Exception as exc:
+            log.error('Failed to send password reset email to %s: %s', recipient, exc)
+            log.info('Password reset link: %s', text_body)
+            return False
+
     # ═══════════════════════════════════════════════════════════════════════════
     # AUTHENTICATION ROUTES
     # ═══════════════════════════════════════════════════════════════════════════
@@ -367,10 +419,35 @@ def create_app(test_config=None):
                 # Override model's 24h expiry to 15 min (matches UI messaging)
                 user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
                 db.session.commit()
-                log.info(f'Password reset requested for: {email}')
-                # TODO: send email with reset link containing token
-                # e.g. send_reset_email(user.email, token,
-                #          f"https://ghostchat-5slo.onrender.com/forgot-password.html?token={token}")
+
+                reset_link = _get_reset_url(token)
+                plaintext = (
+                    f"Hello,\n\n"
+                    f"A password reset request was received for your GhostChat account. "
+                    f"If this was you, click the link below to reset your password:\n\n"
+                    f"{reset_link}\n\n"
+                    f"This link expires in 15 minutes. If you did not request a reset, you can safely ignore this message.\n\n"
+                    f"— GhostChat Security Team"
+                )
+                html = (
+                    f"<p>Hello,</p>"
+                    f"<p>A password reset request was received for your GhostChat account. "
+                    f"If this was you, click the link below to reset your password:</p>"
+                    f"<p><a href=\"{reset_link}\">Reset your password</a></p>"
+                    f"<p>This link expires in 15 minutes. If you did not request a reset, you can safely ignore this message.</p>"
+                    f"<p>— GhostChat Security Team</p>"
+                )
+
+                sent = _send_email(
+                    subject='GhostChat Password Reset',
+                    recipient=user.email,
+                    html_body=html,
+                    text_body=plaintext,
+                )
+                if sent:
+                    log.info(f'Password reset email sent to: {email}')
+                else:
+                    log.warning(f'Password reset email failed for: {email}; link logged in server output.')
 
             # Always return the same response — prevents user enumeration
             return jsonify({
