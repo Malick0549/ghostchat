@@ -106,6 +106,31 @@
 
 <script src="js/ui.js"></script>
 <script src="js/api.js"></script>
+// Add to login.html before closing </body>
+<script>
+// Enter key navigation for login form
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('loginForm');
+    if (form) {
+        const inputs = ['loginId', 'loginPw'];
+        inputs.forEach((id, index) => {
+            const input = document.getElementById(id);
+            if (input) {
+                input.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (index === inputs.length - 1) {
+                            document.getElementById('btnLogin').click();
+                        } else {
+                            document.getElementById(inputs[index + 1]).focus();
+                        }
+                    }
+                });
+            }
+        });
+    }
+});
+</script>
 <script>
 (function () {
   // Fetch CSRF token from server
