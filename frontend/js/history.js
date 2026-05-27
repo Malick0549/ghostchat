@@ -1,5 +1,6 @@
 /**
- * GHOSTCHAT HISTORY MODULE
+ * GHOSTCHAT HISTORY MODULE - IMPROVED
+ * Handles saving and displaying message history
  */
 
 window.HistoryModule = {
@@ -70,17 +71,21 @@ window.HistoryModule = {
     },
     
     addMessage(plaintext, encrypted, type = 'encryption') {
-        const now = new Date().toISOString();
+        const now = new Date();
+        const timestamp = now.toISOString();
+        const displayTime = now.toLocaleString();
+        
         const newMessage = {
             id: Date.now(),
-            plaintext: plaintext.substring(0, 500),
+            plaintext: plaintext,
             encrypted: encrypted,
             emoji_content: encrypted,
             encrypted_content: encrypted,
             type: type,
-            timestamp: now,
-            date_created: now,
-            created_at: now
+            timestamp: timestamp,
+            displayTime: displayTime,
+            date_created: timestamp,
+            created_at: timestamp
         };
         
         this.messages.unshift(newMessage);
@@ -93,7 +98,7 @@ window.HistoryModule = {
         this.saveMessages();
         this.render();
         this.updateNotificationCount();
-        this.showToast('Message saved to history', 'success');
+        this.showToast(`${type === 'encryption' ? 'Encrypted' : 'Decrypted'} message saved to history`, 'success');
     },
     
     render() {
@@ -104,7 +109,7 @@ window.HistoryModule = {
             container.innerHTML = `
                 <div class="empty-state">
                     <i class="fas fa-inbox"></i>
-                    <p>No messages yet. Encrypt your first message!</p>
+                    <p>No messages yet. Encrypt or decrypt your first message!</p>
                 </div>
             `;
             return;
@@ -114,21 +119,21 @@ window.HistoryModule = {
             <div class="history-item glass" data-id="${msg.id}">
                 <div class="history-header">
                     <span class="history-type ${msg.type}">
-                        <i class="fas ${msg.type === 'encryption' ? 'fa-lock' : 'fa-unlock'}"></i>
+                        <i class="fas ${msg.type === 'encryption' ? 'fa-lock' : 'fa-unlock-alt'}"></i>
                         ${msg.type === 'encryption' ? 'ENCRYPTED' : 'DECRYPTED'}
                     </span>
-                    <span class="history-time" style="font-size: 0.85rem; opacity: 0.8;">${msg.timestamp ? new Date(msg.timestamp).toLocaleString() : 'N/A'}</span>
+                    <span class="history-time">${msg.displayTime || new Date(msg.timestamp).toLocaleString()}</span>
                 </div>
                 <div class="history-content">
                     <div class="history-plaintext">
-                        <strong>Plaintext:</strong>
-                        <pre style="white-space: pre-wrap; word-break: break-word; margin: .5rem 0 0 0; padding: .75rem; background: rgba(255,255,255,0.06); border-radius: 8px;">${this.escapeHtml(msg.plaintext || msg.decrypted_message || '')}</pre>
+                        <strong>${msg.type === 'encryption' ? 'Original Message:' : 'Decrypted Message:'}</strong>
+                        <pre style="white-space: pre-wrap; word-break: break-word; margin: .5rem 0 0 0; padding: .75rem; background: rgba(255,255,255,0.06); border-radius: 8px;">${this.escapeHtml(msg.plaintext || '')}</pre>
                     </div>
                     <div class="history-encrypted" style="margin-top: 1rem;">
-                        <strong>Encrypted/Package:</strong>
+                        <strong>${msg.type === 'encryption' ? 'Encrypted (Emoji) Output:' : 'Encrypted Message Received:'}</strong>
                         <pre style="white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; margin: .5rem 0 0 0; padding: .75rem; background: rgba(255,255,255,0.06); border-radius: 8px;">${this.escapeHtml(msg.encrypted || msg.emoji_content || '')}</pre>
-                        <button class="btn-copy-small" onclick="HistoryModule.copyEncrypted('${this.escapeHtml(msg.encrypted || msg.emoji_content || '').replace(/'/g, "\\'")}')">
-                            <i class="fas fa-copy"></i>
+                        <button class="btn-copy-small" onclick="HistoryModule.copyToClipboard('${this.escapeHtml(msg.encrypted || msg.emoji_content || '').replace(/'/g, "\\'")}')">
+                            <i class="fas fa-copy"></i> Copy
                         </button>
                     </div>
                 </div>
@@ -139,25 +144,43 @@ window.HistoryModule = {
         `).join('');
     },
     
-    async deleteMessage(id) {
-        this.messages = this.messages.filter(m => m.id !== id);
-        localStorage.setItem('ghostchat_history', JSON.stringify(this.messages));
-        this.render();
-        this.showToast('Message deleted', 'info');
-        
-        // Try to delete from server
+    async copyToClipboard(text) {
         try {
-            await fetch(`/api/messages/${id}`, {
-                method: 'DELETE',
-                credentials: 'include'
-            });
-        } catch (error) {
-            console.log('Server delete failed');
+            await navigator.clipboard.writeText(text);
+            this.showToast('Copied to clipboard!', 'success');
+        } catch (err) {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            this.showToast('Copied to clipboard!', 'success');
+        }
+    },
+    
+    async deleteMessage(id) {
+        if (confirm('Are you sure you want to delete this message?')) {
+            this.messages = this.messages.filter(m => m.id !== id);
+            localStorage.setItem('ghostchat_history', JSON.stringify(this.messages));
+            this.render();
+            this.showToast('Message deleted', 'info');
+            
+            // Try to delete from server
+            try {
+                await fetch(`/api/messages/${id}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+            } catch (error) {
+                console.log('Server delete failed');
+            }
         }
     },
     
     clearAll() {
-        if (confirm('Are you sure you want to clear all message history?')) {
+        if (confirm('Are you sure you want to clear ALL message history? This cannot be undone.')) {
             this.messages = [];
             localStorage.removeItem('ghostchat_history');
             this.render();
@@ -171,47 +194,10 @@ window.HistoryModule = {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `ghostchat_history_${new Date().toISOString().slice(0,19)}.json`;
+        a.download = `ghostchat_history_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
         a.click();
         URL.revokeObjectURL(url);
         this.showToast('History exported', 'success');
-    },
-    
-    copyEncrypted(text) {
-        navigator.clipboard.writeText(text);
-        this.showToast('Copied to clipboard', 'success');
-    },
-    
-    updateNotificationCount() {
-        const count = this.messages.filter(m => !m.read).length;
-        const badge = document.getElementById('notificationCount');
-        if (badge) {
-            badge.textContent = count;
-            badge.style.display = count > 0 ? 'flex' : 'none';
-        }
-    },
-    
-    setupEventListeners() {
-        const exportBtn = document.getElementById('exportHistoryBtn');
-        if (exportBtn) {
-            const newBtn = exportBtn.cloneNode(true);
-            exportBtn.parentNode.replaceChild(newBtn, exportBtn);
-            newBtn.onclick = () => this.exportHistory();
-        }
-        
-        const clearBtn = document.getElementById('clearHistoryBtn');
-        if (clearBtn) {
-            const newBtn = clearBtn.cloneNode(true);
-            clearBtn.parentNode.replaceChild(newBtn, clearBtn);
-            newBtn.onclick = () => this.clearAll();
-        }
-        
-        const importBtn = document.getElementById('importHistoryBtn');
-        if (importBtn) {
-            const newBtn = importBtn.cloneNode(true);
-            importBtn.parentNode.replaceChild(newBtn, importBtn);
-            newBtn.onclick = () => this.importMessages();
-        }
     },
     
     importMessages() {
@@ -246,14 +232,45 @@ window.HistoryModule = {
         input.click();
     },
     
+    updateNotificationCount() {
+        const count = this.messages.filter(m => !m.read).length;
+        const badge = document.getElementById('notificationCount');
+        if (badge) {
+            badge.textContent = count;
+            badge.style.display = count > 0 ? 'flex' : 'none';
+        }
+    },
+    
+    setupEventListeners() {
+        const exportBtn = document.getElementById('exportHistoryBtn');
+        if (exportBtn) {
+            const newBtn = exportBtn.cloneNode(true);
+            exportBtn.parentNode.replaceChild(newBtn, exportBtn);
+            newBtn.onclick = () => this.exportHistory();
+        }
+        
+        const clearBtn = document.getElementById('clearHistoryBtn');
+        if (clearBtn) {
+            const newBtn = clearBtn.cloneNode(true);
+            clearBtn.parentNode.replaceChild(newBtn, clearBtn);
+            newBtn.onclick = () => this.clearAll();
+        }
+        
+        const importBtn = document.getElementById('importHistoryBtn');
+        if (importBtn) {
+            const newBtn = importBtn.cloneNode(true);
+            importBtn.parentNode.replaceChild(newBtn, importBtn);
+            newBtn.onclick = () => this.importMessages();
+        }
+    },
+    
     showToast(message, type) {
         if (window.UI && window.UI.showToast) {
             window.UI.showToast(message, type);
         } else {
-            console.log(`[${type}] ${message}`);
-            // Create simple toast
+            // Simple fallback toast
             const toast = document.createElement('div');
-            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#00f0ff;color:#000;padding:10px20px;border-radius:8px;z-index:9999;';
+            toast.style.cssText = `position:fixed;bottom:20px;right:20px;background:#00f0ff;color:#000;padding:10px 20px;border-radius:8px;z-index:9999;`;
             toast.textContent = message;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
