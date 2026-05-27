@@ -6,6 +6,7 @@ window.EncryptionModule = {
     lastEncryptedMessage: null,
     lastEncryptedPackage: null,
     lastEncryptedEmojiPackage: null,
+    lastMetadata: null,
     
     init() {
         this.setupEventListeners();
@@ -103,12 +104,13 @@ window.EncryptionModule = {
             
             if (result.success) {
                 this.lastEncryptedMessage = result.emoji_message;
+                this.lastMetadata = result.metadata;
                 this.lastEncryptedPackage = result.metadata ? {
-                    emojis:    result.emoji_message,
-                    iv:        result.metadata.iv,
+                    emojis: result.emoji_message,
+                    iv: result.metadata.iv,
                     signature: result.metadata.signature,
-                    key_id:    result.metadata.key_id,
-                    salt:      result.metadata.salt,
+                    key_id: result.metadata.key_id,
+                    salt: result.metadata.salt,
                 } : null;
                 this.lastEncryptedEmojiPackage = result.emoji_package || null;
                 this.displayResult(result);
@@ -138,21 +140,16 @@ window.EncryptionModule = {
             resultDiv.innerHTML = `
                 <div class="result-header" style="margin-top: 20px; padding: 15px; background: rgba(0,255,136,0.1); border-radius: 8px;">
                     <i class="fas fa-check-circle" style="color: #00ff88;"></i>
-                    <h3 style="display: inline; margin-left: 10px;">Encryption Complete</h3>
+                    <h3 style="display: inline; margin-left: 10px;">Message Encrypted</h3>
                 </div>
                 <div class="result-content" style="margin-top: 15px;">
                     <div class="info-group">
-                        <label style="display: block; margin-bottom: 5px; color: #00f0ff;">Encrypted Message:</label>
+                        <label style="display: block; margin-bottom: 5px; color: #00f0ff;">Encrypted Message (Copy & Share):</label>
                         <pre style="word-wrap: break-word; white-space: pre-wrap; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; font-family: monospace;">${this.escapeHtml(result.emoji_message || 'No output')}</pre>
                     </div>
-                    <div class="info-group" style="margin-top: 10px;">
-                        <label style="color: #00f0ff;">Security Metadata:</label>
-                        <div class="metadata" style="margin-top: 5px; font-size: 12px;">
-                            <div><strong>Algorithm:</strong> ${result.algorithm || 'AES-256-GCM'}</div>
-                            <div><strong>Key Derivation:</strong> ${result.key_derivation || 'HKDF-SHA256'}</div>
-                            <div><strong>Emojis Used:</strong> ${result.emoji_count || 0}</div>
-                        </div>
-                        <div style="margin-top: 10px; font-size: 12px; color: #a0d8ff;">This message is AES-256 encrypted first, then obfuscated into emojis. Use the exported package to decrypt later. The new pure emoji package is self-contained, but JSON package support still works too.</div>
+                    <div class="info-group" style="margin-top: 10px; font-size: 12px; color: #666;">
+                        <span>Share this emoji message. Recipient needs the same password to decrypt.</span>
+                        <div><strong>Emojis Used:</strong> ${result.emoji_count || 0}</div>
                     </div>
                 </div>
             `;
@@ -212,11 +209,29 @@ window.EncryptionModule = {
     },
     
     copyToClipboard() {
-        const content = this.lastEncryptedEmojiPackage
-            || (this.lastEncryptedPackage ? JSON.stringify(this.lastEncryptedPackage, null, 2) : this.lastEncryptedMessage);
-        if (!content) return;
-        navigator.clipboard.writeText(content);
-        this.showToast('Copied to clipboard!', 'success');
+        const emojiText = this.lastEncryptedMessage;
+        if (!emojiText) return;
+        
+        const textarea = document.createElement('textarea');
+        textarea.value = emojiText;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, 99999);
+        
+        try {
+            document.execCommand('copy');
+            this.showToast('Emoji message copied! Share with recipient.', 'success');
+        } catch (err) {
+            navigator.clipboard.writeText(emojiText).then(() => {
+                this.showToast('Emoji message copied!', 'success');
+            }).catch(() => {
+                this.showError('Failed to copy');
+            });
+        }
+        
+        document.body.removeChild(textarea);
     },
     
     saveToFile() {
