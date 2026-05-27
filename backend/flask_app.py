@@ -301,22 +301,22 @@ def create_app(test_config: dict | None = None) -> Flask:
         return jsonify({'user': user.to_dict()}), 200
 
     @app.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
-def forgot_password():
-    if request.method == 'OPTIONS':
-        return '', 200
-    if not DB_AVAILABLE:
-        return jsonify({'error': 'Database not available'}), 500
+    def forgot_password():
+       if request.method == 'OPTIONS':
+            return '', 200
+       if not DB_AVAILABLE:
+            return jsonify({'error': 'Database not available'}), 500
 
-    try:
-        data = request.get_json() or {}
-        email = (data.get('email') or '').strip()
+       try:
+            data = request.get_json() or {}
+            email = (data.get('email') or '').strip()
 
-        if not email:
+       if not email:
             return jsonify({'error': 'Email is required'}), 400
 
-        user = User.query.filter_by(email=email).first()
+            user = User.query.filter_by(email=email).first()
         
-        if user:
+       if user:
             token = user.generate_reset_token()
             user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
             db.session.commit()
@@ -354,8 +354,9 @@ def forgot_password():
         }), 200
 
     except Exception as exc:
-        log.error(f"Forgot password error: {exc}")
-        return jsonify({'error': 'Request failed. Please try again.'}), 500
+           log.error(f"Forgot password error: {exc}")
+           return jsonify({'error': 'Request failed. Please try again.'}), 500
+
     @app.route('/api/auth/reset-password', methods=['POST', 'OPTIONS'])
     def reset_password():
         if request.method == 'OPTIONS':
