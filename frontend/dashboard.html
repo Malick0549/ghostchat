@@ -7,7 +7,6 @@
   <title>Dashboard — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
-  <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
 <body data-theme="dark">
@@ -71,8 +70,7 @@
     <p class="section-desc text-muted" style="margin-bottom:24px;">Paste the emoji-encoded message you received. Provide the session password to reveal it.</p>
     <div class="input-section">
       <label for="ciphertext">Emoji-Encoded Message</label>
-      <textarea id="ciphertext" rows="5" placeholder="Paste the full GhostChat package here: JSON or emoji-only package"></textarea>
-      <p class="text-muted" style="font-size:.85rem;margin-top:.5rem;">You can paste either the saved JSON package or the self-contained emoji-only package.</p>
+      <textarea id="ciphertext" rows="5" placeholder="Paste encrypted emoji message here… 🌙🎯🔮💫🎭"></textarea>
     </div>
     <div class="input-section">
       <label for="decryptPassword">Session Password</label>
@@ -408,13 +406,11 @@
 
   /* ── Keyboard shortcuts ──────────────────────────────────────── */
   document.addEventListener('keydown',e=>{
-    if(e.target.tagName==='INPUT' && (e.key !== 'Enter')) return;
-    if(e.target.tagName==='TEXTAREA' && !(e.ctrlKey || e.metaKey)) return;
+    if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
     if(e.altKey){
       if(e.key==='e'){ e.preventDefault(); navigate('encrypt'); }
       if(e.key==='d'){ e.preventDefault(); navigate('decrypt'); }
       if(e.key==='h'){ e.preventDefault(); navigate('history'); }
-      if(e.key==='?'){ e.preventDefault(); alert('Keyboard Shortcuts:\nAlt+E: Encrypt\nAlt+D: Decrypt\nAlt+H: History\nCtrl+Enter or Cmd+Enter: Submit form\nEscape: Close sidebar'); }
     }
     if(e.key==='Escape') closeSidebar();
   });
@@ -424,21 +420,6 @@
   navigate('encrypt');
   API.ensureSession().catch(()=>{});
 })();
-
-// Register Service Worker for PWA
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then(reg => console.log('Service Worker registered:', reg.scope))
-      .catch(err => console.log('Service Worker failed:', err));
-  });
-}
-
-// Detect if running as PWA (installed)
-if (window.matchMedia('(display-mode: standalone)').matches) {
-  console.log('Running as installed PWA app');
-  document.body.classList.add('pwa-mode');
-}
 </script>
 
 </body>

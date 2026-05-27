@@ -215,8 +215,6 @@ class GhostChatAPI {
             return {
                 success:        d.success !== false,
                 emoji_message:  d.emoji_message  || '',
-                emoji_package:  d.emoji_package  || '',
-                metadata:       d.metadata       || null,
                 emoji_count:    d.emoji_count    || 0,
                 algorithm:      d.algorithm      || 'AES-256-CBC',
                 key_derivation: d.key_derivation || 'PBKDF2-HMAC-SHA256',

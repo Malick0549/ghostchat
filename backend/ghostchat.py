@@ -295,12 +295,6 @@ class GhostChat:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            # Try a single emoji-only package that encodes metadata as Base64 text
-            try:
-                return self.receive_emoji_package(emoji_message)
-            except ValueError:
-                pass
-
             # Fallback: treat as raw emoji string with current session
             return self.receive(emoji_message, {
                 'iv':        '',
@@ -347,33 +341,6 @@ class GhostChat:
             'key_id':    pkg['key_id'],
             'salt':      pkg['salt'],
         })
-
-    def send_emoji_package(self, message: str, deterministic: bool = False) -> str:
-        """Encrypt and return a single emoji-only package string."""
-        result = self.send(message, deterministic)
-        package = {
-            'emojis':    result['emoji_message'],
-            'iv':        result['metadata']['iv'],
-            'signature': result['metadata']['signature'],
-            'key_id':    result['metadata']['key_id'],
-            'salt':      result['metadata']['salt'],
-        }
-        package_json = json.dumps(package, ensure_ascii=False)
-        package_b64  = base64.b64encode(package_json.encode('utf-8')).decode('ascii')
-        return EmojiMapper.text_to_emojis(package_b64, deterministic=deterministic)
-
-    def receive_emoji_package(self, emoji_package: str) -> str:
-        """Decrypt a package encoded as a pure emoji string."""
-        if not emoji_package or not isinstance(emoji_package, str):
-            raise ValueError("Emoji package must be a non-empty string")
-
-        package_b64 = EmojiMapper.emojis_to_text(emoji_package)
-        try:
-            package_json = base64.b64decode(package_b64).decode('utf-8')
-        except Exception as exc:
-            raise ValueError(f"Invalid emoji package format: {exc}") from exc
-
-        return self.receive_package(package_json)
 
     # ── Session helpers ───────────────────────────────────────────────────────
 
