@@ -16,7 +16,7 @@ window.SettingsModule = {
             this.settings = JSON.parse(saved);
         } else {
             this.settings = {
-                encryptionAlgorithm: 'AES-256-GCM',
+                encryptionAlgorithm: 'AES-256-CBC',
                 autoClear: 'never',
                 notifyEncrypt: true,
                 notifyDecrypt: true,
@@ -57,12 +57,14 @@ window.SettingsModule = {
     setupEventListeners() {
         const saveBtn = document.getElementById('saveSettingsBtn');
         if (saveBtn) {
-            saveBtn.onclick = () => this.saveSettings();
+            const newBtn = saveBtn.cloneNode(true);
+            saveBtn.parentNode.replaceChild(newBtn, saveBtn);
+            newBtn.onclick = () => this.saveSettings();
         }
     },
     
     showToast(message, type) {
-        if (window.UI) {
+        if (window.UI && window.UI.showToast) {
             window.UI.showToast(message, type);
         } else {
             alert(message);
