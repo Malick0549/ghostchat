@@ -106,95 +106,24 @@
 
 <script src="js/ui.js"></script>
 <script src="js/api.js"></script>
-<<<<<<< HEAD
-// Add to login.html before closing </body>
 <script>
-// Enter key navigation for login form
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('loginForm');
-    if (form) {
-        const inputs = ['loginId', 'loginPw'];
-        inputs.forEach((id, index) => {
-            const input = document.getElementById(id);
-            if (input) {
-                input.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (index === inputs.length - 1) {
-                            document.getElementById('btnLogin').click();
-                        } else {
-                            document.getElementById(inputs[index + 1]).focus();
-                        }
-                    }
-                });
-            }
-        });
-    }
-});
-</script>
-=======
-
->>>>>>> 82eb47a (Fix login and forgot-password forms with proper CSRF handling)
-<script>
-// Enter key navigation for login form
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('loginForm');
-    if (form) {
-        const inputs = ['loginId', 'loginPw'];
-        inputs.forEach((id, index) => {
-            const input = document.getElementById(id);
-            if (input) {
-                input.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (index === inputs.length - 1) {
-                            document.getElementById('btnLogin').click();
-                        } else {
-                            document.getElementById(inputs[index + 1]).focus();
-                        }
-                    }
-                });
-            }
-        });
-    }
-});
-</script>
-
-<script>
-(async function() {
-  // Fetch CSRF token BEFORE setting up event listeners
-  let csrfToken = null;
-  
-  try {
-    const response = await fetch('/api/csrf-token', { 
-      method: 'GET',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    if (response.ok) {
-      const data = await response.json();
-      csrfToken = data.csrf_token;
-      document.getElementById('csrfToken').value = csrfToken;
-      console.log('CSRF token loaded successfully');
-    } else {
-      console.error('Failed to load CSRF token');
-    }
-  } catch (err) {
-    console.error('CSRF fetch error:', err);
-  }
+(function () {
+  // Fetch CSRF token from server
+  fetch('/api/csrf-token', { credentials: 'include' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
+    .catch(() => {});
 
   function showErr(m) {
     document.getElementById('errMsg').textContent = m;
     document.getElementById('alertErr').classList.add('show');
     document.getElementById('alertOk').classList.remove('show');
   }
-  
   function showOk(m) {
     document.getElementById('okMsg').textContent = m;
     document.getElementById('alertOk').classList.add('show');
     document.getElementById('alertErr').classList.remove('show');
   }
-  
   function hideAlerts() {
     document.getElementById('alertErr').classList.remove('show');
     document.getElementById('alertOk').classList.remove('show');
@@ -210,7 +139,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const id = document.getElementById('loginId').value.trim();
     const pw = document.getElementById('loginPw').value;
-    
     if (!id) { showErr('Please enter your username or email.'); return; }
     if (!pw) { showErr('Please enter your password.'); return; }
 
@@ -219,35 +147,31 @@ document.addEventListener('DOMContentLoaded', function() {
     btn.disabled = true;
 
     try {
-      // Use the CSRF token we already have
-      const tokenToUse = csrfToken || document.getElementById('csrfToken').value;
-      
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/login`, {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'X-Requested-With': 'XMLHttpRequest',
-          'X-CSRF-Token': tokenToUse,
+          'X-CSRF-Token': document.getElementById('csrfToken').value,
         },
         body: JSON.stringify({
-          username: id,
-          password: pw,
-          remember_me: document.getElementById('rememberMe')?.checked || false,
+          username:    id,
+          password:    pw,
+          remember_me: document.getElementById('rememberMe').checked,
         }),
       });
-      
       const data = await res.json();
 
       if (res.ok && data.success) {
-        if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+        if (data.user)  localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+        if (data.token) sessionStorage.setItem('gc_token', data.token);
         showOk('Login successful! Redirecting…');
         setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
       } else {
         showErr(data.error || data.message || 'Invalid credentials. Please try again.');
       }
-    } catch (err) {
-      console.error('Login error:', err);
+    } catch (_) {
       showErr('Cannot reach the server. Please check your connection and try again.');
     } finally {
       btn.classList.remove('btn-loading');
@@ -256,6 +180,5 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 })();
 </script>
-
 </body>
 </html>
