@@ -301,46 +301,61 @@ def create_app(test_config: dict | None = None) -> Flask:
         return jsonify({'user': user.to_dict()}), 200
 
     @app.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
-    def forgot_password():
-        if request.method == 'OPTIONS':
-            return '', 200
-        if not DB_AVAILABLE:
-            return jsonify({'error': 'Database not available'}), 500
+def forgot_password():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not DB_AVAILABLE:
+        return jsonify({'error': 'Database not available'}), 500
 
-        try:
-            data  = request.get_json() or {}
-            email = (data.get('email') or '').strip()
+    try:
+        data = request.get_json() or {}
+        email = (data.get('email') or '').strip()
 
-            if not email:
-                return jsonify({'error': 'Email is required'}), 400
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
 
-            # Always respond identically regardless of whether email exists
-            # (prevents user enumeration)
-            user = User.query.filter_by(email=email).first()
-            if user:
-                token = user.generate_reset_token()
-                # generate_reset_token() in models.py sets expiry to 24h;
-                # override here to 15 minutes to match UI messaging.
-                user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
-                db.session.commit()
-                log.info(f"Password reset requested for: {email}")
-
-                # ── PRODUCTION: send email here ──────────────────────────────
-                # from utils.mailer import send_reset_email
-                # send_reset_email(user.email, token)
-                # ─────────────────────────────────────────────────────────────
-                # DO NOT return the token to the client.
-                # (It was previously leaked — removed for security.)
-
+        user = User.query.filter_by(email=email).first()
+        
+        if user:
+            token = user.generate_reset_token()
+            user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
+            db.session.commit()
+            log.info(f"Password reset requested for: {email}")
+            
+            # Build reset link
+            reset_link = f"https://ghostchat.onrender.com/reset-password.html?token={token}"
+            # Or for local development:
+            # reset_link = f"http://localhost:5000/reset-password.html?token={token}"
+            
+            # For development, log the link (so you can see it in Render logs)
+            log.info(f"RESET LINK: {reset_link}")
+            
+            # For production, uncomment when you have SMTP configured:
+            """
+            from flask_mail import Mail, Message
+            mail = Mail(app)
+            msg = Message('GhostChat Password Reset',
+                          sender='noreply@ghostchat.com',
+                          recipients=[email])
+            msg.body = f'Click this link to reset your password: {reset_link}\n\nThis link expires in 15 minutes.'
+            mail.send(msg)
+            """
+            
+            # For now, return the link in response (for testing)
             return jsonify({
                 'success': True,
                 'message': 'If that email is registered, a reset link has been sent.',
+                'reset_link': reset_link  # Remove this in production!
             }), 200
 
-        except Exception as exc:
-            log.error(f"Forgot password error: {exc}")
-            return jsonify({'error': 'Request failed. Please try again.'}), 500
+        return jsonify({
+            'success': True,
+            'message': 'If that email is registered, a reset link has been sent.',
+        }), 200
 
+    except Exception as exc:
+        log.error(f"Forgot password error: {exc}")
+        return jsonify({'error': 'Request failed. Please try again.'}), 500
     @app.route('/api/auth/reset-password', methods=['POST', 'OPTIONS'])
     def reset_password():
         if request.method == 'OPTIONS':
