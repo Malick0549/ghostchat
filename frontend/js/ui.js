@@ -176,3 +176,102 @@ document.addEventListener('DOMContentLoaded', function () {
     Notification.requestPermission();
   }
 });
+
+/**
+ * ENTER KEY NAVIGATION
+ * Moves cursor to next input field when Enter key is pressed
+ * Submits form on last field
+ */
+
+function setupEnterKeyNavigation() {
+    // Find all forms on the page
+    const forms = document.querySelectorAll('form');
+    
+    forms.forEach(form => {
+        // Get all input fields in the form (text, email, password, etc.)
+        const inputs = Array.from(form.querySelectorAll('input:not([type="submit"]):not([type="button"]):not([type="reset"]), textarea, select'));
+        
+        inputs.forEach((input, index) => {
+            input.addEventListener('keypress', function(e) {
+                // Only trigger on Enter key
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    
+                    // If this is the last input, submit the form
+                    if (index === inputs.length - 1) {
+                        // Find and click the submit button
+                        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+                        if (submitBtn) {
+                            submitBtn.click();
+                        } else {
+                            form.submit();
+                        }
+                    } else {
+                        // Move to next input
+                        const nextInput = inputs[index + 1];
+                        if (nextInput) {
+                            nextInput.focus();
+                            nextInput.select();
+                        }
+                    }
+                }
+            });
+        });
+    });
+}
+
+// Also handle modal/dialog forms that might appear after page load
+function observeNewForms() {
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.addedNodes.length) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType === 1 && node.tagName === 'FORM') {
+                        setupEnterKeyNavigationOnForm(node);
+                    } else if (node.querySelectorAll) {
+                        const forms = node.querySelectorAll('form');
+                        forms.forEach(form => setupEnterKeyNavigationOnForm(form));
+                    }
+                });
+            }
+        });
+    });
+    
+    observer.observe(document.body, { childList: true, subtree: true });
+}
+
+function setupEnterKeyNavigationOnForm(form) {
+    const inputs = Array.from(form.querySelectorAll('input:not([type="submit"]):not([type="button"]):not([type="reset"]), textarea, select'));
+    
+    inputs.forEach((input, index) => {
+        // Remove existing listener to avoid duplicates
+        input.removeEventListener('keypress', handleEnterKey);
+        // Add new listener
+        input.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                
+                if (index === inputs.length - 1) {
+                    const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.click();
+                    } else {
+                        form.submit();
+                    }
+                } else {
+                    const nextInput = inputs[index + 1];
+                    if (nextInput) {
+                        nextInput.focus();
+                        nextInput.select();
+                    }
+                }
+            }
+        });
+    });
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    setupEnterKeyNavigation();
+    observeNewForms();
+});
