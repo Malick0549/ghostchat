@@ -110,8 +110,10 @@ window.ProfileModule = {
     updateNavbarAvatar(avatarUrl = null, initials = 'GH') {
         avatarUrl = avatarUrl || (this.user?.avatar ? new URL(this.user.avatar, window.location.origin).href : null);
 
-        const avatarImg = document.getElementById('avatarImg');
+        const avatarToggle = document.getElementById('avatarToggle');
+        const avatarImg = document.getElementById('avatarImg') || avatarToggle?.querySelector('img');
         if (avatarImg && avatarUrl) {
+            avatarImg.id = 'avatarImg';
             avatarImg.src = `${avatarUrl}?t=${Date.now()}`;
             avatarImg.onerror = () => {
                 avatarImg.onerror = null;
@@ -124,7 +126,7 @@ window.ProfileModule = {
         if (!avatarInitials) return;
 
         if (avatarUrl) {
-            avatarInitials.outerHTML = `<img src="${avatarUrl}?t=${Date.now()}" alt="${initials}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span>${initials}</span>';" />`;
+            avatarInitials.outerHTML = `<img id="avatarImg" src="${avatarUrl}?t=${Date.now()}" alt="${initials}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span>${initials}</span>';" />`;
         } else {
             avatarInitials.textContent = initials;
         }
@@ -147,6 +149,16 @@ window.ProfileModule = {
                 }
             };
         }
+
+        const profileInputs = Array.from(document.querySelectorAll('#profileUsername, #profileEmail'));
+        profileInputs.forEach(input => {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.saveProfile();
+                }
+            });
+        });
     },
     
     setLoading(isLoading) {

@@ -133,6 +133,13 @@
     document.getElementById(id)?.addEventListener('input', hideAlerts)
   );
 
+  document.getElementById('loginForm')?.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+      e.preventDefault();
+      this.requestSubmit();
+    }
+  });
+
   document.getElementById('loginForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     hideAlerts();

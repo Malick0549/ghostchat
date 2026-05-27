@@ -212,6 +212,13 @@ document.addEventListener('DOMContentLoaded', function() {
   function showErr(m){ document.getElementById('errMsg').textContent=m; document.getElementById('alertErr').classList.add('show'); document.getElementById('alertOk').classList.remove('show'); }
   function showOk(m) { document.getElementById('okMsg').textContent=m;  document.getElementById('alertOk').classList.add('show');  document.getElementById('alertErr').classList.remove('show'); }
 
+  document.getElementById('regForm')?.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+      e.preventDefault();
+      this.requestSubmit();
+    }
+  });
+
   document.getElementById('regForm').addEventListener('submit', async function(e){
     e.preventDefault();
     document.getElementById('alertErr').classList.remove('show');
