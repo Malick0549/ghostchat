@@ -56,8 +56,11 @@ def _is_https():
     )
 
 
+# ============================================================
+# ADDED: Brevo API email function (does not affect anything else)
+# ============================================================
 def _send_email_brevo(recipient_email: str, subject: str, html_body: str, text_body: str) -> bool:
-    """Send email using Brevo API (HTTP, not SMTP) - works on Render free tier."""
+    """Send email using Brevo API (works on Render free tier)."""
     try:
         import requests
         
@@ -65,111 +68,42 @@ def _send_email_brevo(recipient_email: str, subject: str, html_body: str, text_b
         sender_email = os.environ.get('BREVO_SENDER_EMAIL')
         
         if not api_key or not sender_email:
-            log.info('Brevo not configured. Email would be sent to: %s', recipient_email)
             return False
         
-        url = 'https://api.brevo.com/v3/smtp/email'
+        url = "https://api.brevo.com/v3/smtp/email"
         
         headers = {
-            'accept': 'application/json',
-            'api-key': api_key,
-            'content-type': 'application/json'
+            "accept": "application/json",
+            "api-key": api_key,
+            "content-type": "application/json"
         }
         
         data = {
-            'sender': {'email': sender_email, 'name': 'GhostChat Security'},
-            'to': [{'email': recipient_email}],
-            'subject': subject,
-            'htmlContent': html_body,
-            'textContent': text_body
+            "sender": {"email": sender_email, "name": "GhostChat Security"},
+            "to": [{"email": recipient_email}],
+            "subject": subject,
+            "htmlContent": html_body,
+            "textContent": text_body
         }
         
         response = requests.post(url, json=data, headers=headers, timeout=15)
         
         if response.status_code in (200, 201):
-            log.info('Password reset email sent to %s via Brevo', recipient_email)
+            log.info(f'Password reset email sent to {recipient_email} via Brevo')
             return True
         else:
-            log.error('Brevo API error %s: %s', response.status_code, response.text)
+            log.error(f'Brevo API error: {response.status_code}')
             return False
             
     except ImportError:
-        log.error('Requests library not installed. Run: pip install requests')
+        log.error('Requests library not installed')
         return False
     except Exception as e:
-        log.error('Failed to send email via Brevo: %s', e)
+        log.error(f'Brevo email failed: {e}')
         return False
-
-
-def _send_email_smtp(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
-    """Original SMTP method (may be blocked on Render free tier)."""
-    smtp_host = os.environ.get('SMTP_HOST')
-    smtp_port = int(os.environ.get('SMTP_PORT', '587'))
-    smtp_user = os.environ.get('SMTP_USER')
-    smtp_password = os.environ.get('SMTP_PASSWORD')
-    smtp_use_ssl = os.environ.get('SMTP_USE_SSL', '0').lower() in ('1', 'true', 'yes')
-    smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
-    mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
-
-    log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
-    os.makedirs(log_dir, exist_ok=True)
-    fallback_path = os.path.join(log_dir, 'reset_links.log')
-
-    def write_debug_link():
-        try:
-            with open(fallback_path, 'a', encoding='utf-8') as f:
-                f.write(f"{datetime.utcnow().isoformat()} | {recipient} | {text_body}\n")
-        except Exception:
-            pass
-
-    if not smtp_host or not smtp_user or not smtp_password:
-        log.warning('SMTP settings missing; password reset email not sent.')
-        log.info('Password reset link: %s', text_body)
-        write_debug_link()
-        return False
-
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = mail_from
-    msg['To'] = recipient
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype='html')
-
-    try:
-        if smtp_use_ssl:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=10) as smtp:
-                smtp.login(smtp_user, smtp_password)
-                smtp.send_message(msg)
-        else:
-            context = ssl.create_default_context()
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
-                if smtp_use_tls:
-                    smtp.starttls(context=context)
-                smtp.login(smtp_user, smtp_password)
-                smtp.send_message(msg)
-        return True
-    except Exception as exc:
-        log.error('Failed to send password reset email to %s: %s', recipient, exc)
-        log.info('Password reset link: %s', text_body)
-        write_debug_link()
-        return False
-
-
-def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
-    """
-    Send email using Brevo API first (works on Render free tier),
-    fallback to SMTP if Brevo not configured.
-    """
-    # Try Brevo first (preferred for Render free tier)
-    brevo_api_key = os.environ.get('BREVO_API_KEY')
-    brevo_sender = os.environ.get('BREVO_SENDER_EMAIL')
-    
-    if brevo_api_key and brevo_sender:
-        return _send_email_brevo(recipient, subject, html_body, text_body)
-    
-    # Fallback to SMTP
-    return _send_email_smtp(subject, recipient, html_body, text_body)
+# ============================================================
+# END OF ADDED FUNCTION
+# ============================================================
 
 
 def create_app(test_config=None):
@@ -366,6 +300,71 @@ def create_app(test_config=None):
         scheme = 'https' if _is_https() else 'http'
         return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
 
+    # UPDATED: _send_email function - tries Brevo first, falls back to SMTP
+    def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
+        # Try Brevo first (works on Render free tier)
+        brevo_api_key = os.environ.get('BREVO_API_KEY')
+        brevo_sender = os.environ.get('BREVO_SENDER_EMAIL')
+        
+        if brevo_api_key and brevo_sender:
+            brevo_result = _send_email_brevo(recipient, subject, html_body, text_body)
+            if brevo_result:
+                return True
+            log.warning('Brevo failed, falling back to SMTP')
+        
+        # Fallback to original SMTP (kept exactly as is)
+        smtp_host = os.environ.get('SMTP_HOST')
+        smtp_port = int(os.environ.get('SMTP_PORT', '587'))
+        smtp_user = os.environ.get('SMTP_USER')
+        smtp_password = os.environ.get('SMTP_PASSWORD')
+        smtp_use_ssl = os.environ.get('SMTP_USE_SSL', '0').lower() in ('1', 'true', 'yes')
+        smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
+        mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
+
+        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        fallback_path = os.path.join(log_dir, 'reset_links.log')
+
+        def write_debug_link():
+            try:
+                with open(fallback_path, 'a', encoding='utf-8') as f:
+                    f.write(f"{datetime.utcnow().isoformat()} | {recipient} | {text_body}\n")
+            except Exception:
+                pass
+
+        if not smtp_host or not smtp_user or not smtp_password:
+            log.warning('SMTP settings missing; password reset email not sent.')
+            log.info('Password reset link: %s', text_body)
+            write_debug_link()
+            return False
+
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = mail_from
+        msg['To'] = recipient
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype='html')
+
+        try:
+            if smtp_use_ssl:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=10) as smtp:
+                    smtp.login(smtp_user, smtp_password)
+                    smtp.send_message(msg)
+            else:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+                    if smtp_use_tls:
+                        smtp.starttls(context=context)
+                    smtp.login(smtp_user, smtp_password)
+                    smtp.send_message(msg)
+            return True
+        except Exception as exc:
+            log.error('Failed to send password reset email to %s: %s', recipient, exc)
+            log.info('Password reset link: %s', text_body)
+            write_debug_link()
+            return False
+
     # ═══════════════════════════════════════════════════════════════════════════
     # AUTHENTICATION ROUTES
     # ═══════════════════════════════════════════════════════════════════════════
@@ -490,8 +489,6 @@ def create_app(test_config=None):
                 return jsonify({'error': 'Email is required'}), 400
 
             user = User.query.filter_by(email=email).first()
-            reset_link = None
-
             if user:
                 token = user.generate_reset_token()
                 # Override model's 24h expiry to 15 min (matches UI messaging)
@@ -526,14 +523,12 @@ def create_app(test_config=None):
                     log.info(f'Password reset email sent to: {email}')
                 else:
                     log.warning(f'Password reset email failed for: {email}; link logged in server output.')
-                    if reset_link:
-                        log.info(f'Password reset link: {reset_link}')
 
             response = {
                 'success': True,
                 'message': 'If that email is registered, a reset link has been sent.',
             }
-            if app.debug and reset_link:
+            if app.debug and not sent and user:
                 response['debug_link'] = reset_link
             return jsonify(response), 200
 
