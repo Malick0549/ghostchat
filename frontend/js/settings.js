@@ -1,77 +1,93 @@
 /**
- * GHOSTCHAT SETTINGS MODULE
+ * GHOSTCHAT SETTINGS MODULE  v3.2
+ * Keyboard: Enter on any input → save settings
  */
 
 window.SettingsModule = {
     settings: null,
-    
+
     async init() {
-        await this.loadSettings();
+        this.loadSettings();
         this.setupEventListeners();
+        this._syncThemeChips();
     },
-    
+
     loadSettings() {
         const saved = localStorage.getItem('ghostchat_settings');
-        if (saved) {
-            this.settings = JSON.parse(saved);
-        } else {
-            this.settings = {
-                encryptionAlgorithm: 'AES-256-CBC',
-                autoClear: 'never',
-                notifyEncrypt: true,
-                notifyDecrypt: true,
-                soundEffects: false
-            };
-        }
+        this.settings = saved ? JSON.parse(saved) : {
+            encryptionAlgorithm: 'AES-256-CBC',
+            autoClear:           'never',
+            notifyEncrypt:       true,
+            notifyDecrypt:       true,
+            soundEffects:        false,
+        };
         this.render();
     },
-    
+
     render() {
-        const algorithmSelect = document.getElementById('encryptionAlgorithm');
-        const autoClearSelect = document.getElementById('autoClear');
-        const notifyEncrypt = document.getElementById('notifyEncrypt');
-        const notifyDecrypt = document.getElementById('notifyDecrypt');
-        const soundEffects = document.getElementById('soundEffects');
-        
-        if (algorithmSelect) algorithmSelect.value = this.settings.encryptionAlgorithm;
-        if (autoClearSelect) autoClearSelect.value = this.settings.autoClear;
-        if (notifyEncrypt) notifyEncrypt.checked = this.settings.notifyEncrypt;
-        if (notifyDecrypt) notifyDecrypt.checked = this.settings.notifyDecrypt;
-        if (soundEffects) soundEffects.checked = this.settings.soundEffects;
-    },
-    
-    saveSettings() {
-        this.settings = {
-            encryptionAlgorithm: document.getElementById('encryptionAlgorithm').value,
-            autoClear: document.getElementById('autoClear').value,
-            notifyEncrypt: document.getElementById('notifyEncrypt').checked,
-            notifyDecrypt: document.getElementById('notifyDecrypt').checked,
-            soundEffects: document.getElementById('soundEffects').checked
+        const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (el.type === 'checkbox') el.checked = !!val;
+            else el.value = val;
         };
-        
-        localStorage.setItem('ghostchat_settings', JSON.stringify(this.settings));
-        this.showToast('Settings saved!', 'success');
-        this.logActivity('Settings updated', 'success');
+        set('encryptionAlgorithm', this.settings.encryptionAlgorithm);
+        set('autoClear',           this.settings.autoClear);
+        set('notifyEncrypt',       this.settings.notifyEncrypt);
+        set('notifyDecrypt',       this.settings.notifyDecrypt);
+        set('soundEffects',        this.settings.soundEffects);
     },
-    
+
+    saveSettings() {
+        const get     = id => document.getElementById(id);
+        const checked = id => get(id)?.checked ?? false;
+        const val     = id => get(id)?.value    ?? '';
+
+        this.settings = {
+            encryptionAlgorithm: val('encryptionAlgorithm') || 'AES-256-CBC',
+            autoClear:           val('autoClear')           || 'never',
+            notifyEncrypt:       checked('notifyEncrypt'),
+            notifyDecrypt:       checked('notifyDecrypt'),
+            soundEffects:        checked('soundEffects'),
+        };
+
+        localStorage.setItem('ghostchat_settings', JSON.stringify(this.settings));
+        if (window.UI) UI.showToast('Settings saved!', 'success');
+    },
+
     setupEventListeners() {
+        // Save button
         const saveBtn = document.getElementById('saveSettingsBtn');
         if (saveBtn) {
-            const newBtn = saveBtn.cloneNode(true);
-            saveBtn.parentNode.replaceChild(newBtn, saveBtn);
-            newBtn.onclick = () => this.saveSettings();
+            const fresh = saveBtn.cloneNode(true);
+            saveBtn.parentNode.replaceChild(fresh, saveBtn);
+            fresh.addEventListener('click', () => this.saveSettings());
         }
+
+        // Enter on any select → save
+        ['encryptionAlgorithm', 'autoClear'].forEach(id => {
+            document.getElementById(id)?.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); this.saveSettings(); }
+            });
+        });
+
+        // Theme option chips (injected by dashboard template)
+        document.querySelectorAll('.theme-option[data-theme]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                window.themeManager?.set(btn.dataset.theme);
+                this._syncThemeChips();
+            });
+        });
     },
-    
-    showToast(message, type) {
-        if (window.UI && window.UI.showToast) {
-            window.UI.showToast(message, type);
-        } else {
-            alert(message);
-        }
+
+    _syncThemeChips() {
+        const current = window.themeManager?.get() || 'dark';
+        document.querySelectorAll('.theme-option[data-theme]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.theme === current);
+        });
     },
-    
-    logActivity(message, type) {
-        console.log(`[${type.toUpperCase()}] ${message}`);
-    }
+
+    showToast(msg, type) {
+        if (window.UI) UI.showToast(msg, type);
+    },
 };

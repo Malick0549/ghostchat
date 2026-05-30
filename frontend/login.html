@@ -31,13 +31,13 @@
         <h2>Welcome <span>back</span>,<br/>Ghost.</h2>
         <p>Your encrypted workspace is waiting. Sign in to access your secure sessions, message history, and crypto dashboard.</p>
         <div class="session-previews">
-          <div class="session-preview"><i class="fas fa-shield-halved"></i><span>AES-256-GCM session encryption</span></div>
-          <div class="session-preview"><i class="fas fa-rotate"></i><span>Auto-rotating HKDF session keys</span></div>
+          <div class="session-preview"><i class="fas fa-shield-halved"></i><span>AES-256-CBC + PBKDF2 encryption</span></div>
+          <div class="session-preview"><i class="fas fa-rotate"></i><span>Auto-rotating session keys</span></div>
           <div class="session-preview"><i class="fas fa-eye-slash"></i><span>Zero-knowledge server architecture</span></div>
         </div>
       </div>
       <div class="brand-trust">
-        <div class="trust-item"><i class="fas fa-check-circle"></i><span>Password hashed with bcrypt — never stored plaintext</span></div>
+        <div class="trust-item"><i class="fas fa-check-circle"></i><span>Passwords hashed with bcrypt — never stored plaintext</span></div>
         <div class="trust-item"><i class="fas fa-check-circle"></i><span>Session tokens rotated on every login</span></div>
         <div class="trust-item"><i class="fas fa-check-circle"></i><span>CSRF protection on all authenticated routes</span></div>
       </div>
@@ -50,8 +50,12 @@
         <h1 class="form-title" id="login-heading">Sign In</h1>
         <p class="form-subtitle">No account? <a href="register.html">Create one free</a></p>
 
-        <div class="alert alert-error"   id="alertErr" role="alert"><i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span></div>
-        <div class="alert alert-success" id="alertOk"  role="status"><i class="fas fa-check-circle"></i><span id="okMsg"></span></div>
+        <div class="alert alert-error"   id="alertErr" role="alert">
+          <i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span>
+        </div>
+        <div class="alert alert-success" id="alertOk"  role="status">
+          <i class="fas fa-check-circle"></i><span id="okMsg"></span>
+        </div>
 
         <form id="loginForm" novalidate autocomplete="on">
           <input type="hidden" id="csrfToken" />
@@ -62,42 +66,42 @@
               <i class="fas fa-user icon"></i>
               <input type="text" id="loginId" name="username" class="form-input"
                 placeholder="ghost_user or email@domain.com"
-                autocomplete="username" required aria-required="true" />
+                autocomplete="username" required aria-required="true"
+                tabindex="1" autofocus />
             </div>
           </div>
 
           <div class="form-group">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
               <label class="form-label" for="loginPw" style="margin:0;">Password</label>
-              <a href="forgot-password.html" class="forgot-link">Forgot password?</a>
+              <a href="forgot-password.html" class="forgot-link" tabindex="10">Forgot password?</a>
             </div>
             <div class="input-wrap">
               <i class="fas fa-lock icon"></i>
               <input type="password" id="loginPw" name="password" class="form-input"
                 placeholder="Your password" autocomplete="current-password"
-                required aria-required="true" />
+                required aria-required="true" tabindex="2" />
             </div>
           </div>
 
           <div class="form-group" style="margin-bottom:24px;">
             <label class="form-check" for="rememberMe">
-              <input type="checkbox" id="rememberMe" name="remember_me" />
+              <input type="checkbox" id="rememberMe" name="remember_me" tabindex="3" />
               <span>Keep me signed in for 30 days</span>
             </label>
           </div>
 
-          <button type="submit" class="btn-submit" id="btnLogin">
+          <button type="submit" class="btn-submit" id="btnLogin" tabindex="4">
             <i class="fas fa-right-to-bracket"></i>
             <span>SIGN IN SECURELY</span>
           </button>
         </form>
 
         <p style="text-align:center;margin-top:20px;font-size:.8125rem;color:var(--t3);">
-          <a href="index.html" style="color:var(--t2);">
+          <a href="index.html" style="color:var(--t2);" tabindex="5">
             <i class="fas fa-arrow-left" style="font-size:.7rem;"></i> Back to home
           </a>
         </p>
-
       </div>
     </section>
 
@@ -108,12 +112,16 @@
 <script src="js/api.js"></script>
 <script>
 (function () {
-  // Fetch CSRF token from server
+  'use strict';
+
+  // Fetch CSRF token — api.js already calls this on load, but we store
+  // it in the hidden input as a fallback for slow cookie propagation.
   fetch('/api/csrf-token', { credentials: 'include' })
     .then(r => r.ok ? r.json() : null)
     .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
     .catch(() => {});
 
+  // ── Alert helpers ────────────────────────────────────────────────
   function showErr(m) {
     document.getElementById('errMsg').textContent = m;
     document.getElementById('alertErr').classList.add('show');
@@ -129,25 +137,49 @@
     document.getElementById('alertOk').classList.remove('show');
   }
 
+  // ── Keyboard navigation ──────────────────────────────────────────
+  // Enter on username → jump to password
+  document.getElementById('loginId').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('loginPw').focus();
+    }
+    if (e.key === 'Escape') this.value = '';
+  });
+
+  // Enter on password → submit form
+  document.getElementById('loginPw').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('loginForm').requestSubmit();
+    }
+    if (e.key === 'Escape') this.value = '';
+  });
+
+  // Clear errors on typing
   ['loginId', 'loginPw'].forEach(id =>
     document.getElementById(id)?.addEventListener('input', hideAlerts)
   );
 
-  document.getElementById('loginForm')?.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
-      e.preventDefault();
-      this.requestSubmit();
-    }
-  });
-
+  // ── Form submit ──────────────────────────────────────────────────
   document.getElementById('loginForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     hideAlerts();
 
-    const id = document.getElementById('loginId').value.trim();
-    const pw = document.getElementById('loginPw').value;
-    if (!id) { showErr('Please enter your username or email.'); return; }
-    if (!pw) { showErr('Please enter your password.'); return; }
+    const username = document.getElementById('loginId').value.trim();
+    const password = document.getElementById('loginPw').value;
+    const remember = document.getElementById('rememberMe').checked;
+
+    if (!username) {
+      showErr('Please enter your username or email.');
+      document.getElementById('loginId').focus();
+      return;
+    }
+    if (!password) {
+      showErr('Please enter your password.');
+      document.getElementById('loginPw').focus();
+      return;
+    }
 
     const btn = document.getElementById('btnLogin');
     btn.classList.add('btn-loading');
@@ -158,28 +190,34 @@
         method: 'POST',
         credentials: 'include',
         headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-          'X-CSRF-Token': document.getElementById('csrfToken').value,
+          'Content-Type':    'application/json',
+          'X-Requested-With':'XMLHttpRequest',
+          'X-CSRF-Token': window.GhostChatAPI.getCsrfToken()
+                       || document.getElementById('csrfToken').value
+                       || '',
         },
-        body: JSON.stringify({
-          username:    id,
-          password:    pw,
-          remember_me: document.getElementById('rememberMe').checked,
-        }),
+        body: JSON.stringify({ username, password, remember_me: remember }),
       });
       const data = await res.json();
 
       if (res.ok && data.success) {
-        if (data.user)  localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
-        if (data.token) sessionStorage.setItem('gc_token', data.token);
+        if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
         showOk('Login successful! Redirecting…');
-        setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
+        setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
+      } else if (res.status === 401) {
+        showErr('Invalid credentials. Please try again.');
+        document.getElementById('loginPw').value = '';
+        document.getElementById('loginPw').focus();
+      } else if (res.status === 403) {
+        // CSRF expired — refetch and ask user to retry
+        await window.GhostChatAPI.fetchCsrfToken();
+        document.getElementById('csrfToken').value = window.GhostChatAPI.getCsrfToken() || '';
+        showErr('Security token refreshed. Please try again.');
       } else {
-        showErr(data.error || data.message || 'Invalid credentials. Please try again.');
+        showErr(data.error || 'Login failed. Please try again.');
       }
     } catch (_) {
-      showErr('Cannot reach the server. Please check your connection and try again.');
+      showErr('Cannot reach the server. Please check your connection.');
     } finally {
       btn.classList.remove('btn-loading');
       btn.disabled = false;

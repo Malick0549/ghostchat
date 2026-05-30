@@ -50,12 +50,16 @@
         <h1 class="form-title" id="reg-heading">Create Account</h1>
         <p class="form-subtitle">Already have one? <a href="login.html">Sign in instead</a></p>
 
-        <div class="alert alert-error"   id="alertErr" role="alert"><i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span></div>
-        <div class="alert alert-success" id="alertOk"  role="status"><i class="fas fa-check-circle"></i><span id="okMsg"></span></div>
+        <div class="alert alert-error"   id="alertErr" role="alert">
+          <i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span>
+        </div>
+        <div class="alert alert-success" id="alertOk"  role="status">
+          <i class="fas fa-check-circle"></i><span id="okMsg"></span>
+        </div>
 
         <!-- Avatar upload -->
         <div class="avatar-upload">
-          <div class="avatar-preview" id="avatarPreview">
+          <div class="avatar-preview" id="avatarPreview" aria-label="Avatar preview">
             <i class="fas fa-user" aria-hidden="true"></i>
           </div>
           <div>
@@ -64,26 +68,32 @@
             </button>
             <p class="text-ghost" style="font-size:.7rem;margin-top:4px;">Optional · JPG/PNG/WEBP · max 2 MB</p>
           </div>
-          <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp" style="display:none;" />
+          <input type="file" id="avatarInput" accept="image/jpeg,image/png,image/webp"
+                 style="display:none;" aria-hidden="true" />
         </div>
 
         <form id="regForm" novalidate autocomplete="on">
           <input type="hidden" id="csrfToken" />
           <input type="hidden" id="avatarData" />
 
+          <!-- Tab order: firstName → lastName → username → email → password → confirm → terms → submit -->
           <div class="field-row">
             <div class="form-group">
               <label class="form-label" for="firstName">First name</label>
               <div class="input-wrap">
                 <i class="fas fa-id-badge icon"></i>
-                <input type="text" id="firstName" class="form-input" placeholder="Ama" autocomplete="given-name" required />
+                <input type="text" id="firstName" name="first_name" class="form-input"
+                  placeholder="Ama" autocomplete="given-name"
+                  required tabindex="1" />
               </div>
             </div>
             <div class="form-group">
               <label class="form-label" for="lastName">Last name</label>
               <div class="input-wrap">
                 <i class="fas fa-id-badge icon"></i>
-                <input type="text" id="lastName" class="form-input" placeholder="Asante" autocomplete="family-name" required />
+                <input type="text" id="lastName" name="last_name" class="form-input"
+                  placeholder="Asante" autocomplete="family-name"
+                  required tabindex="2" />
               </div>
             </div>
           </div>
@@ -92,7 +102,10 @@
             <label class="form-label" for="regUsername">Username</label>
             <div class="input-wrap">
               <i class="fas fa-at icon"></i>
-              <input type="text" id="regUsername" class="form-input" placeholder="ghost_ama" autocomplete="username" required minlength="3" maxlength="30" pattern="[a-zA-Z0-9_]+" />
+              <input type="text" id="regUsername" name="username" class="form-input"
+                placeholder="ghost_ama" autocomplete="username"
+                required minlength="3" maxlength="30" pattern="[a-zA-Z0-9_]+"
+                tabindex="3" />
             </div>
           </div>
 
@@ -100,7 +113,9 @@
             <label class="form-label" for="regEmail">Email address</label>
             <div class="input-wrap">
               <i class="fas fa-envelope icon"></i>
-              <input type="email" id="regEmail" class="form-input" placeholder="ama@example.com" autocomplete="email" required />
+              <input type="email" id="regEmail" name="email" class="form-input"
+                placeholder="ama@example.com" autocomplete="email"
+                required tabindex="4" />
             </div>
           </div>
 
@@ -108,7 +123,9 @@
             <label class="form-label" for="regPw">Password</label>
             <div class="input-wrap">
               <i class="fas fa-lock icon"></i>
-              <input type="password" id="regPw" class="form-input" placeholder="Create a strong password" autocomplete="new-password" required minlength="8" />
+              <input type="password" id="regPw" name="password" class="form-input"
+                placeholder="Create a strong password" autocomplete="new-password"
+                required minlength="8" tabindex="5" />
             </div>
             <div class="pw-strength">
               <div class="pw-bar"><div class="pw-fill" id="pwFill"></div></div>
@@ -120,18 +137,20 @@
             <label class="form-label" for="regPwConfirm">Confirm password</label>
             <div class="input-wrap">
               <i class="fas fa-lock-open icon"></i>
-              <input type="password" id="regPwConfirm" class="form-input" placeholder="Repeat your password" autocomplete="new-password" required />
+              <input type="password" id="regPwConfirm" name="confirm_password" class="form-input"
+                placeholder="Repeat your password" autocomplete="new-password"
+                required tabindex="6" />
             </div>
           </div>
 
           <div class="form-group" style="margin-bottom:24px;">
             <label class="form-check" for="terms">
-              <input type="checkbox" id="terms" required />
+              <input type="checkbox" id="terms" required tabindex="7" />
               <span>I understand this is an academic project and agree to responsible use of encryption tools.</span>
             </label>
           </div>
 
-          <button type="submit" class="btn-submit" id="btnRegister">
+          <button type="submit" class="btn-submit" id="btnRegister" tabindex="8">
             <i class="fas fa-user-plus"></i>
             <span>CREATE ACCOUNT</span>
           </button>
@@ -144,130 +163,183 @@
 
 <script src="js/ui.js"></script>
 <script src="js/api.js"></script>
-// Add to register.html before closing </body>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('regForm');
-    if (form) {
-        const inputs = ['firstName', 'lastName', 'regUsername', 'regEmail', 'regPw', 'regPwConfirm', 'terms'];
-        inputs.forEach((id, index) => {
-            const input = document.getElementById(id);
-            if (input && input.type !== 'checkbox') {
-                input.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (index === inputs.length - 1) {
-                            document.getElementById('btnRegister').click();
-                        } else {
-                            const nextId = inputs[index + 1];
-                            const nextInput = document.getElementById(nextId);
-                            if (nextInput) {
-                                if (nextInput.type === 'checkbox') {
-                                    nextInput.focus();
-                                } else {
-                                    nextInput.focus();
-                                    nextInput.select();
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-        });
-    }
-});
-</script>
-<script>
-(function(){
-  // CSRF
-  fetch('/api/csrf-token',{credentials:'include'})
-    .then(r=>r.ok?r.json():null)
-    .then(d=>{ if(d?.csrf_token) document.getElementById('csrfToken').value=d.csrf_token; })
-    .catch(()=>{});
+(function () {
+  'use strict';
 
-  // Avatar
-  document.getElementById('avatarBtn').addEventListener('click', () => document.getElementById('avatarInput').click());
-  document.getElementById('avatarInput').addEventListener('change', function(){
+  // ── CSRF ──────────────────────────────────────────────────────────────────
+  // api.js already calls fetchCsrfToken() on load; the hidden input is a
+  // belt-and-suspenders fallback for browsers where cookies load slowly.
+  fetch('/api/csrf-token', { credentials: 'include' })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
+    .catch(() => {});
+
+  // ── Avatar preview ────────────────────────────────────────────────────────
+  document.getElementById('avatarBtn').addEventListener('click', () =>
+    document.getElementById('avatarInput').click()
+  );
+  document.getElementById('avatarInput').addEventListener('change', function () {
     const file = this.files[0];
-    if(!file) return;
-    if(file.size > 2*1024*1024){ UI.showToast('Image must be under 2 MB','error'); return; }
-    const r = new FileReader();
-    r.onload = e => {
-      document.getElementById('avatarPreview').innerHTML = `<img src="${e.target.result}" alt="Avatar preview" />`;
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { UI.showToast('Image must be under 2 MB', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('avatarPreview').innerHTML =
+        `<img src="${e.target.result}" alt="Avatar preview" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`;
       document.getElementById('avatarData').value = e.target.result;
     };
-    r.readAsDataURL(file);
+    reader.readAsDataURL(file);
   });
 
-  // Password strength
-  document.getElementById('regPw').addEventListener('input', function(){
-    const v=this.value, fill=document.getElementById('pwFill'), lbl=document.getElementById('pwLabel');
-    let s=0;
-    if(v.length>=8)s++; if(/[A-Z]/.test(v))s++; if(/[0-9]/.test(v))s++; if(/[^A-Za-z0-9]/.test(v))s++;
-    const levels=[,'weak','fair','good','strong'], labels=[,'Too weak','Fair','Good','Strong ✓'];
-    fill.className=`pw-fill ${levels[s]||''}`;
-    lbl.textContent = v.length ? `Strength: ${labels[s]||'Too weak'}` : '';
+  // ── Password strength meter ───────────────────────────────────────────────
+  document.getElementById('regPw').addEventListener('input', function () {
+    const v = this.value;
+    const fill  = document.getElementById('pwFill');
+    const label = document.getElementById('pwLabel');
+    let score = 0;
+    if (v.length >= 8)          score++;
+    if (/[A-Z]/.test(v))        score++;
+    if (/[0-9]/.test(v))        score++;
+    if (/[^A-Za-z0-9]/.test(v)) score++;
+    const levels = ['', 'weak', 'fair', 'good', 'strong'];
+    const labels = ['', 'Too weak', 'Fair', 'Good', 'Strong ✓'];
+    fill.className    = `pw-fill ${levels[score] || ''}`;
+    label.textContent = v.length ? `Strength: ${labels[score] || 'Too weak'}` : '';
   });
 
-  function showErr(m){ document.getElementById('errMsg').textContent=m; document.getElementById('alertErr').classList.add('show'); document.getElementById('alertOk').classList.remove('show'); }
-  function showOk(m) { document.getElementById('okMsg').textContent=m;  document.getElementById('alertOk').classList.add('show');  document.getElementById('alertErr').classList.remove('show'); }
+  // ── Alert helpers ─────────────────────────────────────────────────────────
+  function showErr(m) {
+    document.getElementById('errMsg').textContent = m;
+    document.getElementById('alertErr').classList.add('show');
+    document.getElementById('alertOk').classList.remove('show');
+    document.getElementById('alertErr').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  function showOk(m) {
+    document.getElementById('okMsg').textContent = m;
+    document.getElementById('alertOk').classList.add('show');
+    document.getElementById('alertErr').classList.remove('show');
+  }
+  function hideAlerts() {
+    document.getElementById('alertErr').classList.remove('show');
+    document.getElementById('alertOk').classList.remove('show');
+  }
 
-  document.getElementById('regForm')?.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+  // ── Tab / Enter keyboard navigation ──────────────────────────────────────
+  // Ordered list of field IDs — Enter advances to the next field,
+  // Enter on the last field or Tab from confirm submits the form.
+  const FIELDS = ['firstName', 'lastName', 'regUsername', 'regEmail', 'regPw', 'regPwConfirm'];
+
+  FIELDS.forEach((id, idx) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (idx < FIELDS.length - 1) {
+          // Move to next field
+          document.getElementById(FIELDS[idx + 1])?.focus();
+        } else {
+          // Last field → move focus to terms checkbox
+          document.getElementById('terms')?.focus();
+        }
+      }
+      // Escape clears the current field
+      if (e.key === 'Escape') this.value = '';
+    });
+  });
+
+  // Enter on terms checkbox → submit
+  document.getElementById('terms')?.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      this.requestSubmit();
+      document.getElementById('regForm').requestSubmit();
     }
   });
 
-  document.getElementById('regForm').addEventListener('submit', async function(e){
+  // Clear errors when user starts typing
+  FIELDS.forEach(id => document.getElementById(id)?.addEventListener('input', hideAlerts));
+
+  // ── Form submit ───────────────────────────────────────────────────────────
+  document.getElementById('regForm').addEventListener('submit', async function (e) {
     e.preventDefault();
-    document.getElementById('alertErr').classList.remove('show');
-    document.getElementById('alertOk').classList.remove('show');
+    hideAlerts();
 
-    const fn=document.getElementById('firstName').value.trim();
-    const ln=document.getElementById('lastName').value.trim();
-    const un=document.getElementById('regUsername').value.trim();
-    const em=document.getElementById('regEmail').value.trim();
-    const pw=document.getElementById('regPw').value;
-    const pc=document.getElementById('regPwConfirm').value;
+    const fn = document.getElementById('firstName').value.trim();
+    const ln = document.getElementById('lastName').value.trim();
+    const un = document.getElementById('regUsername').value.trim();
+    const em = document.getElementById('regEmail').value.trim();
+    const pw = document.getElementById('regPw').value;
+    const pc = document.getElementById('regPwConfirm').value;
 
-    if(!fn||!ln){ showErr('Please enter your first and last name.'); return; }
-    if(!/^[a-zA-Z0-9_]{3,30}$/.test(un)){ showErr('Username: 3–30 chars, letters/numbers/underscores only.'); return; }
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){ showErr('Please enter a valid email address.'); return; }
-    if(pw.length<8){ showErr('Password must be at least 8 characters.'); return; }
-    if(pw!==pc){ showErr('Passwords do not match.'); return; }
-    if(!document.getElementById('terms').checked){ showErr('Please agree to the terms to continue.'); return; }
+    // Validation
+    if (!fn || !ln) {
+      showErr('Please enter your first and last name.');
+      document.getElementById('firstName').focus();
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(un)) {
+      showErr('Username: 3–30 characters, letters/numbers/underscores only.');
+      document.getElementById('regUsername').focus();
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+      showErr('Please enter a valid email address.');
+      document.getElementById('regEmail').focus();
+      return;
+    }
+    if (pw.length < 8) {
+      showErr('Password must be at least 8 characters.');
+      document.getElementById('regPw').focus();
+      return;
+    }
+    if (pw !== pc) {
+      showErr('Passwords do not match.');
+      document.getElementById('regPwConfirm').focus();
+      return;
+    }
+    if (!document.getElementById('terms').checked) {
+      showErr('Please agree to the terms to continue.');
+      document.getElementById('terms').focus();
+      return;
+    }
 
-    const btn=document.getElementById('btnRegister');
-    btn.classList.add('btn-loading'); btn.disabled=true;
+    const btn = document.getElementById('btnRegister');
+    btn.classList.add('btn-loading');
+    btn.disabled = true;
 
-    try{
-      const payload={ first_name:fn, last_name:ln, username:un, email:em, password:pw };
-      const av=document.getElementById('avatarData').value;
-      if(av) payload.avatar_data=av;
+    try {
+      const payload = { first_name: fn, last_name: ln, username: un, email: em, password: pw };
+      const av = document.getElementById('avatarData').value;
+      if (av) payload.avatar_data = av;
 
-      const res  = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/register`,{
-        method:'POST', credentials:'include',
-        headers:{
-          'Content-Type':'application/json',
+      const res = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/register`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type':    'application/json',
           'X-Requested-With':'XMLHttpRequest',
-          'X-CSRF-Token': document.getElementById('csrfToken').value,
+          // Use cookie value directly — most reliable on Render
+          'X-CSRF-Token': window.GhostChatAPI.getCsrfToken()
+                       || document.getElementById('csrfToken').value
+                       || '',
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
 
-      if(res.ok && data.success){
-        if(data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+      if (res.ok && data.success) {
+        if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
         showOk('Account created! Redirecting to dashboard…');
-        setTimeout(()=>window.location.href='dashboard.html', 1000);
+        setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
       } else {
         showErr(data.error || data.message || 'Registration failed. Please try again.');
       }
-    } catch(err){
-      showErr('Cannot reach server. Make sure Flask is running on port 5000.');
+    } catch (_) {
+      showErr('Cannot reach the server. Please check your connection.');
     } finally {
-      btn.classList.remove('btn-loading'); btn.disabled=false;
+      btn.classList.remove('btn-loading');
+      btn.disabled = false;
     }
   });
 })();

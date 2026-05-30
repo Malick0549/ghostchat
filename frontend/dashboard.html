@@ -310,7 +310,11 @@
       document.getElementById('ddEmail').textContent = u.email||'—';
       if(u.avatar){
         const el=document.getElementById('avatarInitials');
-        el.outerHTML=`<img src="${u.avatar}" alt="${fn}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.style.display='none';" />`;
+        // Build absolute URL so it works on Render.com with relative paths
+        const avatarSrc = u.avatar.startsWith('http')
+          ? u.avatar
+          : `${window.location.origin}${u.avatar.startsWith('/') ? '' : '/'}${u.avatar}`;
+        el.outerHTML=`<img id="avatarImg" src="${avatarSrc}?t=${Date.now()}" alt="${fn}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span id=\'avatarInitials\'>${fn[0]||'G'}</span>';" />`;
       }
     }catch(_){}
   }
@@ -405,20 +409,127 @@
   });
 
   /* ── Keyboard shortcuts ──────────────────────────────────────── */
-  document.addEventListener('keydown',e=>{
-    if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
-    if(e.altKey){
-      if(e.key==='e'){ e.preventDefault(); navigate('encrypt'); }
-      if(e.key==='d'){ e.preventDefault(); navigate('decrypt'); }
-      if(e.key==='h'){ e.preventDefault(); navigate('history'); }
+  // Dashboard navigation shortcuts (only when not typing in an input/textarea)
+  //
+  //   Alt + E  →  Encrypt page
+  //   Alt + D  →  Decrypt page
+  //   Alt + H  →  History page
+  //   Alt + I  →  Integrations page
+  //   Alt + P  →  Profile page
+  //   Alt + S  →  Settings page
+  //   Alt + L  →  Logout
+  //   /        →  Focus global search bar
+  //   Escape   →  Close sidebar / dropdown / clear search
+  //   ?        →  Show keyboard shortcuts help toast
+
+  document.addEventListener('keydown', e => {
+    const inField = e.target.tagName === 'INPUT'
+                 || e.target.tagName === 'TEXTAREA'
+                 || e.target.tagName === 'SELECT'
+                 || e.target.isContentEditable;
+
+    // Escape — close sidebar, dropdown, or blur search
+    if (e.key === 'Escape') {
+      closeSidebar();
+      dropdown.classList.remove('open');
+      avatarBtn.setAttribute('aria-expanded', 'false');
+      const search = document.getElementById('globalSearch');
+      if (document.activeElement === search) search.blur();
+      return;
     }
-    if(e.key==='Escape') closeSidebar();
+
+    // / — focus search bar (unless already in a field)
+    if (e.key === '/' && !inField) {
+      e.preventDefault();
+      const search = document.getElementById('globalSearch');
+      if (search) { search.focus(); search.select(); }
+      return;
+    }
+
+    // ? — show shortcuts help
+    if (e.key === '?' && !inField) {
+      e.preventDefault();
+      UI.showToast(
+        'Shortcuts: Alt+E Encrypt · Alt+D Decrypt · Alt+H History · ' +
+        'Alt+I Integrations · Alt+P Profile · Alt+S Settings · ' +
+        'Alt+L Logout · / Search · Esc Close',
+        'info',
+        6000
+      );
+      return;
+    }
+
+    if (inField) return;
+
+    // Alt + key navigation
+    if (e.altKey) {
+      const map = {
+        e: 'encrypt', d: 'decrypt', h: 'history',
+        i: 'integrations', p: 'profile', s: 'settings',
+      };
+      const page = map[e.key.toLowerCase()];
+      if (page) { e.preventDefault(); navigate(page); return; }
+
+      // Alt + L → logout
+      if (e.key.toLowerCase() === 'l') { e.preventDefault(); doLogout(); return; }
+    }
+
+    // Dashboard-page specific shortcuts (no modifier needed when not in a field)
+    // Enter on encrypt page → focus plaintext if empty, else submit
+    if (e.key === 'Enter') {
+      const encBtn = document.getElementById('encryptBtn');
+      const decBtn = document.getElementById('decryptBtn');
+      if (encBtn) {
+        e.preventDefault();
+        const plaintext = document.getElementById('plaintext');
+        if (plaintext && !plaintext.value.trim()) plaintext.focus();
+        else encBtn.click();
+      } else if (decBtn) {
+        e.preventDefault();
+        const ciphertext = document.getElementById('ciphertext');
+        if (ciphertext && !ciphertext.value.trim()) ciphertext.focus();
+        else decBtn.click();
+      }
+    }
+  });
+
+  // Tab order enhancement for encrypt page inputs
+  // (plaintext → password → button, Enter advances between them)
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const active = document.activeElement;
+
+    // Encrypt page: plaintext → password → submit
+    if (active?.id === 'plaintext') {
+      e.preventDefault();
+      document.getElementById('encryptPassword')?.focus();
+    } else if (active?.id === 'encryptPassword') {
+      e.preventDefault();
+      document.getElementById('encryptBtn')?.click();
+    }
+
+    // Decrypt page: ciphertext → password → submit
+    if (active?.id === 'ciphertext') {
+      e.preventDefault();
+      document.getElementById('decryptPassword')?.focus();
+    } else if (active?.id === 'decryptPassword') {
+      e.preventDefault();
+      document.getElementById('decryptBtn')?.click();
+    }
   });
 
   /* ── Init ─────────────────────────────────────────────────────── */
   loadUserUI();
   navigate('encrypt');
   API.ensureSession().catch(()=>{});
+
+  // Show a one-time hint about keyboard shortcuts
+  if (!localStorage.getItem('gc_shortcuts_shown')) {
+    setTimeout(() => {
+      UI.showToast('Tip: Press ? to see keyboard shortcuts', 'info', 4000);
+      localStorage.setItem('gc_shortcuts_shown', '1');
+    }, 2000);
+  }
 })();
 </script>
 
