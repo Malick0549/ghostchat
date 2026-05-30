@@ -1,5 +1,5 @@
 /**
- * GHOSTCHAT DASHBOARD CONTROLLER  v3.0
+ * GHOSTCHAT DASHBOARD CONTROLLER  v3.1
  * Manages auth verification, page routing, session monitoring,
  * activity logs, and event wiring.
  *
@@ -14,6 +14,7 @@ class GhostChatDashboard {
         this.activityLogs   = [];
         this._sessionTimer  = null;
         this._inited        = false;
+        this._notificationCount = 0;
     }
 
     async init() {
@@ -27,6 +28,7 @@ class GhostChatDashboard {
         this._startSessionMonitoring();
         await this._loadActivityLogs();
         this._setupGlobalListeners();
+        this._setupNotificationSystem();
         this._inited = true;
 
         console.log('[GhostChat] Dashboard initialised for:', this.user?.username);
@@ -121,6 +123,67 @@ class GhostChatDashboard {
             `).join('');
     }
 
+    /* ── Notification System ───────────────────────────────────── */
+    _setupNotificationSystem() {
+        // Listen for custom events to show notifications
+        window.addEventListener('ghostchat:encrypt', () => {
+            this._showNotification('Message encrypted successfully', 'success');
+            this._updateNotificationBadge(1);
+        });
+        
+        window.addEventListener('ghostchat:decrypt', () => {
+            this._showNotification('Message decrypted successfully', 'success');
+            this._updateNotificationBadge(1);
+        });
+        
+        window.addEventListener('ghostchat:error', (e) => {
+            this._showNotification(e.detail?.message || 'Operation failed', 'error');
+            this._updateNotificationBadge(1);
+        });
+        
+        // Also listen for history saves
+        if (window.HistoryModule && window.HistoryModule.addMessage) {
+            const originalAdd = window.HistoryModule.addMessage;
+            window.HistoryModule.addMessage = (...args) => {
+                this._showNotification('Message saved to history', 'info');
+                this._updateNotificationBadge(1);
+                return originalAdd.apply(window.HistoryModule, args);
+            };
+        }
+        
+        // Setup notification bell click to clear badges
+        const notifBtn = document.querySelector('.notification-btn');
+        if (notifBtn) {
+            notifBtn.addEventListener('click', () => {
+                this._notificationCount = 0;
+                this.updateNotificationBadge(0);
+            });
+        }
+    }
+    
+    _showNotification(message, type = 'info') {
+        // Show toast notification
+        if (window.UI && window.UI.showToast) {
+            window.UI.showToast(message, type);
+        }
+        
+        // Also show browser notification if permitted
+        if (Notification.permission === 'granted') {
+            new Notification('GhostChat', { body: message, icon: '/favicon.ico' });
+        }
+    }
+    
+    _updateNotificationBadge(increment = 1) {
+        this._notificationCount += increment;
+        this.updateNotificationBadge(this._notificationCount);
+        
+        // Auto-decrement after 5 seconds
+        setTimeout(() => {
+            this._notificationCount = Math.max(0, this._notificationCount - 1);
+            this.updateNotificationBadge(this._notificationCount);
+        }, 5000);
+    }
+
     /* ── Global event listeners ────────────────────────────────── */
     _setupGlobalListeners() {
         // Log every encryption/decryption as activity
@@ -136,19 +199,34 @@ class GhostChatDashboard {
             await window.GhostChatAPI.logActivity(e.detail?.message || 'Operation failed', 'error');
             await this._loadActivityLogs();
         });
+        
+        // Request notification permission on page load
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
     }
 
     /* ── Notification badge update ─────────────────────────────── */
     updateNotificationBadge(count) {
+        // Update bell icon badge
         const badge = document.getElementById('notifBadge');
-        const navBadge = document.getElementById('notificationCount');
         if (badge) {
             badge.textContent = count;
-            badge.style.display = count > 0 ? '' : 'none';
+            badge.style.display = count > 0 ? 'flex' : 'none';
         }
+        
+        // Update sidebar notification count
+        const navBadge = document.getElementById('notificationCount');
         if (navBadge) {
             navBadge.textContent = count;
-            navBadge.style.display = count > 0 ? '' : 'none';
+            navBadge.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        
+        // Update page title
+        if (count > 0) {
+            document.title = `(${count}) GhostChat - Secure Messaging`;
+        } else {
+            document.title = 'GhostChat - Secure Messaging';
         }
     }
 
