@@ -294,11 +294,12 @@ def create_app(test_config=None):
     def _get_reset_url(token: str) -> str:
         base_url = os.environ.get('RESET_URL_BASE')
         if base_url:
-            return f"{base_url.rstrip('/')}/forgot-password.html?token={token}"
-
+           return f"{base_url.rstrip('/')}/reset-password?token={token}"
+    
         host = request.headers.get('X-Forwarded-Host') or request.host
         scheme = 'https' if _is_https() else 'http'
-        return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
+    # Use /reset-password instead of /forgot-password.html?token=
+        return f"{scheme}://{host.rstrip('/')}/reset-password?token={token}"
 
     # UPDATED: _send_email function - tries Brevo first, falls back to SMTP
     def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
@@ -504,14 +505,16 @@ def create_app(test_config=None):
                     f"This link expires in 15 minutes. If you did not request a reset, you can safely ignore this message.\n\n"
                     f"— GhostChat Security Team"
                 )
-                html = (
-                    f"<p>Hello,</p>"
-                    f"<p>A password reset request was received for your GhostChat account. "
-                    f"If this was you, click the link below to reset your password:</p>"
-                    f"<p><a href=\"{reset_link}\">Reset your password</a></p>"
-                    f"<p>This link expires in 15 minutes. If you did not request a reset, you can safely ignore this message.</p>"
-                    f"<p>— GhostChat Security Team</p>"
-                )
+                html = f"""
+<p>Hello,</p>
+<p>A password reset request was received for your GhostChat account.</p>
+<p>Click the button below to reset your password (expires in 15 minutes):</p>
+<p><a href="{reset_link}" style="background: #00f0ff; color: #000; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Reset Password</a></p>
+<p>If the button doesn't work, copy and paste this link into your browser:</p>
+<p style="word-break: break-all; background: #1a1a2e; padding: 10px; border-radius: 6px; font-family: monospace;">{reset_link}</p>
+<p>This link expires in 15 minutes.</p>
+<p>— GhostChat Security Team</p>
+"""
 
                 sent = _send_email(
                     subject='GhostChat Password Reset',
