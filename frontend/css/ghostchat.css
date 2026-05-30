@@ -677,3 +677,28 @@ select.form-input   { padding: 10px 14px; cursor: pointer; }
   .cyber-panel { padding:20px; }
 }
 @media(min-width:769px) { .hamburger-menu { display:none !important; } }
+/* Persistent Toast Styles - Notifications stay until clicked */
+.persistent-toast {
+    cursor: pointer;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.persistent-toast:hover {
+    transform: translateX(-4px);
+}
+
+.toast-close {
+    background: none;
+    border: none;
+    color: var(--t3);
+    cursor: pointer;
+    margin-left: 12px;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.toast-close:hover {
+    color: var(--red);
+    background: rgba(255, 255, 255, 0.1);
+}
