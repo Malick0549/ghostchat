@@ -56,56 +56,6 @@ def _is_https():
     )
 
 
-# ============================================================
-# ADDED: Brevo API email function (does not affect anything else)
-# ============================================================
-def _send_email_brevo(recipient_email: str, subject: str, html_body: str, text_body: str) -> bool:
-    """Send email using Brevo API (works on Render free tier)."""
-    try:
-        import requests
-        
-        api_key = os.environ.get('BREVO_API_KEY')
-        sender_email = os.environ.get('BREVO_SENDER_EMAIL')
-        
-        if not api_key or not sender_email:
-            return False
-        
-        url = "https://api.brevo.com/v3/smtp/email"
-        
-        headers = {
-            "accept": "application/json",
-            "api-key": api_key,
-            "content-type": "application/json"
-        }
-        
-        data = {
-            "sender": {"email": sender_email, "name": "GhostChat Security"},
-            "to": [{"email": recipient_email}],
-            "subject": subject,
-            "htmlContent": html_body,
-            "textContent": text_body
-        }
-        
-        response = requests.post(url, json=data, headers=headers, timeout=15)
-        
-        if response.status_code in (200, 201):
-            log.info(f'Password reset email sent to {recipient_email} via Brevo')
-            return True
-        else:
-            log.error(f'Brevo API error: {response.status_code}')
-            return False
-            
-    except ImportError:
-        log.error('Requests library not installed')
-        return False
-    except Exception as e:
-        log.error(f'Brevo email failed: {e}')
-        return False
-# ============================================================
-# END OF ADDED FUNCTION
-# ============================================================
-
-
 def create_app(test_config=None):
 
     # ── Flask app ──────────────────────────────────────────────────────────────
@@ -300,19 +250,7 @@ def create_app(test_config=None):
         scheme = 'https' if _is_https() else 'http'
         return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
 
-    # UPDATED: _send_email function - tries Brevo first, falls back to SMTP
     def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
-        # Try Brevo first (works on Render free tier)
-        brevo_api_key = os.environ.get('BREVO_API_KEY')
-        brevo_sender = os.environ.get('BREVO_SENDER_EMAIL')
-        
-        if brevo_api_key and brevo_sender:
-            brevo_result = _send_email_brevo(recipient, subject, html_body, text_body)
-            if brevo_result:
-                return True
-            log.warning('Brevo failed, falling back to SMTP')
-        
-        # Fallback to original SMTP (kept exactly as is)
         smtp_host = os.environ.get('SMTP_HOST')
         smtp_port = int(os.environ.get('SMTP_PORT', '587'))
         smtp_user = os.environ.get('SMTP_USER')
