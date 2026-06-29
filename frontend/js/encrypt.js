@@ -152,16 +152,42 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const phone = prompt('WhatsApp phone number (with country code, e.g. +233…):');
         if (phone) {
-            // FIXED: Use raw emoji string with proper encoding
+            const cleanPhone = phone.replace(/\D/g, '');
             const message = this._lastPacket;
-            const encodedMessage = encodeURIComponent(message);
-            const url = `https://wa.me/${phone.replace(/\D/g,'')}?text=${encodedMessage}`;
             
-            const win = window.open(url, '_blank');
-            if (!win) {
-                if (window.UI) UI.showToast('Please allow popups or copy the link manually', 'info');
+            // Encode the message properly for WhatsApp
+            const encodedMessage = encodeURIComponent(message);
+            
+            // Use the api.whatsapp.com format which handles emojis better
+            const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedMessage}`;
+            
+            try {
+                const win = window.open(url, '_blank');
+                if (!win) {
+                    // Popup blocked - copy to clipboard instead
+                    navigator.clipboard.writeText(message)
+                        .then(() => {
+                            if (window.UI) UI.showToast('Message copied! Open WhatsApp and paste it.', 'success');
+                            // Also open the regular WhatsApp link as fallback
+                            window.open(`https://wa.me/${cleanPhone}`, '_blank');
+                        })
+                        .catch(() => {
+                            if (window.UI) UI.showToast('Please copy the message manually.', 'info');
+                        });
+                } else {
+                    if (window.UI) UI.showToast('Opening WhatsApp...', 'success');
+                }
+            } catch (err) {
+                // Fallback: just copy to clipboard
+                navigator.clipboard.writeText(message)
+                    .then(() => {
+                        if (window.UI) UI.showToast('Message copied! Open WhatsApp and paste it.', 'success');
+                        window.open(`https://wa.me/${cleanPhone}`, '_blank');
+                    })
+                    .catch(() => {
+                        if (window.UI) UI.showToast('Could not open WhatsApp. Please copy the message manually.', 'info');
+                    });
             }
-            if (window.UI) UI.showToast('Opening WhatsApp...', 'success');
         }
     },
 
@@ -169,7 +195,6 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const user = prompt('Telegram username (without @):');
         if (user) {
-            // FIXED: Use raw emoji string with proper encoding
             const message = this._lastPacket;
             const encodedMessage = encodeURIComponent(message);
             window.open(
@@ -189,7 +214,6 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const email = prompt('Recipient email address:');
         if (email) {
-            // FIXED: Use raw emoji string with proper encoding
             const message = this._lastPacket;
             window.location.href =
                 `mailto:${email}?subject=${encodeURIComponent('Encrypted GhostChat Message')}`
@@ -201,7 +225,6 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const phone = prompt('Phone number:');
         if (phone) {
-            // FIXED: Use raw emoji string with proper encoding
             const message = this._lastPacket;
             window.location.href =
                 `sms:${phone}?body=${encodeURIComponent(message)}`;
