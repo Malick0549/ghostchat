@@ -108,17 +108,10 @@ class Message(db.Model):
     message_type = db.Column(db.String(20), default='encryption')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    def to_dict(self, full=False):
-        if full:
-            return {
-                'id': self.id,
-                'encrypted_content': self.encrypted_content,  # FULL
-                'message_type': self.message_type,
-                'created_at': self.created_at.isoformat() if self.created_at else None
-            }
+    def to_dict(self):
         return {
             'id': self.id,
-            'encrypted_content': self.encrypted_content[:100] + '...' if len(self.encrypted_content) > 100 else self.encrypted_content,
+            'encrypted_content': self.encrypted_content,  # FULL - NO TRUNCATION
             'message_type': self.message_type,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
