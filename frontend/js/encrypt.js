@@ -152,10 +152,16 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const phone = prompt('WhatsApp phone number (with country code, e.g. +233…):');
         if (phone) {
-            window.open(
-                `https://wa.me/${phone.replace(/\D/g,'')}?text=${encodeURIComponent(this._lastPacket)}`,
-                '_blank'
-            );
+            // FIXED: Use raw emoji string with proper encoding
+            const message = this._lastPacket;
+            const encodedMessage = encodeURIComponent(message);
+            const url = `https://wa.me/${phone.replace(/\D/g,'')}?text=${encodedMessage}`;
+            
+            const win = window.open(url, '_blank');
+            if (!win) {
+                if (window.UI) UI.showToast('Please allow popups or copy the link manually', 'info');
+            }
+            if (window.UI) UI.showToast('Opening WhatsApp...', 'success');
         }
     },
 
@@ -163,8 +169,11 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const user = prompt('Telegram username (without @):');
         if (user) {
+            // FIXED: Use raw emoji string with proper encoding
+            const message = this._lastPacket;
+            const encodedMessage = encodeURIComponent(message);
             window.open(
-                `https://t.me/${user.replace('@','')}?text=${encodeURIComponent(this._lastPacket)}`,
+                `https://t.me/${user.replace('@','')}?text=${encodedMessage}`,
                 '_blank'
             );
         }
@@ -180,9 +189,11 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const email = prompt('Recipient email address:');
         if (email) {
+            // FIXED: Use raw emoji string with proper encoding
+            const message = this._lastPacket;
             window.location.href =
                 `mailto:${email}?subject=${encodeURIComponent('Encrypted GhostChat Message')}`
-                + `&body=${encodeURIComponent(this._lastPacket)}`;
+                + `&body=${encodeURIComponent(message)}`;
         }
     },
 
@@ -190,8 +201,10 @@ window.EncryptionModule = {
         if (!this._lastPacket) return;
         const phone = prompt('Phone number:');
         if (phone) {
+            // FIXED: Use raw emoji string with proper encoding
+            const message = this._lastPacket;
             window.location.href =
-                `sms:${phone}?body=${encodeURIComponent(this._lastPacket)}`;
+                `sms:${phone}?body=${encodeURIComponent(message)}`;
         }
     },
 
