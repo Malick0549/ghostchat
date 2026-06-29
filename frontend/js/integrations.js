@@ -34,6 +34,9 @@ window.IntegrationsModule = {
             case 'email':
                 await this.emailIntegration();
                 break;
+            case 'sms':
+                await this.smsIntegration();
+                break;
             case 'google':
                 await this.googleIntegration();
                 break;
@@ -106,6 +109,20 @@ window.IntegrationsModule = {
         window.open(mailtoUrl, '_blank');
         this.showToast('Opening email client...', 'success');
         this.logActivity(`Email integration used`, 'success');
+    },
+    
+    async smsIntegration() {
+        const phone = prompt('Enter phone number (with country code):');
+        if (!phone) return;
+        
+        const message = prompt('Enter the message to send:');
+        if (!message) return;
+        
+        // Create SMS link
+        const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
+        window.location.href = smsUrl;
+        this.logActivity(`SMS integration used`, 'success');
+        this.showToast('Opening SMS...', 'success');
     },
     
     async googleIntegration() {
