@@ -103,12 +103,19 @@ class Message(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
-    encrypted_content = db.Column(db.Text, nullable=False)  # Text can store long strings
-    emoji_content = db.Column(db.Text, nullable=True)       # Text can store long strings
+    encrypted_content = db.Column(db.Text, nullable=False)
+    emoji_content = db.Column(db.Text, nullable=True)
     message_type = db.Column(db.String(20), default='encryption')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    def to_dict(self):
+    def to_dict(self, full=False):
+        if full:
+            return {
+                'id': self.id,
+                'encrypted_content': self.encrypted_content,  # FULL
+                'message_type': self.message_type,
+                'created_at': self.created_at.isoformat() if self.created_at else None
+            }
         return {
             'id': self.id,
             'encrypted_content': self.encrypted_content[:100] + '...' if len(self.encrypted_content) > 100 else self.encrypted_content,
