@@ -167,9 +167,27 @@ class GhostChatDashboard {
             window.UI.showToast(message, type);
         }
         
-        // Also show browser notification if permitted
-        if (Notification.permission === 'granted') {
-            new Notification('GhostChat', { body: message, icon: '/favicon.ico' });
+        // Also show browser notification if permitted (FIXED)
+        try {
+            if ('Notification' in window && Notification.permission === 'granted') {
+                // Check if we're in a secure context
+                if (window.isSecureContext !== false) {
+                    const notif = new Notification('GhostChat', { 
+                        body: message, 
+                        icon: '/favicon.ico',
+                        silent: true,
+                        tag: 'ghostchat-notification'
+                    });
+                    
+                    // Auto-close after 10 seconds
+                    setTimeout(() => {
+                        if (notif) notif.close();
+                    }, 10000);
+                }
+            }
+        } catch(e) {
+            // Silently fail - toast notification is the primary method
+            console.log('Browser notifications not supported');
         }
     }
     
@@ -202,7 +220,7 @@ class GhostChatDashboard {
         
         // Request notification permission on page load
         if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
+            Notification.requestPermission().catch(() => {});
         }
     }
 
