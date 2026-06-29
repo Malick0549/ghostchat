@@ -103,8 +103,8 @@ class Message(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
-    encrypted_content = db.Column(db.Text, nullable=False)
-    emoji_content = db.Column(db.Text, nullable=True)
+    encrypted_content = db.Column(db.Text, nullable=False)  # Text can store long strings
+    emoji_content = db.Column(db.Text, nullable=True)       # Text can store long strings
     message_type = db.Column(db.String(20), default='encryption')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
