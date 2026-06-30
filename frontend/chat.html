@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080b12" />
+    <title>GhostChat - Secure Chat</title>
+    <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+    <link rel="stylesheet" href="css/ghostchat.css" />
+    <link rel="stylesheet" href="css/chat.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body data-theme="dark">
+
+<div class="cyber-bg" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+<div class="gradient-orb orb-1" aria-hidden="true"></div>
+<div class="gradient-orb orb-2" aria-hidden="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<div class="chat-app">
+    <!-- Sidebar -->
+    <aside class="chat-sidebar" id="chatSidebar">
+        <div class="sidebar-header">
+            <a href="dashboard.html" class="back-btn">
+                <i class="fas fa-arrow-left"></i>
+            </a>
+            <span class="sidebar-title">GhostChat</span>
+            <span class="badge badge-cyan">Secure</span>
+        </div>
+        <div class="sidebar-user">
+            <div class="user-avatar" id="chatUserAvatar">GH</div>
+            <div class="user-info">
+                <div class="user-name" id="chatUserName">Ghost User</div>
+                <div class="user-status">🟢 Online</div>
+            </div>
+        </div>
+        <div class="sidebar-contacts">
+            <div class="contacts-header">
+                <span>Contacts</span>
+                <button class="btn-add-contact" id="addContactBtn">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+            <div class="contacts-list" id="contactsList">
+                <div class="contact-item active" data-contact="room">
+                    <div class="contact-avatar">👻</div>
+                    <div class="contact-info">
+                        <div class="contact-name">Secure Room</div>
+                        <div class="contact-preview">Encrypted messages</div>
+                    </div>
+                    <span class="contact-badge">0</span>
+                </div>
+                <div class="contact-item" data-contact="alice">
+                    <div class="contact-avatar">👤</div>
+                    <div class="contact-info">
+                        <div class="contact-name">Alice</div>
+                        <div class="contact-preview">Last message...</div>
+                    </div>
+                    <span class="contact-badge">2</span>
+                </div>
+                <div class="contact-item" data-contact="bob">
+                    <div class="contact-avatar">👤</div>
+                    <div class="contact-info">
+                        <div class="contact-name">Bob</div>
+                        <div class="contact-preview">No messages</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="sidebar-footer">
+            <button class="logout-btn-small" id="chatLogout">
+                <i class="fas fa-sign-out-alt"></i>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="chat-main">
+        <!-- Chat Header -->
+        <header class="chat-header">
+            <div class="chat-header-info">
+                <div class="chat-header-avatar">👻</div>
+                <div>
+                    <div class="chat-header-name" id="chatHeaderName">Secure Room</div>
+                    <div class="chat-header-status">🔒 End-to-End Encrypted</div>
+                </div>
+            </div>
+            <div class="chat-header-actions">
+                <button class="header-btn" id="clearChatBtn" title="Clear chat">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+                <button class="header-btn" id="exportChatBtn" title="Export chat">
+                    <i class="fas fa-download"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Messages -->
+        <div class="chat-messages" id="chatMessages">
+            <div class="chat-welcome">
+                <i class="fas fa-ghost"></i>
+                <h3>Welcome to Secure Chat</h3>
+                <p>Messages are encrypted with AES-256 and shown as emojis.</p>
+                <p>Click the lock icon to decrypt any message.</p>
+            </div>
+        </div>
+
+        <!-- Message Input -->
+        <div class="chat-input-area">
+            <div class="chat-input-wrapper">
+                <button class="input-btn" id="emojiPickerBtn" title="Add emoji">
+                    <i class="far fa-smile"></i>
+                </button>
+                <input type="text" id="chatInput" class="chat-input" placeholder="Type your encrypted message..." />
+                <button class="input-btn" id="sendBtn">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+            <div class="chat-input-hint">
+                <span><i class="fas fa-lock"></i> Messages are encrypted before sending</span>
+            </div>
+        </div>
+    </main>
+
+    <!-- Decryption Modal -->
+    <div class="modal" id="decryptModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-lock-open"></i> Decrypt Message</h3>
+                <button class="modal-close" id="decryptModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p><strong>Encrypted Message:</strong></p>
+                <div class="modal-encrypted-text" id="modalEncryptedText"></div>
+                <div class="modal-form">
+                    <label for="decryptPasswordInput">Enter Password:</label>
+                    <input type="password" id="decryptPasswordInput" placeholder="Enter the encryption password..." />
+                    <button id="decryptMessageBtn" class="btn btn-primary">
+                        <i class="fas fa-unlock"></i> Decrypt
+                    </button>
+                </div>
+                <div id="decryptResultArea"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Contact Modal -->
+    <div class="modal" id="contactModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-user-plus"></i> Add Contact</h3>
+                <button class="modal-close" id="contactModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-form">
+                    <label for="contactNameInput">Contact Name:</label>
+                    <input type="text" id="contactNameInput" placeholder="Enter contact name..." />
+                    <label for="contactIdInput">Contact ID (optional):</label>
+                    <input type="text" id="contactIdInput" placeholder="Enter contact identifier..." />
+                    <button id="addContactSubmitBtn" class="btn btn-primary">
+                        <i class="fas fa-plus"></i> Add Contact
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script src="js/chat.js"></script>
+</body>
+</html>

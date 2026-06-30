@@ -197,6 +197,11 @@
   </div>
 </template>
 
+<!-- CHAT PAGE -->
+<template id="chat-page">
+    <iframe src="chat.html" style="width: 100%; height: calc(100vh - 120px); border: none; border-radius: var(--r3); background: var(--bg);"></iframe>
+</template>
+
 <!-- ════════════════════════════════════════════════════════
      DASHBOARD SHELL
      ════════════════════════════════════════════════════════ -->
@@ -225,6 +230,7 @@
 
       <div class="sidebar-section-label">Tools</div>
       <button class="nav-item" data-page="integrations" role="listitem"><i class="fas fa-plug"></i><span>Integrations</span></button>
+      <button class="nav-item" data-page="chat" role="listitem"><i class="fas fa-comment-dots"></i><span>Chat</span></button>
 
       <div class="sidebar-section-label">Account</div>
       <button class="nav-item" data-page="profile"  role="listitem"><i class="fas fa-user-circle"></i><span>Profile</span></button>
@@ -322,6 +328,12 @@
 
   /* ── Page routing ────────────────────────────────────────────── */
   function navigate(page){
+    // If chat page, redirect to chat.html
+    if (page === 'chat') {
+      window.location.href = 'chat.html';
+      return;
+    }
+    
     const tpl = document.getElementById(`${page}-page`);
     const container = document.getElementById('pageContainer');
     if(!tpl){ container.innerHTML='<div class="empty-state"><i class="fas fa-ghost"></i><p>Page not found.</p></div>'; return; }
