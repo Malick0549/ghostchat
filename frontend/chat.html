@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="css/ghostchat.css" />
     <link rel="stylesheet" href="css/chat.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body data-theme="dark">
 
@@ -32,40 +33,28 @@
             <div class="user-avatar" id="chatUserAvatar">GH</div>
             <div class="user-info">
                 <div class="user-name" id="chatUserName">Ghost User</div>
-                <div class="user-status">🟢 Online</div>
+                <div class="user-status" id="userStatus">🟢 Online</div>
             </div>
         </div>
+        
+        <!-- Search Bar -->
+        <div class="sidebar-search">
+            <div class="search-bar">
+                <i class="fas fa-search"></i>
+                <input type="text" id="contactSearch" placeholder="Search or start new chat..." />
+            </div>
+        </div>
+        
+        <!-- Contacts List -->
         <div class="sidebar-contacts">
             <div class="contacts-header">
-                <span>Contacts</span>
+                <span>Chats</span>
                 <button class="btn-add-contact" id="addContactBtn">
                     <i class="fas fa-plus"></i>
                 </button>
             </div>
             <div class="contacts-list" id="contactsList">
-                <div class="contact-item active" data-contact="room">
-                    <div class="contact-avatar">👻</div>
-                    <div class="contact-info">
-                        <div class="contact-name">Secure Room</div>
-                        <div class="contact-preview">Encrypted messages</div>
-                    </div>
-                    <span class="contact-badge">0</span>
-                </div>
-                <div class="contact-item" data-contact="alice">
-                    <div class="contact-avatar">👤</div>
-                    <div class="contact-info">
-                        <div class="contact-name">Alice</div>
-                        <div class="contact-preview">Last message...</div>
-                    </div>
-                    <span class="contact-badge">2</span>
-                </div>
-                <div class="contact-item" data-contact="bob">
-                    <div class="contact-avatar">👤</div>
-                    <div class="contact-info">
-                        <div class="contact-name">Bob</div>
-                        <div class="contact-preview">No messages</div>
-                    </div>
-                </div>
+                <!-- Contacts rendered by JavaScript -->
             </div>
         </div>
         <div class="sidebar-footer">
@@ -80,18 +69,21 @@
         <!-- Chat Header -->
         <header class="chat-header">
             <div class="chat-header-info">
-                <div class="chat-header-avatar">👻</div>
+                <div class="chat-header-avatar" id="chatHeaderAvatar">👻</div>
                 <div>
                     <div class="chat-header-name" id="chatHeaderName">Secure Room</div>
-                    <div class="chat-header-status">🔒 End-to-End Encrypted</div>
+                    <div class="chat-header-status" id="chatHeaderStatus">🔒 End-to-End Encrypted</div>
                 </div>
             </div>
             <div class="chat-header-actions">
-                <button class="header-btn" id="clearChatBtn" title="Clear chat">
-                    <i class="fas fa-trash-alt"></i>
+                <button class="header-btn" id="voiceCallBtn" title="Voice Call">
+                    <i class="fas fa-phone"></i>
                 </button>
-                <button class="header-btn" id="exportChatBtn" title="Export chat">
-                    <i class="fas fa-download"></i>
+                <button class="header-btn" id="videoCallBtn" title="Video Call">
+                    <i class="fas fa-video"></i>
+                </button>
+                <button class="header-btn" id="chatMenuBtn" title="More options">
+                    <i class="fas fa-ellipsis-v"></i>
                 </button>
             </div>
         </header>
@@ -112,8 +104,14 @@
                 <button class="input-btn" id="emojiPickerBtn" title="Add emoji">
                     <i class="far fa-smile"></i>
                 </button>
+                <button class="input-btn" id="attachBtn" title="Attach file">
+                    <i class="fas fa-paperclip"></i>
+                </button>
                 <input type="text" id="chatInput" class="chat-input" placeholder="Type your encrypted message..." />
-                <button class="input-btn" id="sendBtn">
+                <button class="input-btn" id="voiceBtn" title="Voice recording">
+                    <i class="fas fa-microphone"></i>
+                </button>
+                <button class="input-btn send-btn" id="sendBtn">
                     <i class="fas fa-paper-plane"></i>
                 </button>
             </div>
@@ -122,6 +120,19 @@
             </div>
         </div>
     </main>
+
+    <!-- Right Panel: Chat Info (hidden by default) -->
+    <aside class="chat-panel info-panel" id="infoPanel" style="display:none;">
+        <div class="panel-header">
+            <h3>Chat Info</h3>
+            <button class="close-btn" onclick="document.getElementById('infoPanel').style.display='none'">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="panel-body" id="infoPanelBody">
+            <!-- Chat info rendered by JavaScript -->
+        </div>
+    </aside>
 
     <!-- Decryption Modal -->
     <div class="modal" id="decryptModal">
@@ -145,21 +156,47 @@
         </div>
     </div>
 
-    <!-- New Contact Modal -->
-    <div class="modal" id="contactModal">
+    <!-- New Chat Modal -->
+    <div class="modal" id="newChatModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3><i class="fas fa-user-plus"></i> Add Contact</h3>
-                <button class="modal-close" id="contactModalClose">&times;</button>
+                <h3><i class="fas fa-user-plus"></i> New Chat</h3>
+                <button class="modal-close" onclick="closeModal('newChatModal')">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="modal-form">
-                    <label for="contactNameInput">Contact Name:</label>
-                    <input type="text" id="contactNameInput" placeholder="Enter contact name..." />
-                    <label for="contactIdInput">Contact ID (optional):</label>
-                    <input type="text" id="contactIdInput" placeholder="Enter contact identifier..." />
-                    <button id="addContactSubmitBtn" class="btn btn-primary">
-                        <i class="fas fa-plus"></i> Add Contact
+                    <input type="text" id="newChatSearch" placeholder="Search contacts..." />
+                    <div id="userSearchResults"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Emoji Picker -->
+    <div class="emoji-picker" id="emojiPicker" style="display:none;">
+        <!-- Emojis rendered by JavaScript -->
+    </div>
+
+    <!-- Attach Modal -->
+    <div class="modal" id="attachModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-paperclip"></i> Attach File</h3>
+                <button class="modal-close" onclick="closeModal('attachModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="attach-options">
+                    <button class="attach-option" onclick="window.chat.attachFile('image')">
+                        <i class="fas fa-image"></i> Photo/Video
+                    </button>
+                    <button class="attach-option" onclick="window.chat.attachFile('document')">
+                        <i class="fas fa-file-alt"></i> Document
+                    </button>
+                    <button class="attach-option" onclick="window.chat.attachFile('location')">
+                        <i class="fas fa-map-marker-alt"></i> Location
+                    </button>
+                    <button class="attach-option" onclick="window.chat.attachFile('contact')">
+                        <i class="fas fa-address-card"></i> Contact
                     </button>
                 </div>
             </div>
@@ -169,6 +206,6 @@
 
 <script src="js/ui.js"></script>
 <script src="js/api.js"></script>
-<script src="js/chat.js"></script>
+<script src="js/chat-socket.js"></script>
 </body>
 </html>
