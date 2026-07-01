@@ -215,6 +215,9 @@ def create_app(test_config=None):
         """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
             return None, None
+        # ── FIX: Skip CSRF for SocketIO endpoints ────────────────────────────
+        if request.path.startswith('/socket.io/'):
+            return None, None
         if request.path in ('/api/csrf-token', '/health'):
             return None, None
 
