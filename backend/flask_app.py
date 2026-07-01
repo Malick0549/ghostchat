@@ -65,9 +65,14 @@ def _is_https():
 def create_app(test_config=None):
 
     # ── Flask app ──────────────────────────────────────────────────────────────
+    # Use absolute path so Flask finds frontend/ correctly
+    # regardless of working directory in Docker
+    _basedir = os.path.abspath(os.path.dirname(__file__))
+    _frontend = os.path.join(_basedir, '..', 'frontend')
+
     app = Flask(
         __name__,
-        static_folder='../frontend',
+        static_folder=_frontend,
         static_url_path='',
     )
 
@@ -83,13 +88,13 @@ def create_app(test_config=None):
         DEBUG                       = not IS_PROD and os.environ.get('FLASK_DEBUG', '0') == '1',
         JSON_SORT_KEYS              = False,
         TESTING                     = False,
-        # Session cookies
-        SESSION_TYPE                = 'filesystem',
+        # Session — use signed cookies (no filesystem needed on Railway)
+        SESSION_TYPE                = 'null',
         SESSION_PERMANENT           = False,
         PERMANENT_SESSION_LIFETIME  = timedelta(hours=24),
         SESSION_COOKIE_NAME         = 'ghostchat_sess',
         SESSION_COOKIE_HTTPONLY     = True,
-        SESSION_COOKIE_SECURE       = IS_PROD,          # HTTPS only in production
+        SESSION_COOKIE_SECURE       = IS_PROD,
         SESSION_COOKIE_SAMESITE     = 'None' if IS_PROD else 'Lax',
     )
 
