@@ -35,13 +35,13 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 # ── Local packages (run from inside backend/) ─────────────────────────────────
-from api import crypto_bp, session_bp
-from api.errors import register_error_handlers
-from api.middleware import add_security_headers
+from backend.api import crypto_bp, session_bp
+from backend.api.errors import register_error_handlers
+from backend.api.middleware import add_security_headers
 
 # ── Database models ────────────────────────────────────────────────────────────
 try:
-    from models import db, bcrypt, User, UserSession, Message, IntegrationToken
+    from backend.models import db, bcrypt, User, UserSession, Message, IntegrationToken
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -677,7 +677,7 @@ def create_app(test_config=None):
             if not password:
                 return jsonify({'success': False, 'error': 'Password is required'}), 400
 
-            from ghostchat import GhostChat, GhostChatError
+            from backend.ghostchat import GhostChat, GhostChatError
             ghost  = GhostChat(password)
             packet = ghost.send_message(message, use_decoy_emojis=decoys)
 
@@ -707,7 +707,7 @@ def create_app(test_config=None):
             if not password:
                 return jsonify({'success': False, 'error': 'Password is required'}), 400
 
-            from ghostchat import GhostChat
+            from backend.ghostchat import GhostChat
             ghost     = GhostChat(password)
             plaintext = ghost.receive_message(emoji_message)
 
@@ -871,7 +871,7 @@ def create_app(test_config=None):
         
         # Save message to database (optional)
         try:
-            from models import Message, db
+            from backend.models import Message, db
             msg = Message(
                 id=str(uuid.uuid4()),
                 user_id=sender,
