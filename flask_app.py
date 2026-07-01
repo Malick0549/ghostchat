@@ -59,7 +59,6 @@ def _is_https():
         request.is_secure
         or request.headers.get('X-Forwarded-Proto') == 'https'
         or bool(os.environ.get('RENDER'))
-        or bool(os.environ.get('RAILWAY'))  # ── FIX: Added Railway detection ──
     )
 
 
@@ -193,21 +192,18 @@ def create_app(test_config=None):
 
     @app.route('/api/csrf-token', methods=['GET', 'OPTIONS'])
     def csrf_token():
+        
         if request.method == 'OPTIONS':
             return '', 200
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
         resp  = jsonify({'csrf_token': token})
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
-        is_railway = bool(os.environ.get('RAILWAY'))
-        secure_cookie = https or is_railway
-        
         resp.set_cookie(
             CSRF_COOKIE,
             token,
             httponly=False,                         # JS must read it
-            samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            samesite='None' if https else 'Lax',
+            secure=https,
             max_age=3600,
             path='/',
         )
@@ -219,9 +215,6 @@ def create_app(test_config=None):
         Returns (None, None) on pass, (response, code) on failure.
         """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
-            return None, None
-        # ── FIX: Skip CSRF for SocketIO endpoints ────────────────────────────
-        if request.path.startswith('/socket.io/'):
             return None, None
         if request.path in ('/api/csrf-token', '/health'):
             return None, None
@@ -274,15 +267,11 @@ def create_app(test_config=None):
         """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
-        is_railway = bool(os.environ.get('RAILWAY'))
-        secure_cookie = https or is_railway
-        
         resp.set_cookie(
             CSRF_COOKIE, token,
             httponly=False,
-            samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            samesite='None' if https else 'Lax',
+            secure=https,
             max_age=3600, path='/',
         )
         return resp
