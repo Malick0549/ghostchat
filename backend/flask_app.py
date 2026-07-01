@@ -13,6 +13,10 @@ Deployed on Render:
     - The app auto-detects HTTPS and sets cookies correctly
 """
 
+# ── FIX: eventlet monkey patch MUST be first ─────────────────────────────────
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import logging
 import secrets
@@ -144,7 +148,15 @@ def create_app(test_config=None):
     register_error_handlers(app)
 
     # ── SocketIO ──────────────────────────────────────────────────────────────
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+    # ── FIX: SocketIO with proper async_mode handling ────────────────────────
+    try:
+        # eventlet is already imported and monkey patched above
+        socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+        log.info('SocketIO initialized with eventlet async mode')
+    except Exception as e:
+        log.warning(f'Eventlet initialization failed: {e}, falling back to threading')
+        socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+        log.warning('SocketIO using threading mode (not recommended for production)')
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CSRF — Double-Submit Cookie Pattern
