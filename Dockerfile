@@ -1,29 +1,27 @@
-﻿FROM python:3.13-slim
+﻿FROM python:3.11-slim
 
 WORKDIR /app
 
-# Set environment variables
+# Env
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8080
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# System deps
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first (for better caching)
-COPY requirements.txt .
+# Install Python deps — requirements.txt lives inside backend/
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application
+# Copy entire project
 COPY . .
 
-# Expose the port
-EXPOSE 8080
-
-# Start the application with gunicorn
-CMD ["gunicorn", "--worker-class", "eventlet", "--workers", "1", "--bind", "0.0.0.0:8080", "backend.flask_app:app"]
+# Run gunicorn from inside backend/ so local imports work correctly
+# (crypto/, obfuscation/, ai/, utils/ are siblings of flask_app.py)
+CMD cd backend && gunicorn flask_app:app \
+    --bind 0.0.0.0:${PORT:-5000} \
+    --workers 2 \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile -
