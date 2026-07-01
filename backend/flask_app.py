@@ -809,22 +809,27 @@ def create_app(test_config=None):
             'version':     '3.0.0',
         }), 200
 
-    # Serve frontend HTML pages
-    SAFE_EXTENSIONS = (
-        '.html', '.css', '.js', '.png', '.jpg', '.jpeg',
-        '.gif', '.svg', '.ico', '.json', '.woff', '.woff2',
-        '.ttf', '.webp', '.txt', '.map',
-    )
-    frontend_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend')
+    # Serve frontend — use app.send_static_file() instead of send_from_directory
+    # send_from_directory uses sendfile() syscall which eventlet doesn't patch,
+    # causing IncompleteRead errors on large files. send_static_file() goes
+    # through Flask's WSGI response which eventlet handles correctly.
 
     @app.route('/')
     def index():
-        return send_from_directory(frontend_dir, 'index.html')
+        return app.send_static_file('index.html')
 
     @app.route('/<path:filename>')
     def serve_static(filename):
+        SAFE_EXTENSIONS = (
+            '.html', '.css', '.js', '.png', '.jpg', '.jpeg',
+            '.gif', '.svg', '.ico', '.json', '.woff', '.woff2',
+            '.ttf', '.webp', '.txt', '.map',
+        )
         if any(filename.lower().endswith(ext) for ext in SAFE_EXTENSIONS):
-            return send_from_directory(frontend_dir, filename)
+            try:
+                return app.send_static_file(filename)
+            except Exception:
+                pass
         return jsonify({'error': 'Not Found'}), 404
 
     log.info(f'GhostChat ready  [{"production" if IS_PROD else "development"}]')

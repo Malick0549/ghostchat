@@ -5,26 +5,23 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# System deps
 RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy entire project
 COPY . .
 
-# Work from inside backend/ so local imports resolve correctly
+# Work from backend/ so all local imports resolve correctly
 WORKDIR /app/backend
 
-# SocketIO + eventlet requires the eventlet worker class
-# flask_app.py exposes `app` at module level (line: app = create_app())
+# eventlet MUST use --workers 1 (it's concurrent within one process)
+# Use shell form so $PORT expands correctly
 CMD gunicorn flask_app:app \
     --worker-class eventlet \
     --workers 1 \
-    --bind 0.0.0.0:${PORT:-5000} \
+    --bind 0.0.0.0:${PORT:-8080} \
     --timeout 120 \
-    --access-logfile - \
-    --error-logfile -
+    --keep-alive 5 \
+    --log-level info
