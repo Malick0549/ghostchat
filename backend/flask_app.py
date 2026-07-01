@@ -18,6 +18,7 @@ import logging
 import secrets
 import smtplib
 import ssl
+import uuid
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
@@ -27,6 +28,7 @@ from flask import (
 )
 from flask_cors import CORS
 from flask_session import Session
+from flask_socketio import SocketIO, emit, join_room, leave_room
 
 # ── Local packages (run from inside backend/) ─────────────────────────────────
 from api import crypto_bp, session_bp
@@ -140,6 +142,9 @@ def create_app(test_config=None):
     # ── Security headers + error handlers ──────────────────────────────────────
     app.after_request(add_security_headers)
     register_error_handlers(app)
+
+    # ── SocketIO ──────────────────────────────────────────────────────────────
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CSRF — Double-Submit Cookie Pattern
@@ -794,6 +799,66 @@ def create_app(test_config=None):
         return jsonify({'error': 'Not Found'}), 404
 
     log.info(f'GhostChat ready  [{"production" if IS_PROD else "development"}]')
+    
+    # ── WebSocket Events ──────────────────────────────────────────────────────
+    @socketio.on('connect')
+    def handle_connect():
+        """Client connected to chat server"""
+        print(f'Client connected: {request.sid}')
+        emit('connected', {'status': 'connected'})
+
+    @socketio.on('disconnect')
+    def handle_disconnect():
+        """Client disconnected from chat server"""
+        print(f'Client disconnected: {request.sid}')
+
+    @socketio.on('join_room')
+    def handle_join_room(data):
+        """User joins a chat room"""
+        room = data.get('room', 'default')
+        join_room(room)
+        print(f'User joined room: {room}')
+        emit('joined_room', {'room': room}, room=room)
+
+    @socketio.on('leave_room')
+    def handle_leave_room(data):
+        """User leaves a chat room"""
+        room = data.get('room', 'default')
+        leave_room(room)
+        emit('left_room', {'room': room}, room=room)
+
+    @socketio.on('send_message')
+    def handle_send_message(data):
+        """Send a message to all users in the room"""
+        room = data.get('room', 'default')
+        message = data.get('message', '')
+        sender = data.get('sender', 'anonymous')
+        timestamp = data.get('timestamp', datetime.utcnow().isoformat())
+        
+        # Save message to database (optional)
+        try:
+            from models import Message, db
+            msg = Message(
+                id=str(uuid.uuid4()),
+                user_id=sender,
+                encrypted_content=message,
+                message_type='chat',
+                created_at=datetime.utcnow()
+            )
+            db.session.add(msg)
+            db.session.commit()
+        except Exception as e:
+            print(f'Failed to save message: {e}')
+        
+        # Broadcast to room
+        emit('receive_message', {
+            'id': str(uuid.uuid4()),
+            'message': message,
+            'sender': sender,
+            'timestamp': timestamp,
+            'encrypted': True
+        }, room=room)
+
     return app
 
 

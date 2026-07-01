@@ -1,0 +1,156 @@
+/* frontend/css/chat-mobile.css */
+/* Mobile Responsive Styles for Chat */
+
+/* Mobile - hide sidebar by default */
+@media (max-width: 768px) {
+    .chat-sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        height: 100vh;
+        z-index: 100;
+        transform: translateX(0);
+        transition: transform 0.3s ease;
+        width: 280px;
+    }
+    
+    .chat-sidebar.mobile-hidden {
+        transform: translateX(-100%);
+    }
+    
+    .chat-main {
+        margin-left: 0;
+        width: 100%;
+    }
+    
+    .mobile-back-btn {
+        display: flex !important;
+        background: none;
+        border: none;
+        color: var(--t2);
+        font-size: 18px;
+        padding: 8px;
+        cursor: pointer;
+    }
+    
+    .chat-main.mobile-chat-open .chat-sidebar {
+        transform: translateX(-100%);
+    }
+    
+    .chat-header-name {
+        font-size: 0.9rem;
+    }
+    
+    .message {
+        max-width: 90%;
+    }
+    
+    .msg-encrypted {
+        font-size: 0.75rem !important;
+    }
+    
+    .chat-input {
+        font-size: 0.85rem !important;
+    }
+    
+    .chat-header-actions .header-btn {
+        padding: 4px 6px;
+        font-size: 14px;
+    }
+    
+    .emoji-picker {
+        max-width: 280px;
+        grid-template-columns: repeat(6, 1fr);
+        left: 10px;
+        bottom: 70px;
+    }
+    
+    .modal-content {
+        max-width: 95%;
+        width: 95%;
+    }
+    
+    .attach-options {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+    
+    .attach-option {
+        padding: 14px;
+        font-size: 0.85rem;
+    }
+    
+    .attach-option i {
+        font-size: 22px;
+    }
+}
+
+@media (max-width: 480px) {
+    .chat-sidebar {
+        width: 240px;
+    }
+    
+    .chat-messages {
+        padding: 10px 12px;
+    }
+    
+    .message {
+        padding: 6px 10px;
+        max-width: 95%;
+    }
+    
+    .msg-encrypted {
+        font-size: 0.7rem !important;
+    }
+    
+    .msg-time {
+        font-size: 0.55rem !important;
+    }
+    
+    .chat-header {
+        padding: 8px 12px;
+        min-height: 50px;
+    }
+    
+    .chat-header-avatar {
+        width: 32px;
+        height: 32px;
+        font-size: 18px;
+    }
+    
+    .chat-input-area {
+        padding: 6px 10px 10px;
+    }
+    
+    .input-btn {
+        padding: 4px 8px;
+        font-size: 14px;
+    }
+    
+    .send-btn {
+        padding: 6px 10px;
+        font-size: 14px;
+    }
+    
+    .emoji-picker {
+        max-width: 240px;
+        grid-template-columns: repeat(5, 1fr);
+        max-height: 160px;
+    }
+    
+    .emoji-picker .emoji-item {
+        font-size: 18px;
+    }
+}
+
+/* Tablets */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .chat-sidebar {
+        width: 240px;
+        min-width: 240px;
+    }
+    
+    .message {
+        max-width: 80%;
+    }
+}
