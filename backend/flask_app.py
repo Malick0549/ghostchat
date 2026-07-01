@@ -31,7 +31,7 @@ from flask import (
     send_from_directory
 )
 from flask_cors import CORS
-from flask_session import Session
+# flask_session removed — using Flask built-in signed cookie sessions
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 # ── Local packages (run from inside backend/) ─────────────────────────────────
@@ -88,8 +88,7 @@ def create_app(test_config=None):
         DEBUG                       = not IS_PROD and os.environ.get('FLASK_DEBUG', '0') == '1',
         JSON_SORT_KEYS              = False,
         TESTING                     = False,
-        # Session — use signed cookies (no filesystem needed on Railway)
-        SESSION_TYPE                = 'null',
+        # Flask built-in signed cookie sessions (no flask-session needed)
         SESSION_PERMANENT           = False,
         PERMANENT_SESSION_LIFETIME  = timedelta(hours=24),
         SESSION_COOKIE_NAME         = 'ghostchat_sess',
@@ -122,7 +121,7 @@ def create_app(test_config=None):
             db.create_all()
             log.info('Database ready')
 
-    Session(app)
+    # Session(app) removed — using Flask built-in sessions
 
     # ── CORS ───────────────────────────────────────────────────────────────────
     allowed_origins = [
