@@ -57,11 +57,26 @@ window.UI = {
   },
 
   showNotification(title, body) {
-    if (!('Notification' in window)) return;
-    const show = () => new Notification(title, { body, icon: '👻' });
-    if (Notification.permission === 'granted') show();
-    else if (Notification.permission !== 'denied') {
-      Notification.requestPermission().then(p => { if (p === 'granted') show(); });
+    // new Notification() is not supported on mobile browsers —
+    // they require a ServiceWorker. We use a toast instead, which
+    // works everywhere, and only attempt the native notification on
+    // desktop browsers where it is safe to do so.
+    this.showToast(body || title, 'info');
+
+    try {
+      if (!('Notification' in window)) return;
+      // Only attempt native notification on non-mobile environments
+      const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) return;
+      const show = () => {
+        try { new Notification(title, { body, icon: '👻' }); } catch (_) {}
+      };
+      if (Notification.permission === 'granted') show();
+      else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then(p => { if (p === 'granted') show(); });
+      }
+    } catch (_) {
+      // Silently ignore — toast already shown above
     }
   },
 
@@ -171,8 +186,8 @@ document.addEventListener('DOMContentLoaded', function () {
     btn.addEventListener('click', () => window.themeManager.set(btn.dataset.theme));
   });
 
-  // Request notification permission (non-blocking)
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
+  // Notification permission is requested lazily (only when a notification
+  // is actually needed) to avoid crashing on mobile browsers where
+  // new Notification() requires a ServiceWorker.
+  // Do NOT call Notification.requestPermission() here on page load.
 });
