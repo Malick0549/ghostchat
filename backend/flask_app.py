@@ -149,14 +149,27 @@ def create_app(test_config=None):
 
     # ── SocketIO ──────────────────────────────────────────────────────────────
     # ── FIX: SocketIO with proper async_mode handling ────────────────────────
+    global socketio
     try:
         # eventlet is already imported and monkey patched above
-        socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+        socketio = SocketIO(
+            app,
+            cors_allowed_origins=allowed_origins,
+            async_mode='eventlet',
+            logger=False,
+            engineio_logger=False,
+        )
         log.info('SocketIO initialized with eventlet async mode')
     except Exception as e:
         log.warning(f'Eventlet initialization failed: {e}, falling back to threading')
-        socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-        log.warning('SocketIO using threading mode (not recommended for production)')
+        socketio = SocketIO(
+            app,
+            cors_allowed_origins=allowed_origins,
+            async_mode='threading',
+            logger=False,
+            engineio_logger=False,
+        )
+        log.warning('SocketIO using threading mode')
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CSRF — Double-Submit Cookie Pattern
@@ -874,12 +887,16 @@ def create_app(test_config=None):
     return app
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# ── Module-level variables for gunicorn ──────────────────────────────────────
+# gunicorn binds to flask_app:app
+# The socketio object is also available as flask_app:socketio for reference
+socketio = None   # will be set by create_app()
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(
-        host  = '0.0.0.0',
-        port  = int(os.environ.get('PORT', 5000)),
-        debug = os.environ.get('FLASK_DEBUG', '0') == '1',
-    )
+    port  = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
+    if socketio:
+        socketio.run(app, host='0.0.0.0', port=port, debug=debug)
+    else:
+        app.run(host='0.0.0.0', port=port, debug=debug)
