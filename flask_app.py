@@ -59,6 +59,7 @@ def _is_https():
         request.is_secure
         or request.headers.get('X-Forwarded-Proto') == 'https'
         or bool(os.environ.get('RENDER'))
+        or bool(os.environ.get('RAILWAY'))  # ── FIX: Added Railway detection ──
     )
 
 
@@ -197,12 +198,16 @@ def create_app(test_config=None):
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
         resp  = jsonify({'csrf_token': token})
         https = _is_https()
+        # ── FIX: Force secure for Railway ────────────────────────────────────
+        is_railway = bool(os.environ.get('RAILWAY'))
+        secure_cookie = https or is_railway
+        
         resp.set_cookie(
             CSRF_COOKIE,
             token,
             httponly=False,                         # JS must read it
-            samesite='None' if https else 'Lax',
-            secure=https,
+            samesite='None' if secure_cookie else 'Lax',
+            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
             max_age=3600,
             path='/',
         )
@@ -269,11 +274,15 @@ def create_app(test_config=None):
         """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
         https = _is_https()
+        # ── FIX: Force secure for Railway ────────────────────────────────────
+        is_railway = bool(os.environ.get('RAILWAY'))
+        secure_cookie = https or is_railway
+        
         resp.set_cookie(
             CSRF_COOKIE, token,
             httponly=False,
-            samesite='None' if https else 'Lax',
-            secure=https,
+            samesite='None' if secure_cookie else 'Lax',
+            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
             max_age=3600, path='/',
         )
         return resp
