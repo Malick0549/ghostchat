@@ -4,7 +4,7 @@
  *   - Real contacts loaded from database
  *   - Private per-user SocketIO rooms
  *   - Add contact by username search
- *   - AES-256 message encryption
+ *   - AES-256 message encryption (emoji format)
  *   - Online/offline presence
  *   - Typing indicators
  *   - Read receipts
@@ -242,29 +242,87 @@ class GhostChatRealtime {
             const status  = isMine
                 ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>`
                 : '';
-            const isEncrypted = content.includes('GHOST');
-            const lockIcon = isEncrypted
-                ? `<button class="msg-decrypt-btn" title="Decrypt message"
-                    onclick="window.chat.promptDecrypt('${msg.id}', this)">
-                    <i class="fas fa-lock"></i> Decrypt
-                   </button>`
-                : '';
+            
+            // ── FIX: Always show encrypted content, add decrypt button ──
+            // Check if it looks like encrypted emoji message (contains emojis)
+            const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(content) && content.length > 5;
+            
+            // Store the raw content for decryption
+            const rawContent = content;
 
             html += `
             <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
                 <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
-                    <div class="msg-content" id="content-${msg.id}">${content}</div>
-                    ${lockIcon}
+                    <div class="msg-content" id="content-${msg.id}">
+                        ${isEncrypted ? '🔒 ' : ''}${content}
+                    </div>
+                    ${isEncrypted ? `
+                        <button class="msg-decrypt-btn" onclick="window.chat.decryptMessage('${msg.id}')">
+                            <i class="fas fa-lock"></i> Decrypt
+                        </button>
+                    ` : ''}
                     <div class="msg-meta">
                         <span class="msg-time">${time}</span>
                         ${status}
                     </div>
                 </div>
             </div>`;
+            
+            // Store raw content for decryption
+            if (isEncrypted) {
+                this._storeDecryptData(msg.id, rawContent);
+            }
         });
 
         container.innerHTML = html;
         this._scrollToBottom();
+    }
+
+    // ── Store decryption data ─────────────────────────────────────
+    _storeDecryptData(msgId, content) {
+        if (!this._decryptData) this._decryptData = {};
+        this._decryptData[msgId] = content;
+    }
+
+    // ── Decrypt message ────────────────────────────────────────────
+    async decryptMessage(msgId) {
+        const password = prompt('Enter the encryption password to decrypt this message:');
+        if (!password) return;
+
+        const contentEl = document.getElementById(`content-${msgId}`);
+        if (!contentEl) return;
+
+        // Get the encrypted content
+        const encryptedContent = this._decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '');
+
+        try {
+            const res  = await fetch(`${this._base()}/api/decrypt`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'X-Requested-With': 'XMLHttpRequest' 
+                },
+                body: JSON.stringify({ 
+                    emoji_message: encryptedContent, 
+                    password: password 
+                }),
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                // Show decrypted message
+                contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(data.decrypted_message)}</span>`;
+                // Remove decrypt button
+                const btn = contentEl.parentElement.querySelector('.msg-decrypt-btn');
+                if (btn) btn.remove();
+                this._toast('Message decrypted!', 'success');
+            } else {
+                this._toast('Wrong password or invalid message', 'error');
+            }
+        } catch (_) {
+            this._toast('Decryption failed', 'error');
+        }
     }
 
     // ── Send message ──────────────────────────────────────────────
@@ -277,19 +335,34 @@ class GhostChatRealtime {
         input.value = '';
         input.style.height = 'auto';
 
-        // Encrypt if password set
+        // ── FIX: Always encrypt if password is set ──────────────────────────
         let content = text;
+        let isEncrypted = false;
+        
         if (this.encryptMessages && this.password) {
             try {
                 const encResult = await fetch(`${this._base()}/api/encrypt`, {
                     method: 'POST',
                     credentials: 'include',
-                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                    body: JSON.stringify({ message: text, password: this.password }),
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-Requested-With': 'XMLHttpRequest' 
+                    },
+                    body: JSON.stringify({ 
+                        message: text, 
+                        password: this.password,
+                        use_decoys: false 
+                    }),
                 });
                 const encData = await encResult.json();
-                if (encData.success) content = encData.emoji_message;
-            } catch (_) { /* send unencrypted if encryption fails */ }
+                if (encData.success) {
+                    content = encData.emoji_message;
+                    isEncrypted = true;
+                }
+            } catch (_) { 
+                // Send as plain text if encryption fails
+                this._toast('Encryption failed, sending as plain text', 'error');
+            }
         }
 
         const room = `private_${this._roomId(this.currentContact.contact_id)}`;
@@ -305,6 +378,7 @@ class GhostChatRealtime {
             created_at:        new Date().toISOString(),
             is_read:           false,
             is_delivered:      false,
+            is_encrypted:      isEncrypted,
         };
         this.messages.push(tempMsg);
         this._renderMessages();
@@ -319,6 +393,7 @@ class GhostChatRealtime {
                 avatar:      this.user.avatar,
                 receiver_id: this.currentContact.contact_id,
                 temp_id:     tempId,
+                is_encrypted: isEncrypted,
             });
         } else {
             // Fallback to REST API
@@ -326,7 +401,10 @@ class GhostChatRealtime {
                 await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
                     method: 'POST',
                     credentials: 'include',
-                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-Requested-With': 'XMLHttpRequest' 
+                    },
                     body: JSON.stringify({ content }),
                 });
             } catch (_) {}
@@ -343,32 +421,9 @@ class GhostChatRealtime {
         this._stopTyping();
     }
 
-    // ── Decrypt a message inline ─────────────────────────────────
+    // ── Decrypt a message inline (legacy method) ─────────────────
     async promptDecrypt(msgId, btn) {
-        const password = prompt('Enter the encryption password to decrypt this message:');
-        if (!password) return;
-
-        const contentEl = document.getElementById(`content-${msgId}`);
-        if (!contentEl) return;
-
-        try {
-            const res  = await fetch(`${this._base()}/api/decrypt`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-                body: JSON.stringify({ emoji_message: contentEl.textContent, password }),
-            });
-            const data = await res.json();
-            if (data.success) {
-                contentEl.textContent = data.decrypted_message;
-                contentEl.style.color = 'var(--green)';
-                btn?.remove();
-            } else {
-                this._toast('Wrong password or invalid message', 'error');
-            }
-        } catch (_) {
-            this._toast('Decryption failed', 'error');
-        }
+        await this.decryptMessage(msgId);
     }
 
     // ── WebSocket connection ──────────────────────────────────────
@@ -476,7 +531,12 @@ class GhostChatRealtime {
             // Replace optimistic temp message or add new
             const idx = this.messages.findIndex(m => m.id === data.temp_id);
             if (idx > -1) {
-                this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
+                this.messages[idx] = { 
+                    ...this.messages[idx], 
+                    id: data.id, 
+                    is_delivered: true,
+                    is_encrypted: data.is_encrypted || true,
+                };
             } else {
                 this.messages.push({
                     id:                data.id,
@@ -487,6 +547,7 @@ class GhostChatRealtime {
                     created_at:        data.created_at || new Date().toISOString(),
                     is_read:           false,
                     is_delivered:      true,
+                    is_encrypted:      data.is_encrypted || true,
                 });
             }
             this._renderMessages();
