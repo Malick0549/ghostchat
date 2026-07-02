@@ -509,21 +509,37 @@ class GhostChatRealtime {
     }
 
     // ── Add contact flow ─────────────────────────────────────────
+    // ── FIX: searchUsers with proper CSRF token ─────────────────────
     async searchUsers(query) {
+        console.log('🔍 Searching for:', query);
         if (query.length < 2) {
-            document.getElementById('userSearchResults').innerHTML = '';
+            document.getElementById('userSearchResults').innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
             return;
         }
         try {
-            const res  = await fetch(`${this._base()}/api/contacts/search?q=${encodeURIComponent(query)}`, {
+            const csrfToken = this._getCsrf();
+            console.log('CSRF Token:', csrfToken);
+            
+            const res = await fetch(`${this._base()}/api/contacts/search?q=${encodeURIComponent(query)}`, {
                 credentials: 'include',
-                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                headers: { 
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': csrfToken
+                },
             });
             const data = await res.json();
-            this._renderSearchResults(data.users || []);
-        } catch (_) {
-            document.getElementById('userSearchResults').innerHTML =
-                '<p style="color:var(--red);font-size:.875rem;padding:8px;">Search failed. Try again.</p>';
+            console.log('Search results:', data);
+            
+            if (data.success) {
+                this._renderSearchResults(data.users || []);
+            } else {
+                document.getElementById('userSearchResults').innerHTML = 
+                    `<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Error: ${data.error || 'Search failed'}</div>`;
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+            document.getElementById('userSearchResults').innerHTML = 
+                '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Check console for details.</div>';
         }
     }
 
@@ -531,29 +547,31 @@ class GhostChatRealtime {
         const container = document.getElementById('userSearchResults');
         if (!container) return;
         if (!users.length) {
-            container.innerHTML = '<p style="color:var(--t3);font-size:.875rem;padding:8px;">No users found.</p>';
+            container.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">No users found. Try a different search.</div>';
             return;
         }
-        container.innerHTML = users.map(u => `
-            <div class="search-result-item">
-                <div class="contact-avatar" style="width:36px;height:36px;font-size:.875rem;">
+        container.innerHTML = users.map(u => {
+            const isContact = u.is_contact || false;
+            return `
+            <div class="search-result-item" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);gap:12px;">
+                <div class="contact-avatar" style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--primary);flex-shrink:0;overflow:hidden;">
                     ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                        ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                        ? `<img src="${u.avatar}" alt="${u.username[0]}" style="width:100%;height:100%;object-fit:cover;" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
                         : `<span>${u.username[0].toUpperCase()}</span>`}
                 </div>
                 <div style="flex:1;">
-                    <div style="font-weight:600;font-size:.875rem;">${this._esc(u.username)}</div>
+                    <div style="font-weight:600;font-size:.875rem;color:var(--t1);">${this._esc(u.username)}</div>
                     <div style="font-size:.75rem;color:var(--t3);">
                         ${u.is_online ? '🟢 Online' : '⚫ Offline'}
                     </div>
                 </div>
-                ${u.is_contact
-                    ? `<span style="font-size:.75rem;color:var(--green);"><i class="fas fa-check"></i> Added</span>`
-                    : `<button class="btn btn-primary btn-sm" onclick="window.chat.addContact('${u.id}', '${this._esc(u.username)}')">
+                ${isContact
+                    ? `<span style="color:var(--green);font-size:.75rem;font-weight:600;"><i class="fas fa-check"></i> Added</span>`
+                    : `<button class="btn-add-contact" onclick="window.chat.addContact('${u.id}', '${this._esc(u.username)}')" style="padding:4px 14px;border-radius:var(--rf);background:var(--primary);border:none;color:#04060e;font-weight:600;font-size:.75rem;cursor:pointer;transition:all var(--fast);">
                            <i class="fas fa-plus"></i> Add
                        </button>`}
-            </div>`
-        ).join('');
+            </div>`;
+        }).join('');
     }
 
     async addContact(contactId, username) {
