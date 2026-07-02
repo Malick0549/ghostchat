@@ -3,7 +3,7 @@
  * WhatsApp-like private messaging with:
  *   - Real contacts loaded from database
  *   - Private per-user SocketIO rooms
- *   - Add contact by username search
+ *   - Add contact by username search (with approval)
  *   - AES-256 message encryption (emoji format)
  *   - Online/offline presence
  *   - Typing indicators
@@ -16,16 +16,17 @@ class GhostChatRealtime {
     constructor() {
         this.socket          = null;
         this.connected       = false;
-        this.currentContact  = null;   // { contact_id, username, display_name, avatar }
-        this.contacts        = [];     // loaded from /api/contacts
-        this.messages        = [];     // messages for current chat
-        this.user            = null;   // current logged-in user
+        this.currentContact  = null;
+        this.contacts        = [];
+        this.messages        = [];
+        this.user            = null;
         this.typingTimer     = null;
         this.isTyping        = false;
         this.encryptMessages = true;
         this.password        = '';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
+        this.pendingRequests = [];
 
         this.init();
     }
@@ -37,9 +38,9 @@ class GhostChatRealtime {
         this._setupEventListeners();
         this._setupKeyboardShortcuts();
         this._setupMobile();
+        this._loadPendingRequests();
     }
 
-    // ── Load current user from localStorage ─────────────────────
     _loadUser() {
         try {
             this.user = JSON.parse(localStorage.getItem('ghostchat_user') || '{}');
@@ -47,14 +48,12 @@ class GhostChatRealtime {
                 window.location.href = 'login.html';
                 return;
             }
-            // Populate UI
-            const nameEl   = document.getElementById('chatUserName');
+            const nameEl = document.getElementById('chatUserName');
             const avatarEl = document.getElementById('chatUserAvatar');
-            if (nameEl)   nameEl.textContent = this.user.username || 'Ghost User';
+            if (nameEl) nameEl.textContent = this.user.username || 'Ghost User';
             if (avatarEl) {
                 if (this.user.avatar && this.user.avatar !== '/assets/images/default-avatar.png') {
-                    avatarEl.innerHTML = `<img src="${this.user.avatar}" alt="Avatar"
-                        onerror="this.outerHTML='<span>${(this.user.username||'G')[0].toUpperCase()}</span>';" />`;
+                    avatarEl.innerHTML = `<img src="${this.user.avatar}" alt="Avatar" onerror="this.outerHTML='<span>${(this.user.username||'G')[0].toUpperCase()}</span>';" />`;
                 } else {
                     avatarEl.textContent = (this.user.username || 'G')[0].toUpperCase();
                 }
@@ -64,10 +63,9 @@ class GhostChatRealtime {
         }
     }
 
-    // ── Load contacts from server ─────────────────────────────────
     async _loadContacts() {
         try {
-            const res  = await fetch(`${this._base()}/api/contacts`, {
+            const res = await fetch(`${this._base()}/api/contacts`, {
                 credentials: 'include',
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
             });
@@ -81,7 +79,6 @@ class GhostChatRealtime {
         this._renderContacts();
     }
 
-    // ── Render contacts sidebar ───────────────────────────────────
     _renderContacts() {
         const list = document.getElementById('contactsList');
         if (!list) return;
@@ -92,6 +89,13 @@ class GhostChatRealtime {
                     <i class="fas fa-user-plus" style="font-size:2rem;margin-bottom:12px;display:block;color:var(--primary);opacity:.5;"></i>
                     <p style="font-size:.875rem;">No contacts yet.</p>
                     <p style="font-size:.8125rem;margin-top:4px;">Press <strong>Alt+N</strong> or click <strong>+</strong> to add someone.</p>
+                    ${this.pendingRequests.length > 0 ? `
+                        <div style="margin-top:12px;padding:12px;background:var(--primary-dim);border-radius:var(--r2);">
+                            <p style="font-size:.75rem;color:var(--primary);">
+                                <i class="fas fa-clock"></i> ${this.pendingRequests.length} pending request(s)
+                            </p>
+                        </div>
+                    ` : ''}
                 </div>`;
             return;
         }
@@ -99,22 +103,13 @@ class GhostChatRealtime {
         list.innerHTML = this.contacts.map(c => {
             const initials = (c.display_name || c.username || '?')[0].toUpperCase();
             const avatarHtml = c.avatar && c.avatar !== '/assets/images/default-avatar.png'
-                ? `<img src="${c.avatar}" alt="${initials}"
-                    onerror="this.outerHTML='<span>${initials}</span>';" />`
+                ? `<img src="${c.avatar}" alt="${initials}" onerror="this.outerHTML='<span>${initials}</span>';" />`
                 : `<span>${initials}</span>`;
 
-            const lastMsg  = c.last_message?.content
-                ? this._truncate(c.last_message.content, 36)
-                : 'Start a secure conversation';
-            const lastTime = c.last_message?.created_at
-                ? this._formatTime(c.last_message.created_at)
-                : '';
-            const unread = c.unread_count > 0
-                ? `<span class="contact-unread">${c.unread_count > 99 ? '99+' : c.unread_count}</span>`
-                : '';
-            const online = c.is_online
-                ? '<span class="online-dot"></span>'
-                : '';
+            const lastMsg = c.last_message?.content ? this._truncate(c.last_message.content, 36) : 'Start a secure conversation';
+            const lastTime = c.last_message?.created_at ? this._formatTime(c.last_message.created_at) : '';
+            const unread = c.unread_count > 0 ? `<span class="contact-unread">${c.unread_count > 99 ? '99+' : c.unread_count}</span>` : '';
+            const online = c.is_online ? '<span class="online-dot"></span>' : '';
 
             const isActive = this.currentContact?.contact_id === c.contact_id;
 
@@ -123,7 +118,6 @@ class GhostChatRealtime {
                  data-id="${c.contact_id}"
                  data-name="${this._esc(c.display_name || c.username)}"
                  role="button" tabindex="0"
-                 aria-label="Chat with ${this._esc(c.display_name || c.username)}"
                  onclick="window.chat.openChat('${c.contact_id}', '${this._esc(c.display_name || c.username)}', '${c.avatar || ''}')">
                 <div class="contact-avatar">
                     ${avatarHtml}
@@ -143,22 +137,17 @@ class GhostChatRealtime {
         }).join('');
     }
 
-    // ── Open a private chat ───────────────────────────────────────
     async openChat(contactId, displayName, avatar) {
         this.currentContact = { contact_id: contactId, display_name: displayName, avatar };
 
-        // Update header
-        const headerName   = document.getElementById('chatHeaderName');
+        const headerName = document.getElementById('chatHeaderName');
         const headerAvatar = document.getElementById('chatHeaderAvatar');
         const headerStatus = document.getElementById('chatHeaderStatus');
-        if (headerName)   headerName.textContent = displayName;
+        if (headerName) headerName.textContent = displayName;
         if (headerStatus) headerStatus.textContent = '🔒 End-to-End Encrypted';
         if (headerAvatar) {
-            const contact = this.contacts.find(c => c.contact_id === contactId);
             if (avatar && avatar !== '/assets/images/default-avatar.png') {
-                headerAvatar.innerHTML = `<img src="${avatar}" alt="${displayName[0]}"
-                    style="width:100%;height:100%;object-fit:cover;border-radius:50%;"
-                    onerror="this.outerHTML='<span>${displayName[0].toUpperCase()}</span>';" />`;
+                headerAvatar.innerHTML = `<img src="${avatar}" alt="${displayName[0]}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span>${displayName[0].toUpperCase()}</span>';" />`;
             } else {
                 headerAvatar.textContent = displayName[0].toUpperCase();
             }
@@ -166,34 +155,29 @@ class GhostChatRealtime {
 
         // Join private SocketIO room
         if (this.socket && this.connected) {
-            this.socket.emit('join_room', { room: `private_${this._roomId(contactId)}` });
+            const roomId = `private_${this._roomId(contactId)}`;
+            console.log('Joining room:', roomId);
+            this.socket.emit('join_room', { room: roomId });
         }
 
-        // Load message history
         await this._loadMessages(contactId);
 
-        // Mark contact active in sidebar
         document.querySelectorAll('.contact-item').forEach(el => {
             el.classList.toggle('active', el.dataset.id === contactId);
         });
 
-        // On mobile: show chat panel
         document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
         document.getElementById('chatInput')?.focus();
     }
 
-    // ── Load message history from server ────────────────────────────
     async _loadMessages(contactId) {
         const container = document.getElementById('chatMessages');
         if (!container) return;
 
-        container.innerHTML = `
-            <div style="display:flex;justify-content:center;padding:32px;">
-                <div class="spinner" aria-label="Loading messages"></div>
-            </div>`;
+        container.innerHTML = `<div style="display:flex;justify-content:center;padding:32px;"><div class="spinner"></div></div>`;
 
         try {
-            const res  = await fetch(`${this._base()}/api/chat/${contactId}/messages?limit=50`, {
+            const res = await fetch(`${this._base()}/api/chat/${contactId}/messages?limit=50`, {
                 credentials: 'include',
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
             });
@@ -206,7 +190,6 @@ class GhostChatRealtime {
         this._renderMessages();
     }
 
-    // ── Render messages ───────────────────────────────────────────
     _renderMessages() {
         const container = document.getElementById('chatMessages');
         if (!container) return;
@@ -228,27 +211,20 @@ class GhostChatRealtime {
         let lastDate = '';
 
         this.messages.forEach(msg => {
-            const isMine  = msg.sender_id === this.user.id;
+            const isMine = msg.sender_id === this.user.id;
             const msgDate = new Date(msg.created_at).toLocaleDateString();
 
-            // Date separator
             if (msgDate !== lastDate) {
                 lastDate = msgDate;
                 html += `<div class="msg-date-sep"><span>${this._formatDate(msg.created_at)}</span></div>`;
             }
 
-            const time    = this._formatTime(msg.created_at);
+            const time = this._formatTime(msg.created_at);
             const content = this._esc(msg.encrypted_content || '');
-            const status  = isMine
-                ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>`
-                : '';
+            const status = isMine ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>` : '';
             
-            // ── FIX: Always show encrypted content, add decrypt button ──
-            // Check if it looks like encrypted emoji message (contains emojis)
-            const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(content) && content.length > 5;
-            
-            // Store the raw content for decryption
-            const rawContent = content;
+            // ── FIX: Check if content looks encrypted (emoji characters) ──
+            const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(content) && content.length > 10;
 
             html += `
             <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
@@ -268,20 +244,14 @@ class GhostChatRealtime {
                 </div>
             </div>`;
             
-            // Store raw content for decryption
             if (isEncrypted) {
-                this._storeDecryptData(msg.id, rawContent);
+                this._decryptData = this._decryptData || {};
+                this._decryptData[msg.id] = content;
             }
         });
 
         container.innerHTML = html;
         this._scrollToBottom();
-    }
-
-    // ── Store decryption data ─────────────────────────────────────
-    _storeDecryptData(msgId, content) {
-        if (!this._decryptData) this._decryptData = {};
-        this._decryptData[msgId] = content;
     }
 
     // ── Decrypt message ────────────────────────────────────────────
@@ -292,11 +262,10 @@ class GhostChatRealtime {
         const contentEl = document.getElementById(`content-${msgId}`);
         if (!contentEl) return;
 
-        // Get the encrypted content
         const encryptedContent = this._decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '');
 
         try {
-            const res  = await fetch(`${this._base()}/api/decrypt`, {
+            const res = await fetch(`${this._base()}/api/decrypt`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 
@@ -311,9 +280,7 @@ class GhostChatRealtime {
             const data = await res.json();
             
             if (data.success) {
-                // Show decrypted message
                 contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(data.decrypted_message)}</span>`;
-                // Remove decrypt button
                 const btn = contentEl.parentElement.querySelector('.msg-decrypt-btn');
                 if (btn) btn.remove();
                 this._toast('Message decrypted!', 'success');
@@ -335,7 +302,7 @@ class GhostChatRealtime {
         input.value = '';
         input.style.height = 'auto';
 
-        // ── FIX: Always encrypt if password is set ──────────────────────────
+        // ── FIX: Always encrypt messages ──────────────────────────────────
         let content = text;
         let isEncrypted = false;
         
@@ -358,44 +325,51 @@ class GhostChatRealtime {
                 if (encData.success) {
                     content = encData.emoji_message;
                     isEncrypted = true;
+                    console.log('Message encrypted successfully:', content.substring(0, 50) + '...');
+                } else {
+                    this._toast('Encryption failed: ' + (encData.error || 'Unknown error'), 'error');
                 }
-            } catch (_) { 
-                // Send as plain text if encryption fails
+            } catch (error) {
+                console.error('Encryption error:', error);
                 this._toast('Encryption failed, sending as plain text', 'error');
             }
+        } else if (!this.password) {
+            this._toast('Please set an encryption password first (click the key icon)', 'warning');
+            return;
         }
 
-        const room = `private_${this._roomId(this.currentContact.contact_id)}`;
+        const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
 
         // Optimistic UI — show message immediately
-        const tempId  = 'temp_' + Date.now();
+        const tempId = 'temp_' + Date.now();
         const tempMsg = {
-            id:                tempId,
-            sender_id:         this.user.id,
-            receiver_id:       this.currentContact.contact_id,
+            id: tempId,
+            sender_id: this.user.id,
+            receiver_id: this.currentContact.contact_id,
             encrypted_content: content,
-            message_type:      'chat',
-            created_at:        new Date().toISOString(),
-            is_read:           false,
-            is_delivered:      false,
-            is_encrypted:      isEncrypted,
+            message_type: 'chat',
+            created_at: new Date().toISOString(),
+            is_read: false,
+            is_delivered: false,
         };
         this.messages.push(tempMsg);
         this._renderMessages();
 
-        // Send via SocketIO
+        // ── FIX: Send via SocketIO with proper room ──────────────────────
         if (this.socket && this.connected) {
+            console.log('Sending message to room:', roomId);
+            console.log('Content length:', content.length);
             this.socket.emit('send_private_message', {
-                room:        room,
-                content:     content,
-                sender_id:   this.user.id,
-                sender:      this.user.username,
-                avatar:      this.user.avatar,
+                room: roomId,
+                content: content,
+                sender_id: this.user.id,
+                sender: this.user.username,
+                avatar: this.user.avatar || '',
                 receiver_id: this.currentContact.contact_id,
-                temp_id:     tempId,
-                is_encrypted: isEncrypted,
+                temp_id: tempId,
             });
         } else {
+            console.warn('Socket not connected, using REST fallback');
             // Fallback to REST API
             try {
                 await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
@@ -407,7 +381,10 @@ class GhostChatRealtime {
                     },
                     body: JSON.stringify({ content }),
                 });
-            } catch (_) {}
+            } catch (error) {
+                console.error('REST fallback failed:', error);
+                this._toast('Failed to send message', 'error');
+            }
         }
 
         // Update contact's last message in sidebar
@@ -417,13 +394,7 @@ class GhostChatRealtime {
             this._renderContacts();
         }
 
-        // Stop typing indicator
         this._stopTyping();
-    }
-
-    // ── Decrypt a message inline (legacy method) ─────────────────
-    async promptDecrypt(msgId, btn) {
-        await this.decryptMessage(msgId);
     }
 
     // ── WebSocket connection ──────────────────────────────────────
@@ -446,14 +417,18 @@ class GhostChatRealtime {
                 this.connected = true;
                 this.reconnectAttempts = 0;
                 this._updateOnlineStatus(true);
+                
                 // Join personal room to receive private messages
                 this.socket.emit('join_user_room', { user_id: this.user.id });
+                console.log('Joined user room:', `user_${this.user.id}`);
+                
+                // Re-join current chat room if any
                 if (this.currentContact) {
-                    this.socket.emit('join_room', {
-                        room: `private_${this._roomId(this.currentContact.contact_id)}`
-                    });
+                    const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
+                    console.log('Re-joining room:', roomId);
+                    this.socket.emit('join_room', { room: roomId });
                 }
-                // ── FIX: Update status text ──────────────────────────────────
+                
                 const statusEl = document.getElementById('userStatus');
                 if (statusEl) {
                     statusEl.textContent = '🟢 Online';
@@ -465,7 +440,6 @@ class GhostChatRealtime {
                 console.log('❌ Socket disconnected');
                 this.connected = false;
                 this._updateOnlineStatus(false);
-                // ── FIX: Update status text ──────────────────────────────────
                 const statusEl = document.getElementById('userStatus');
                 if (statusEl) {
                     statusEl.textContent = '🔴 Offline';
@@ -477,7 +451,6 @@ class GhostChatRealtime {
                 console.error('Socket connection error:', error);
                 this.connected = false;
                 this.reconnectAttempts++;
-                // ── FIX: Update status text ──────────────────────────────────
                 const statusEl = document.getElementById('userStatus');
                 if (statusEl) {
                     statusEl.textContent = '🔄 Reconnecting...';
@@ -485,15 +458,15 @@ class GhostChatRealtime {
                 }
             });
 
-            // Receive private message
+            // ── FIX: Receive private message ───────────────────────────────
             this.socket.on('receive_message', data => {
+                console.log('📨 Message received:', data);
                 this._handleReceivedMessage(data);
             });
 
             // Typing indicator
             this.socket.on('typing', data => {
-                if (data.user_id !== this.user.id &&
-                    this.currentContact?.contact_id === data.user_id) {
+                if (data.user_id !== this.user.id && this.currentContact?.contact_id === data.user_id) {
                     this._showTyping(data.username);
                 }
             });
@@ -506,11 +479,30 @@ class GhostChatRealtime {
             // Online presence
             this.socket.on('user_online', data => {
                 const c = this.contacts.find(x => x.contact_id === data.user_id);
-                if (c) { c.is_online = true; this._renderContacts(); }
+                if (c) { c.is_online = true;
+                    this._renderContacts(); }
             });
             this.socket.on('user_offline', data => {
                 const c = this.contacts.find(x => x.contact_id === data.user_id);
-                if (c) { c.is_online = false; this._renderContacts(); }
+                if (c) { c.is_online = false;
+                    this._renderContacts(); }
+            });
+
+            // ── FIX: Friend request events ──────────────────────────────────
+            this.socket.on('friend_request', data => {
+                console.log('📨 Friend request received:', data);
+                this._handleFriendRequest(data);
+            });
+
+            this.socket.on('friend_request_accepted', data => {
+                console.log('✅ Friend request accepted:', data);
+                this._toast(`${data.username} accepted your friend request!`, 'success');
+                this._loadContacts();
+            });
+
+            this.socket.on('friend_request_rejected', data => {
+                console.log('❌ Friend request rejected:', data);
+                this._toast(`${data.username} rejected your friend request`, 'info');
             });
 
         } catch (error) {
@@ -523,54 +515,68 @@ class GhostChatRealtime {
         // Only show if it's for the current chat
         if (!this.currentContact) return;
         const isCurrentChat = (
-            (data.sender_id   === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
-            (data.receiver_id === this.currentContact.contact_id && data.sender_id   === this.user.id)
+            (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
+            (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
         );
 
+        console.log('Is current chat?', isCurrentChat);
+        console.log('Current contact:', this.currentContact.contact_id);
+        console.log('Data sender:', data.sender_id, 'receiver:', data.receiver_id);
+
         if (isCurrentChat) {
-            // Replace optimistic temp message or add new
             const idx = this.messages.findIndex(m => m.id === data.temp_id);
             if (idx > -1) {
-                this.messages[idx] = { 
-                    ...this.messages[idx], 
-                    id: data.id, 
-                    is_delivered: true,
-                    is_encrypted: data.is_encrypted || true,
-                };
+                this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
             } else {
                 this.messages.push({
-                    id:                data.id,
-                    sender_id:         data.sender_id,
-                    receiver_id:       data.receiver_id || this.user.id,
+                    id: data.id,
+                    sender_id: data.sender_id,
+                    receiver_id: data.receiver_id || this.user.id,
                     encrypted_content: data.content,
-                    message_type:      'chat',
-                    created_at:        data.created_at || new Date().toISOString(),
-                    is_read:           false,
-                    is_delivered:      true,
-                    is_encrypted:      data.is_encrypted || true,
+                    message_type: 'chat',
+                    created_at: data.created_at || new Date().toISOString(),
+                    is_read: false,
+                    is_delivered: true,
                 });
             }
             this._renderMessages();
+            this._notifyNewMessage(data);
         }
 
         // Update sidebar preview + unread badge
         const contact = this.contacts.find(c => c.contact_id === data.sender_id);
         if (contact) {
             contact.last_message = {
-                content:    data.content,
+                content: data.content,
                 created_at: data.created_at,
-                is_mine:    data.sender_id === this.user.id,
+                is_mine: data.sender_id === this.user.id,
             };
             if (!isCurrentChat || !document.hasFocus()) {
                 contact.unread_count = (contact.unread_count || 0) + 1;
-                this._notifyNewMessage(data);
             }
             this._renderContacts();
         }
     }
 
     // ── Add contact flow ─────────────────────────────────────────
-    // ── FIX: searchUsers with proper CSRF token and fetch fallback ─────
+    _loadPendingRequests() {
+        // Check localStorage for pending requests
+        try {
+            const pending = localStorage.getItem('ghostchat_pending_requests');
+            if (pending) {
+                this.pendingRequests = JSON.parse(pending);
+            }
+        } catch (_) {
+            this.pendingRequests = [];
+        }
+    }
+
+    _savePendingRequests() {
+        try {
+            localStorage.setItem('ghostchat_pending_requests', JSON.stringify(this.pendingRequests));
+        } catch (_) {}
+    }
+
     async searchUsers(query) {
         console.log('🔍 Searching for:', query);
         const resultsContainer = document.getElementById('userSearchResults');
@@ -584,13 +590,8 @@ class GhostChatRealtime {
         try {
             resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Searching...</div>';
             
-            // Try to get CSRF token from cookie
             let csrfToken = this._getCsrf();
-            console.log('CSRF Token from cookie:', csrfToken);
-            
-            // If no token, fetch a fresh one
             if (!csrfToken) {
-                console.log('No CSRF token in cookie, fetching fresh...');
                 try {
                     const tokenRes = await fetch('/api/csrf-token', {
                         credentials: 'include',
@@ -598,7 +599,6 @@ class GhostChatRealtime {
                     });
                     const tokenData = await tokenRes.json();
                     csrfToken = tokenData.csrf_token;
-                    console.log('Fetched CSRF token:', csrfToken);
                 } catch (tokenError) {
                     console.error('Failed to fetch CSRF token:', tokenError);
                 }
@@ -613,15 +613,13 @@ class GhostChatRealtime {
                 },
             });
             
-            console.log('Search response status:', res.status);
-            
             if (res.status === 401 || res.status === 403) {
                 resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
                 return;
             }
             
             const data = await res.json();
-            console.log('Search results data:', data);
+            console.log('Search results:', data);
             
             if (data.success) {
                 this._renderSearchResults(data.users || []);
@@ -645,6 +643,7 @@ class GhostChatRealtime {
         }
         container.innerHTML = users.map(u => {
             const isContact = u.is_contact || false;
+            const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
             return `
             <div class="search-result-item" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--border);gap:12px;">
                 <div class="contact-avatar" style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--primary);flex-shrink:0;overflow:hidden;">
@@ -656,49 +655,146 @@ class GhostChatRealtime {
                     <div style="font-weight:600;font-size:.875rem;color:var(--t1);">${this._esc(u.username)}</div>
                     <div style="font-size:.75rem;color:var(--t3);">
                         ${u.is_online ? '🟢 Online' : '⚫ Offline'}
+                        ${isPending ? ' · ⏳ Pending' : ''}
                     </div>
                 </div>
                 ${isContact
-                    ? `<span style="color:var(--green);font-size:.75rem;font-weight:600;"><i class="fas fa-check"></i> Added</span>`
-                    : `<button class="btn-add-contact" onclick="window.chat.addContact('${u.id}', '${this._esc(u.username)}')" style="padding:4px 14px;border-radius:var(--rf);background:var(--primary);border:none;color:#04060e;font-weight:600;font-size:.75rem;cursor:pointer;transition:all var(--fast);">
-                           <i class="fas fa-plus"></i> Add
-                       </button>`}
+                    ? `<span style="color:var(--green);font-size:.75rem;font-weight:600;"><i class="fas fa-check"></i> Contact</span>`
+                    : isPending
+                        ? `<span style="color:var(--amber);font-size:.75rem;font-weight:600;"><i class="fas fa-clock"></i> Pending</span>`
+                        : `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')" style="padding:4px 14px;border-radius:var(--rf);background:var(--primary);border:none;color:#04060e;font-weight:600;font-size:.75rem;cursor:pointer;transition:all var(--fast);">
+                               <i class="fas fa-user-plus"></i> Add
+                           </button>`}
             </div>`;
         }).join('');
     }
 
-    async addContact(contactId, username) {
+    // ── Send friend request ────────────────────────────────────────
+    async sendFriendRequest(userId, username) {
         try {
-            const res  = await fetch(`${this._base()}/api/contacts`, {
+            const csrfToken = this._getCsrf();
+            
+            const res = await fetch(`${this._base()}/api/contacts`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
-                    'Content-Type':    'application/json',
-                    'X-Requested-With':'XMLHttpRequest',
-                    'X-CSRF-Token':    this._getCsrf(),
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': csrfToken || '',
                 },
-                body: JSON.stringify({ contact_id: contactId }),
+                body: JSON.stringify({ 
+                    contact_id: userId,
+                    status: 'pending' 
+                }),
             });
+            
             const data = await res.json();
+            console.log('Friend request response:', data);
+            
             if (data.success) {
-                this._toast(`${username} added to contacts!`, 'success');
+                this._toast(`Friend request sent to ${username}!`, 'success');
+                this.pendingRequests.push({ to: userId, from: this.user.id, username: username });
+                this._savePendingRequests();
                 closeModal('newChatModal');
-                await this._loadContacts();
-                this.openChat(contactId, username, data.avatar || '');
+                
+                // Notify the other user via SocketIO
+                if (this.socket && this.connected) {
+                    this.socket.emit('friend_request', {
+                        to: userId,
+                        from: this.user.id,
+                        username: this.user.username,
+                    });
+                }
             } else {
-                this._toast(data.error || 'Failed to add contact', 'error');
+                this._toast(data.error || 'Failed to send friend request', 'error');
             }
-        } catch (_) {
-            this._toast('Failed to add contact', 'error');
+        } catch (error) {
+            console.error('Friend request error:', error);
+            this._toast('Failed to send friend request', 'error');
         }
+    }
+
+    // ── Handle friend request from other user ─────────────────────
+    _handleFriendRequest(data) {
+        // Show notification
+        this._toast(`${data.username} sent you a friend request!`, 'info');
+        
+        // Ask user to accept or reject
+        const message = `${data.username} sent you a friend request. Accept?`;
+        if (confirm(message)) {
+            this._acceptFriendRequest(data.from, data.username);
+        } else {
+            this._rejectFriendRequest(data.from, data.username);
+        }
+    }
+
+    async _acceptFriendRequest(userId, username) {
+        try {
+            const csrfToken = this._getCsrf();
+            
+            const res = await fetch(`${this._base()}/api/contacts`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': csrfToken || '',
+                },
+                body: JSON.stringify({ 
+                    contact_id: userId,
+                    status: 'accepted' 
+                }),
+            });
+            
+            const data = await res.json();
+            console.log('Accept friend request response:', data);
+            
+            if (data.success) {
+                this._toast(`You and ${username} are now friends!`, 'success');
+                this.pendingRequests = this.pendingRequests.filter(r => r.from !== userId);
+                this._savePendingRequests();
+                this._loadContacts();
+                
+                // Notify other user
+                if (this.socket && this.connected) {
+                    this.socket.emit('friend_request_accepted', {
+                        to: userId,
+                        from: this.user.id,
+                        username: this.user.username,
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Accept friend request error:', error);
+            this._toast('Failed to accept friend request', 'error');
+        }
+    }
+
+    async _rejectFriendRequest(userId, username) {
+        try {
+            // Notify other user
+            if (this.socket && this.connected) {
+                this.socket.emit('friend_request_rejected', {
+                    to: userId,
+                    from: this.user.id,
+                    username: this.user.username,
+                });
+            }
+            this._toast(`Friend request from ${username} rejected`, 'info');
+        } catch (error) {
+            console.error('Reject friend request error:', error);
+        }
+    }
+
+    async addContact(contactId, username) {
+        // This is now handled by sendFriendRequest
+        await this.sendFriendRequest(contactId, username);
     }
 
     // ── Event listeners ───────────────────────────────────────────
     _setupEventListeners() {
-        // Send button
         document.getElementById('sendBtn')?.addEventListener('click', () => this.sendMessage());
 
-        // Chat input — Enter to send, Shift+Enter for newline, typing indicator
         const input = document.getElementById('chatInput');
         input?.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -709,14 +805,12 @@ class GhostChatRealtime {
             }
         });
         input?.addEventListener('input', () => {
-            // Only resize if it's a textarea
             if (input.tagName === 'TEXTAREA') {
                 input.style.height = 'auto';
                 input.style.height = Math.min(input.scrollHeight, 150) + 'px';
             }
         });
 
-        // ── FIX: Add contact button ──────────────────────────────────────────
         const addBtn = document.getElementById('addContactBtn');
         if (addBtn) {
             addBtn.addEventListener('click', (e) => {
@@ -729,32 +823,25 @@ class GhostChatRealtime {
                     if (search) search.focus();
                 }, 100);
             });
-        } else {
-            console.warn('Add Contact button not found');
         }
 
-        // Contact search in modal
         document.getElementById('newChatSearch')?.addEventListener('input', e => {
             this.searchUsers(e.target.value.trim());
         });
 
-        // Contact search in sidebar
         document.getElementById('contactSearch')?.addEventListener('input', e => {
             this._filterContacts(e.target.value.trim());
         });
 
-        // Logout
         document.getElementById('chatLogout')?.addEventListener('click', async () => {
             await window.GhostChatAPI?.logout();
             window.location.href = 'login.html';
         });
 
-        // Encryption toggle in header (lock icon in input bar)
         document.getElementById('encryptToggle')?.addEventListener('click', () => {
             this._toggleEncryption();
         });
 
-        // Set password
         document.getElementById('setPasswordBtn')?.addEventListener('click', () => {
             const pw = prompt('Set encryption password (shared with your contact):');
             if (pw) {
@@ -764,12 +851,10 @@ class GhostChatRealtime {
             }
         });
 
-        // Mobile back button
         document.getElementById('mobileBackBtn')?.addEventListener('click', () => {
             document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
         });
 
-        // Menu button → show chat info
         document.getElementById('chatMenuBtn')?.addEventListener('click', () => {
             const panel = document.getElementById('infoPanel');
             if (panel) panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
@@ -778,29 +863,23 @@ class GhostChatRealtime {
 
     _setupKeyboardShortcuts() {
         document.addEventListener('keydown', e => {
-            // Escape — close modals
             if (e.key === 'Escape') {
                 document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
                 document.getElementById('emojiPicker').style.display = 'none';
                 document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
             }
-            // Ctrl+K — focus search
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
                 const search = document.getElementById('contactSearch');
-                if (search) {
-                    search.focus();
-                    search.select();
-                }
+                if (search) { search.focus();
+                    search.select(); }
             }
-            // Alt+N — new chat
             if (e.altKey && e.key === 'n') {
                 e.preventDefault();
                 console.log('Alt+N pressed');
                 openModal('newChatModal');
                 setTimeout(() => document.getElementById('newChatSearch')?.focus(), 100);
             }
-            // Alt+E — toggle encryption
             if (e.altKey && e.key === 'e') {
                 e.preventDefault();
                 this._toggleEncryption();
@@ -811,7 +890,7 @@ class GhostChatRealtime {
     _setupMobile() {
         const handleResize = () => {
             const isMobile = window.innerWidth <= 768;
-            const sidebar  = document.querySelector('.chat-sidebar');
+            const sidebar = document.querySelector('.chat-sidebar');
             if (!sidebar) return;
             if (isMobile && this.currentContact) {
                 sidebar.classList.add('mobile-hidden');
@@ -823,14 +902,13 @@ class GhostChatRealtime {
         handleResize();
     }
 
-    // ── Typing indicator ─────────────────────────────────────────
     _handleTyping() {
         if (!this.socket || !this.connected || !this.currentContact) return;
         if (!this.isTyping) {
             this.isTyping = true;
             this.socket.emit('typing', {
-                room:     `private_${this._roomId(this.currentContact.contact_id)}`,
-                user_id:  this.user.id,
+                room: `private_${this._roomId(this.currentContact.contact_id)}`,
+                user_id: this.user.id,
                 username: this.user.username,
             });
         }
@@ -842,7 +920,7 @@ class GhostChatRealtime {
         if (!this.isTyping || !this.socket || !this.currentContact) return;
         this.isTyping = false;
         this.socket.emit('stop_typing', {
-            room:    `private_${this._roomId(this.currentContact.contact_id)}`,
+            room: `private_${this._roomId(this.currentContact.contact_id)}`,
             user_id: this.user.id,
         });
     }
@@ -851,7 +929,7 @@ class GhostChatRealtime {
         let el = document.getElementById('typingIndicator');
         if (!el) {
             el = document.createElement('div');
-            el.id        = 'typingIndicator';
+            el.id = 'typingIndicator';
             el.className = 'typing-indicator-wrap';
             document.getElementById('chatMessages')?.appendChild(el);
         }
@@ -869,12 +947,11 @@ class GhostChatRealtime {
         document.getElementById('typingIndicator')?.remove();
     }
 
-    // ── Encryption toggle ─────────────────────────────────────────
     _toggleEncryption() {
         if (!this.password && !this.encryptMessages) {
             const pw = prompt('Enter a shared encryption password:');
             if (!pw) return;
-            this.password        = pw;
+            this.password = pw;
             this.encryptMessages = true;
         } else {
             this.encryptMessages = !this.encryptMessages;
@@ -892,7 +969,6 @@ class GhostChatRealtime {
         );
     }
 
-    // ── Online status ─────────────────────────────────────────────
     _updateOnlineStatus(online) {
         const el = document.getElementById('userStatus');
         if (el) {
@@ -901,20 +977,17 @@ class GhostChatRealtime {
         }
     }
 
-    // ── Contact filter ─────────────────────────────────────────────
     _filterContacts(query) {
         document.querySelectorAll('.contact-item').forEach(el => {
-            const name    = el.dataset.name?.toLowerCase() || '';
+            const name = el.dataset.name?.toLowerCase() || '';
             el.style.display = !query || name.includes(query.toLowerCase()) ? '' : 'none';
         });
     }
 
-    // ── Browser notification ──────────────────────────────────────
     _notifyNewMessage(data) {
-        if (window.UI) UI.showToast(`New message from ${data.sender}`, 'info');
+        if (window.UI) UI.showToast(`New message from ${data.sender || 'Someone'}`, 'info');
     }
 
-    // ── Helpers ───────────────────────────────────────────────────
     _scrollToBottom() {
         const el = document.getElementById('chatMessages');
         if (el) setTimeout(() => { el.scrollTop = el.scrollHeight; }, 50);
@@ -927,7 +1000,6 @@ class GhostChatRealtime {
     }
 
     _roomId(contactId) {
-        // Deterministic room ID — same for both participants
         return [this.user.id, contactId].sort().join('_');
     }
 
@@ -951,7 +1023,7 @@ class GhostChatRealtime {
     }
 
     _formatDate(iso) {
-        const d   = new Date(iso);
+        const d = new Date(iso);
         const now = new Date();
         const diff = Math.floor((now - d) / 86400000);
         if (diff === 0) return 'Today';
@@ -964,7 +1036,6 @@ class GhostChatRealtime {
     }
 }
 
-// ── Global helpers for onclick attributes ────────────────────────
 function openModal(id) {
     const m = document.getElementById(id);
     if (m) m.classList.add('active');
@@ -974,14 +1045,12 @@ function closeModal(id) {
     if (m) m.classList.remove('active');
 }
 
-// Close modal on backdrop click
 document.addEventListener('click', e => {
     if (e.target.classList.contains('modal')) {
         e.target.classList.remove('active');
     }
 });
 
-// ── Boot ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     window.chat = new GhostChatRealtime();
 });
