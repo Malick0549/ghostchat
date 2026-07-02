@@ -509,37 +509,69 @@ class GhostChatRealtime {
     }
 
     // ── Add contact flow ─────────────────────────────────────────
-    // ── FIX: searchUsers with proper CSRF token ─────────────────────
+    // ── FIX: searchUsers with proper CSRF token and fetch fallback ─────
     async searchUsers(query) {
         console.log('🔍 Searching for:', query);
+        const resultsContainer = document.getElementById('userSearchResults');
+        if (!resultsContainer) return;
+        
         if (query.length < 2) {
-            document.getElementById('userSearchResults').innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
+            resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
             return;
         }
+        
         try {
-            const csrfToken = this._getCsrf();
-            console.log('CSRF Token:', csrfToken);
+            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Searching...</div>';
+            
+            // Try to get CSRF token from cookie
+            let csrfToken = this._getCsrf();
+            console.log('CSRF Token from cookie:', csrfToken);
+            
+            // If no token, fetch a fresh one
+            if (!csrfToken) {
+                console.log('No CSRF token in cookie, fetching fresh...');
+                try {
+                    const tokenRes = await fetch('/api/csrf-token', {
+                        credentials: 'include',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    const tokenData = await tokenRes.json();
+                    csrfToken = tokenData.csrf_token;
+                    console.log('Fetched CSRF token:', csrfToken);
+                } catch (tokenError) {
+                    console.error('Failed to fetch CSRF token:', tokenError);
+                }
+            }
             
             const res = await fetch(`${this._base()}/api/contacts/search?q=${encodeURIComponent(query)}`, {
                 credentials: 'include',
                 headers: { 
+                    'Content-Type': 'application/json',
                     'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-Token': csrfToken
+                    'X-CSRF-Token': csrfToken || ''
                 },
             });
+            
+            console.log('Search response status:', res.status);
+            
+            if (res.status === 401 || res.status === 403) {
+                resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
+                return;
+            }
+            
             const data = await res.json();
-            console.log('Search results:', data);
+            console.log('Search results data:', data);
             
             if (data.success) {
                 this._renderSearchResults(data.users || []);
             } else {
-                document.getElementById('userSearchResults').innerHTML = 
-                    `<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Error: ${data.error || 'Search failed'}</div>`;
+                resultsContainer.innerHTML = 
+                    `<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${data.error || 'Search failed'}</div>`;
             }
         } catch (error) {
             console.error('Search error:', error);
-            document.getElementById('userSearchResults').innerHTML = 
-                '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Check console for details.</div>';
+            resultsContainer.innerHTML = 
+                '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Please try again.</div>';
         }
     }
 
