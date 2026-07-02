@@ -90,13 +90,6 @@ class GhostChatRealtime {
                     <i class="fas fa-user-plus" style="font-size:2rem;margin-bottom:12px;display:block;color:var(--primary);opacity:.5;"></i>
                     <p style="font-size:.875rem;">No contacts yet.</p>
                     <p style="font-size:.8125rem;margin-top:4px;">Press <strong>Alt+N</strong> or click <strong>+</strong> to add someone.</p>
-                    ${this.pendingRequests.length > 0 ? `
-                        <div style="margin-top:12px;padding:12px;background:var(--primary-dim);border-radius:var(--r2);">
-                            <p style="font-size:.75rem;color:var(--primary);">
-                                <i class="fas fa-clock"></i> ${this.pendingRequests.length} pending request(s)
-                            </p>
-                        </div>
-                    ` : ''}
                 </div>`;
             return;
         }
@@ -154,7 +147,6 @@ class GhostChatRealtime {
             }
         }
 
-        // Join private SocketIO room
         if (this.socket && this.connected) {
             const roomId = `private_${this._roomId(contactId)}`;
             console.log('Joining room:', roomId);
@@ -224,7 +216,6 @@ class GhostChatRealtime {
             const content = this._esc(msg.encrypted_content || '');
             const status = isMine ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>` : '';
             
-            // Check if content looks encrypted (emoji characters)
             const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(content) && content.length > 10;
 
             html += `
@@ -254,7 +245,6 @@ class GhostChatRealtime {
         this._scrollToBottom();
     }
 
-    // ── Decrypt message ────────────────────────────────────────────
     async decryptMessage(msgId) {
         const password = prompt('Enter the encryption password to decrypt this message:');
         if (!password) return;
@@ -292,7 +282,6 @@ class GhostChatRealtime {
         }
     }
 
-    // ── Send message ──────────────────────────────────────────────
     async sendMessage() {
         const input = document.getElementById('chatInput');
         if (!input) return;
@@ -302,7 +291,6 @@ class GhostChatRealtime {
         input.value = '';
         input.style.height = 'auto';
 
-        // Always encrypt messages
         let content = text;
         
         if (this.encryptMessages && this.password) {
@@ -338,7 +326,6 @@ class GhostChatRealtime {
 
         const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
 
-        // Optimistic UI
         const tempId = 'temp_' + Date.now();
         const tempMsg = {
             id: tempId,
@@ -353,7 +340,6 @@ class GhostChatRealtime {
         this.messages.push(tempMsg);
         this._renderMessages();
 
-        // Send via SocketIO
         if (this.socket && this.connected) {
             console.log('Sending message to room:', roomId);
             this.socket.emit('send_private_message', {
@@ -392,7 +378,6 @@ class GhostChatRealtime {
         this._stopTyping();
     }
 
-    // ── WebSocket connection ──────────────────────────────────────
     _connectSocket() {
         const socketUrl = window.location.origin;
         
@@ -478,7 +463,6 @@ class GhostChatRealtime {
                     this._renderContacts(); }
             });
 
-            // Friend request events
             this.socket.on('friend_request', data => {
                 console.log('📨 Friend request received:', data);
                 this._handleFriendRequest(data);
@@ -564,7 +548,7 @@ class GhostChatRealtime {
         if (!resultsContainer) return;
         
         if (query.length < 2) {
-            resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
+            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
             return;
         }
         
@@ -595,7 +579,7 @@ class GhostChatRealtime {
             });
             
             if (res.status === 401 || res.status === 403) {
-                resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
+                resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
                 return;
             }
             
@@ -606,46 +590,99 @@ class GhostChatRealtime {
                 this._renderSearchResults(data.users || []);
             } else {
                 resultsContainer.innerHTML = 
-                    `<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${data.error || 'Search failed'}</div>`;
+                    `<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${data.error || 'Search failed'}</div>`;
             }
         } catch (error) {
             console.error('Search error:', error);
             resultsContainer.innerHTML = 
-                '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Please try again.</div>';
+                '<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Please try again.</div>';
         }
     }
 
+    // ── FIX: Render search results with visible buttons ─────────────────────
     _renderSearchResults(users) {
         const container = document.getElementById('userSearchResults');
         if (!container) return;
+        
         if (!users.length) {
-            container.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">No users found. Try a different search.</div>';
+            container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">No users found. Try a different search.</div>';
             return;
         }
+        
         container.innerHTML = users.map(u => {
             const isContact = u.is_contact || false;
             const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
+            
+            let actionHtml = '';
+            if (isContact) {
+                actionHtml = `<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(0,255,136,0.1);border:1px solid rgba(0,255,136,0.3);border-radius:20px;color:var(--green);font-size:.75rem;font-weight:600;">
+                    <i class="fas fa-check-circle"></i> Contact
+                </span>`;
+            } else if (isPending) {
+                actionHtml = `<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.3);border-radius:20px;color:var(--amber);font-size:.75rem;font-weight:600;">
+                    <i class="fas fa-clock"></i> Pending
+                </span>`;
+            } else {
+                actionHtml = `<button onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')" style="
+                    padding:8px 20px;
+                    background: linear-gradient(135deg, #00d4ff, #00a6ff);
+                    border: none;
+                    border-radius: 20px;
+                    color: #04060e;
+                    font-weight: 700;
+                    font-size: .8rem;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    box-shadow: 0 0 20px rgba(0,212,255,0.3);
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                " onmouseover="this.style.transform='scale(1.05)';this.style.boxShadow='0 0 30px rgba(0,212,255,0.5)';" onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 0 20px rgba(0,212,255,0.3)';" onmousedown="this.style.transform='scale(0.95)';">
+                    <i class="fas fa-user-plus"></i> Add
+                </button>`;
+            }
+            
             return `
-            <div class="search-result-item">
-                <div class="contact-avatar" style="width:36px;height:36px;border-radius:50%;background:var(--bg3);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--primary);flex-shrink:0;overflow:hidden;">
-                    ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                        ? `<img src="${u.avatar}" alt="${u.username[0]}" style="width:100%;height:100%;object-fit:cover;" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
-                        : `<span>${u.username[0].toUpperCase()}</span>`}
-                </div>
-                <div style="flex:1;">
-                    <div style="font-weight:600;font-size:.875rem;color:var(--t1);">${this._esc(u.username)}</div>
-                    <div style="font-size:.75rem;color:var(--t3);">
-                        ${u.is_online ? '🟢 Online' : '⚫ Offline'}
-                        ${isPending ? ' · ⏳ Pending' : ''}
+            <div style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 12px 16px;
+                border-bottom: 1px solid var(--border);
+                gap: 12px;
+                background: var(--bg2);
+                border-radius: 8px;
+                margin-bottom: 4px;
+                transition: background 0.2s;
+            " onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='var(--bg2)'">
+                <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0;">
+                    <div style="
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 50%;
+                        background: var(--bg3);
+                        border: 2px solid var(--border);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-weight: 700;
+                        color: var(--primary);
+                        flex-shrink: 0;
+                        overflow: hidden;
+                        font-size: 1rem;
+                    ">
+                        ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                            ? `<img src="${u.avatar}" alt="${u.username[0]}" style="width:100%;height:100%;object-fit:cover;" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                            : `<span>${u.username[0].toUpperCase()}</span>`}
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:600;font-size:.875rem;color:var(--t1);">${this._esc(u.username)}</div>
+                        <div style="font-size:.7rem;color:var(--t3);">
+                            ${u.is_online ? '🟢 Online' : '⚫ Offline'}
+                        </div>
                     </div>
                 </div>
-                ${isContact
-                    ? `<span class="already-added"><i class="fas fa-check"></i> Contact</span>`
-                    : isPending
-                        ? `<span class="pending-request"><i class="fas fa-clock"></i> Pending</span>`
-                        : `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
-                               <i class="fas fa-user-plus"></i> Add
-                           </button>`}
+                ${actionHtml}
             </div>`;
         }).join('');
     }
@@ -763,7 +800,6 @@ class GhostChatRealtime {
         await this.sendFriendRequest(contactId, username);
     }
 
-    // ── Event listeners ───────────────────────────────────────────
     _setupEventListeners() {
         document.getElementById('sendBtn')?.addEventListener('click', () => this.sendMessage());
 
@@ -783,10 +819,8 @@ class GhostChatRealtime {
             }
         });
 
-        // ── FIX: Add contact button ──────────────────────────────────────────
         const addBtn = document.getElementById('addContactBtn');
         if (addBtn) {
-            // Remove any existing listeners by cloning
             const newBtn = addBtn.cloneNode(true);
             addBtn.parentNode.replaceChild(newBtn, addBtn);
             
