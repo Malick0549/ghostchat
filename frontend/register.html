@@ -313,30 +313,17 @@
       const av = document.getElementById('avatarData').value;
       if (av) payload.avatar_data = av;
 
-      const res = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/register`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type':    'application/json',
-          'X-Requested-With':'XMLHttpRequest',
-          // Use cookie value directly — most reliable on Render
-          'X-CSRF-Token': window.GhostChatAPI.getCsrfToken()
-                       || document.getElementById('csrfToken').value
-                       || '',
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
+      const data = await window.GhostChatAPI.register(payload);
 
-      if (res.ok && data.success) {
-        if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+      if (data.success) {
         showOk('Account created! Redirecting to dashboard…');
         setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
       } else {
         showErr(data.error || data.message || 'Registration failed. Please try again.');
       }
-    } catch (_) {
-      showErr('Cannot reach the server. Please check your connection.');
+    } catch (err) {
+      const message = err?.data?.error || err?.message || 'Registration failed. Please try again.';
+      showErr(message);
     } finally {
       btn.classList.remove('btn-loading');
       btn.disabled = false;

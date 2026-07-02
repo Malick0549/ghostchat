@@ -19,12 +19,15 @@ Run:
 import json
 import sys
 import os
+from uuid import uuid4
 
 # Make sure project root is on the path when running from tests/ directly
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
-from backend.flask_app import create_app
+import flask_app
+
+create_app = flask_app.create_app
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -54,6 +57,27 @@ class TestHealthEndpoints:
         r = client.get("/health")
         assert r.status_code == 200
         assert r.get_json()["status"] == "ok"
+
+    def test_register_accepts_csrf_cookie_and_header(self, client):
+        csrf_resp = client.get("/api/csrf-token")
+        assert csrf_resp.status_code == 200
+        token = csrf_resp.get_json()["csrf_token"]
+
+        data = {
+            "username": f"csrfuser_{uuid4().hex[:8]}",
+            "email": f"csrfuser_{uuid4().hex[:8]}@example.com",
+            "password": "strongpassword123",
+        }
+
+        register_resp = client.post(
+            "/api/auth/register",
+            data=json.dumps(data),
+            content_type="application/json",
+            headers={"X-CSRF-Token": token},
+        )
+
+        assert register_resp.status_code == 201
+        assert register_resp.get_json()["success"] is True
 
     def test_root_lists_endpoints(self, client):
         r = client.get("/")
