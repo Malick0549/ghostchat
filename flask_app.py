@@ -8,6 +8,7 @@ Run locally:
 
 Deployed on Railway:
     - Set env var FLASK_SECRET to a long random string
+    - Set DATABASE_URL to your PostgreSQL URL on Railway
     - The app auto-detects Railway and sets cookies correctly
 """
 
@@ -112,11 +113,26 @@ def create_app(test_config=None):
 
     # ── Database ───────────────────────────────────────────────────────────────
     basedir = os.path.abspath(os.path.dirname(__file__))
-    app.config['SQLALCHEMY_DATABASE_URI'] = (
-        os.environ.get('DATABASE_URL')
-        or f'sqlite:///{os.path.join(basedir, "ghostchat.db")}'
-    )
+    
+    # ── FIX: Use PostgreSQL if available, fallback to SQLite ──
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        # Railway uses postgres:// but SQLAlchemy needs postgresql://
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        log.info(f'Using PostgreSQL database')
+    else:
+        # Fallback to SQLite (local development)
+        database_url = f'sqlite:///{os.path.join(basedir, "ghostchat.db")}'
+        log.info(f'Using SQLite database at {os.path.join(basedir, "ghostchat.db")}')
+    
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 10,
+        'pool_recycle': 300,
+        'pool_pre_ping': True,
+    }
 
     # ── Upload folder ──────────────────────────────────────────────────────────
     upload_folder = os.path.join(basedir, 'frontend', 'assets', 'uploads')
@@ -131,8 +147,11 @@ def create_app(test_config=None):
         db.init_app(app)
         bcrypt.init_app(app)
         with app.app_context():
-            db.create_all()
-            log.info('Database ready')
+            try:
+                db.create_all()
+                log.info('Database tables created/verified')
+            except Exception as e:
+                log.error(f'Database initialization error: {e}')
 
     # ── CORS ───────────────────────────────────────────────────────────────────
     allowed_origins = [
@@ -142,7 +161,6 @@ def create_app(test_config=None):
         'null',
     ]
     
-    # Railway URL detection
     railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
     if railway_url:
         railway_url = f'https://{railway_url}'
@@ -804,11 +822,18 @@ def create_app(test_config=None):
 
     @app.route('/health')
     def health():
+        db_status = 'connected'
+        if DB_AVAILABLE:
+            try:
+                db.session.execute('SELECT 1')
+            except Exception as e:
+                db_status = f'error: {str(e)}'
+        
         return jsonify({
             'status':      'ok',
             'service':     'GhostChat API',
             'environment': 'production' if IS_PROD else 'development',
-            'database':    'connected' if DB_AVAILABLE else 'disabled',
+            'database':    db_status,
             'version':     '3.0.0',
         }), 200
 
@@ -942,7 +967,7 @@ def create_app(test_config=None):
         return jsonify({'success': True}), 200
 
     # ══════════════════════════════════════
-    # PRIVATE CHAT MESSAGE ROUTES — FIXED
+    # PRIVATE CHAT MESSAGE ROUTES
     # ══════════════════════════════════════
 
     @app.route('/api/chat/<contact_id>/messages', methods=['GET','OPTIONS'])
@@ -950,100 +975,47 @@ def create_app(test_config=None):
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
-        
-        limit = request.args.get('limit', 50, type=int)
+        limit  = request.args.get('limit', 50, type=int)
         before = request.args.get('before', None)
-        
-        # ── FIX: Properly fetch messages between user and contact ──
-        query = Message.query.filter(
-            Message.is_deleted == False,
-            Message.message_type == 'chat',
+        query  = Message.query.filter(
+            Message.is_deleted == False, Message.message_type == 'chat',
             db.or_(
-                db.and_(Message.sender_id == user.id, Message.receiver_id == contact_id),
-                db.and_(Message.sender_id == contact_id, Message.receiver_id == user.id),
+                db.and_(Message.sender_id==user.id, Message.receiver_id==contact_id),
+                db.and_(Message.sender_id==contact_id, Message.receiver_id==user.id),
             )
         )
-        
-        if before:
-            try:
-                before_date = datetime.fromisoformat(before.replace('Z', '+00:00'))
-                query = query.filter(Message.created_at < before_date)
-            except:
-                pass
-        
+        if before: query = query.filter(Message.created_at < before)
         messages = query.order_by(Message.created_at.asc()).limit(limit).all()
-        
-        # Mark messages as read
-        unread_msgs = Message.query.filter_by(
-            sender_id=contact_id, 
-            receiver_id=user.id, 
-            is_read=False, 
-            message_type='chat'
-        ).all()
-        
+        unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False, message_type='chat').all()
         for m in unread_msgs:
             m.is_read = True
             m.read_at = datetime.utcnow()
-        
-        if unread_msgs:
-            db.session.commit()
-        
-        return jsonify({
-            'success': True, 
-            'messages': [m.to_dict() for m in messages]
-        }), 200
+        if unread_msgs: db.session.commit()
+        return jsonify({'success': True, 'messages': [m.to_dict() for m in messages]}), 200
 
     @app.route('/api/chat/<contact_id>/messages', methods=['POST','OPTIONS'])
     def send_chat_message(contact_id):
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
-        
-        data = request.get_json() or {}
+        data    = request.get_json() or {}
         content = (data.get('content') or '').strip()
-        if not content:
-            return jsonify({'error': 'content required'}), 400
-        
-        # ── FIX: Save message to database ──
-        msg = Message(
-            user_id=user.id,
-            sender_id=user.id,
-            receiver_id=contact_id,
-            encrypted_content=content,
-            message_type='chat',
-            is_delivered=True
-        )
+        if not content: return jsonify({'error': 'content required'}), 400
+        msg = Message(user_id=user.id, sender_id=user.id, receiver_id=contact_id,
+                      encrypted_content=content, message_type='chat')
         db.session.add(msg)
         db.session.commit()
-        
-        # ── FIX: Build proper room ID ──
         room_id = '_'.join(sorted([user.id, contact_id]))
-        payload = {
-            'id': msg.id,
-            'content': content,
-            'sender_id': user.id,
-            'sender': user.username,
-            'avatar': user.avatar,
-            'receiver_id': contact_id,
-            'created_at': msg.created_at.isoformat(),
-            'is_delivered': True,
-            'is_read': False
-        }
-        
-        # ── FIX: Emit to BOTH rooms ──
+        payload = {'id': msg.id, 'content': content, 'sender_id': user.id,
+                   'sender': user.username, 'avatar': user.avatar,
+                   'receiver_id': contact_id, 'created_at': msg.created_at.isoformat()}
         if socketio:
             socketio.emit('receive_message', payload, room=f'private_{room_id}')
             socketio.emit('receive_message', payload, room=f'user_{contact_id}')
-            # Also emit to sender's room for delivery confirmation
-            socketio.emit('message_delivered', {
-                'message_id': msg.id,
-                'temp_id': data.get('temp_id', '')
-            }, room=f'user_{user.id}')
-        
         return jsonify({'success': True, 'message': msg.to_dict()}), 201
 
     # ══════════════════════════════════════
-    # SOCKETIO EVENT HANDLERS — FIXED
+    # SOCKETIO EVENT HANDLERS
     # ══════════════════════════════════════
 
     @socketio.on('connect')
@@ -1120,7 +1092,6 @@ def create_app(test_config=None):
 
     @socketio.on('send_private_message')
     def handle_send_private_message(data):
-        """Handle private message sent via SocketIO and forward to recipient."""
         try:
             room = data.get('room', '')
             content = data.get('content', '').strip()
@@ -1134,10 +1105,8 @@ def create_app(test_config=None):
                 log.warning('Missing data in send_private_message')
                 return
             
-            # ── FIX: Generate message ID ──
             msg_id = str(uuid.uuid4())
             
-            # ── FIX: Save to database ──
             if DB_AVAILABLE:
                 try:
                     msg = Message(
@@ -1160,7 +1129,6 @@ def create_app(test_config=None):
             else:
                 created_at = datetime.utcnow().isoformat()
             
-            # ── FIX: Prepare payload ──
             payload = {
                 'id': msg_id,
                 'content': content,
@@ -1174,17 +1142,14 @@ def create_app(test_config=None):
                 'is_read': False
             }
             
-            # ── FIX: Emit to BOTH rooms ──
             if room:
                 emit('receive_message', payload, room=room, include_self=False)
                 log.info(f'Emitted to room: {room}')
             
-            # Emit to recipient's personal room
             recipient_room = f'user_{receiver_id}'
             emit('receive_message', payload, room=recipient_room)
             log.info(f'Emitted to recipient room: {recipient_room}')
             
-            # Emit delivery confirmation to sender
             sender_room = f'user_{sender_id}'
             emit('message_delivered', {
                 'message_id': msg_id,
