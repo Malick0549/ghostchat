@@ -24,6 +24,8 @@ class GhostChatRealtime {
         this.isTyping        = false;
         this.encryptMessages = true;
         this.password        = '';
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
 
         this.init();
     }
@@ -372,104 +374,138 @@ class GhostChatRealtime {
     // ── WebSocket connection ──────────────────────────────────────
     _connectSocket() {
         const socketUrl = window.location.origin;
-        this.socket = io(socketUrl, {
-            transports:            ['websocket', 'polling'],
-            withCredentials:       true,
-            reconnection:          true,
-            reconnectionAttempts:  10,
-            reconnectionDelay:     1000,
-            reconnectionDelayMax:  5000,
-        });
+        
+        try {
+            this.socket = io(socketUrl, {
+                transports: ['websocket', 'polling'],
+                withCredentials: true,
+                reconnection: true,
+                reconnectionAttempts: 10,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                path: '/socket.io',
+            });
 
-        this.socket.on('connect', () => {
-            this.connected = true;
-            this._updateOnlineStatus(true);
-            // Join personal room to receive private messages
-            this.socket.emit('join_user_room', { user_id: this.user.id });
-            if (this.currentContact) {
-                this.socket.emit('join_room', {
-                    room: `private_${this._roomId(this.currentContact.contact_id)}`
-                });
-            }
-        });
-
-        this.socket.on('disconnect', () => {
-            this.connected = false;
-            this._updateOnlineStatus(false);
-        });
-
-        this.socket.on('connect_error', () => {
-            this.connected = false;
-            this._updateOnlineStatus(false);
-        });
-
-        // Receive private message
-        this.socket.on('receive_message', data => {
-            // Only show if it's for the current chat
-            if (!this.currentContact) return;
-            const isCurrentChat = (
-                (data.sender_id   === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
-                (data.receiver_id === this.currentContact.contact_id && data.sender_id   === this.user.id)
-            );
-
-            if (isCurrentChat) {
-                // Replace optimistic temp message or add new
-                const idx = this.messages.findIndex(m => m.id === data.temp_id);
-                if (idx > -1) {
-                    this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
-                } else {
-                    this.messages.push({
-                        id:                data.id,
-                        sender_id:         data.sender_id,
-                        receiver_id:       data.receiver_id || this.user.id,
-                        encrypted_content: data.content,
-                        message_type:      'chat',
-                        created_at:        data.created_at || new Date().toISOString(),
-                        is_read:           false,
-                        is_delivered:      true,
+            this.socket.on('connect', () => {
+                console.log('✅ Socket connected');
+                this.connected = true;
+                this.reconnectAttempts = 0;
+                this._updateOnlineStatus(true);
+                // Join personal room to receive private messages
+                this.socket.emit('join_user_room', { user_id: this.user.id });
+                if (this.currentContact) {
+                    this.socket.emit('join_room', {
+                        room: `private_${this._roomId(this.currentContact.contact_id)}`
                     });
                 }
-                this._renderMessages();
-            }
-
-            // Update sidebar preview + unread badge
-            const contact = this.contacts.find(c => c.contact_id === data.sender_id);
-            if (contact) {
-                contact.last_message = {
-                    content:    data.content,
-                    created_at: data.created_at,
-                    is_mine:    data.sender_id === this.user.id,
-                };
-                if (!isCurrentChat || !document.hasFocus()) {
-                    contact.unread_count = (contact.unread_count || 0) + 1;
-                    this._notifyNewMessage(data);
+                // ── FIX: Update status text ──────────────────────────────────
+                const statusEl = document.getElementById('userStatus');
+                if (statusEl) {
+                    statusEl.textContent = '🟢 Online';
+                    statusEl.style.color = 'var(--green)';
                 }
-                this._renderContacts();
-            }
-        });
+            });
 
-        // Typing indicator
-        this.socket.on('typing', data => {
-            if (data.user_id !== this.user.id &&
-                this.currentContact?.contact_id === data.user_id) {
-                this._showTyping(data.username);
-            }
-        });
-        this.socket.on('stop_typing', data => {
-            if (this.currentContact?.contact_id === data.user_id) {
-                this._hideTyping();
-            }
-        });
+            this.socket.on('disconnect', () => {
+                console.log('❌ Socket disconnected');
+                this.connected = false;
+                this._updateOnlineStatus(false);
+                // ── FIX: Update status text ──────────────────────────────────
+                const statusEl = document.getElementById('userStatus');
+                if (statusEl) {
+                    statusEl.textContent = '🔴 Offline';
+                    statusEl.style.color = 'var(--red)';
+                }
+            });
 
-        // Online presence
-        this.socket.on('user_online', data => {
-            const c = this.contacts.find(x => x.contact_id === data.user_id);
-            if (c) { c.is_online = true; this._renderContacts(); }
-        });
-        this.socket.on('user_offline', data => {
-            const c = this.contacts.find(x => x.contact_id === data.user_id);
-            if (c) { c.is_online = false; this._renderContacts(); }
-        });
+            this.socket.on('connect_error', (error) => {
+                console.error('Socket connection error:', error);
+                this.connected = false;
+                this.reconnectAttempts++;
+                // ── FIX: Update status text ──────────────────────────────────
+                const statusEl = document.getElementById('userStatus');
+                if (statusEl) {
+                    statusEl.textContent = '🔄 Reconnecting...';
+                    statusEl.style.color = 'var(--amber)';
+                }
+            });
+
+            // Receive private message
+            this.socket.on('receive_message', data => {
+                this._handleReceivedMessage(data);
+            });
+
+            // Typing indicator
+            this.socket.on('typing', data => {
+                if (data.user_id !== this.user.id &&
+                    this.currentContact?.contact_id === data.user_id) {
+                    this._showTyping(data.username);
+                }
+            });
+            this.socket.on('stop_typing', data => {
+                if (this.currentContact?.contact_id === data.user_id) {
+                    this._hideTyping();
+                }
+            });
+
+            // Online presence
+            this.socket.on('user_online', data => {
+                const c = this.contacts.find(x => x.contact_id === data.user_id);
+                if (c) { c.is_online = true; this._renderContacts(); }
+            });
+            this.socket.on('user_offline', data => {
+                const c = this.contacts.find(x => x.contact_id === data.user_id);
+                if (c) { c.is_online = false; this._renderContacts(); }
+            });
+
+        } catch (error) {
+            console.error('Failed to create socket:', error);
+        }
+    }
+
+    // ── Handle received message ───────────────────────────────────
+    _handleReceivedMessage(data) {
+        // Only show if it's for the current chat
+        if (!this.currentContact) return;
+        const isCurrentChat = (
+            (data.sender_id   === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
+            (data.receiver_id === this.currentContact.contact_id && data.sender_id   === this.user.id)
+        );
+
+        if (isCurrentChat) {
+            // Replace optimistic temp message or add new
+            const idx = this.messages.findIndex(m => m.id === data.temp_id);
+            if (idx > -1) {
+                this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
+            } else {
+                this.messages.push({
+                    id:                data.id,
+                    sender_id:         data.sender_id,
+                    receiver_id:       data.receiver_id || this.user.id,
+                    encrypted_content: data.content,
+                    message_type:      'chat',
+                    created_at:        data.created_at || new Date().toISOString(),
+                    is_read:           false,
+                    is_delivered:      true,
+                });
+            }
+            this._renderMessages();
+        }
+
+        // Update sidebar preview + unread badge
+        const contact = this.contacts.find(c => c.contact_id === data.sender_id);
+        if (contact) {
+            contact.last_message = {
+                content:    data.content,
+                created_at: data.created_at,
+                is_mine:    data.sender_id === this.user.id,
+            };
+            if (!isCurrentChat || !document.hasFocus()) {
+                contact.unread_count = (contact.unread_count || 0) + 1;
+                this._notifyNewMessage(data);
+            }
+            this._renderContacts();
+        }
     }
 
     // ── Add contact flow ─────────────────────────────────────────
@@ -569,11 +605,22 @@ class GhostChatRealtime {
             }
         });
 
-        // Add contact button
-        document.getElementById('addContactBtn')?.addEventListener('click', () => {
-            openModal('newChatModal');
-            setTimeout(() => document.getElementById('newChatSearch')?.focus(), 100);
-        });
+        // ── FIX: Add contact button ──────────────────────────────────────────
+        const addBtn = document.getElementById('addContactBtn');
+        if (addBtn) {
+            addBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Add Contact button clicked');
+                openModal('newChatModal');
+                setTimeout(() => {
+                    const search = document.getElementById('newChatSearch');
+                    if (search) search.focus();
+                }, 100);
+            });
+        } else {
+            console.warn('Add Contact button not found');
+        }
 
         // Contact search in modal
         document.getElementById('newChatSearch')?.addEventListener('input', e => {
@@ -638,6 +685,7 @@ class GhostChatRealtime {
             // Alt+N — new chat
             if (e.altKey && e.key === 'n') {
                 e.preventDefault();
+                console.log('Alt+N pressed');
                 openModal('newChatModal');
                 setTimeout(() => document.getElementById('newChatSearch')?.focus(), 100);
             }
