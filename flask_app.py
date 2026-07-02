@@ -1,16 +1,14 @@
 """
-GhostChat :: backend/flask_app.py
+GhostChat :: flask_app.py
 ==================================
-Flask serves BOTH the frontend (../frontend/) and the API.
+Flask serves BOTH the frontend (./frontend/) and the API.
 
 Run locally:
-    cd backend
     python flask_app.py
 
-Deployed on Render:
+Deployed on Railway:
     - Set env var FLASK_SECRET to a long random string
-    - Set env var RENDER=true  (Render sets this automatically)
-    - The app auto-detects HTTPS and sets cookies correctly
+    - The app auto-detects Railway and sets cookies correctly
 """
 
 # ── FIX: eventlet monkey patch MUST be first ─────────────────────────────────
@@ -40,10 +38,9 @@ from flask import (
     send_from_directory
 )
 from flask_cors import CORS
-# flask_session removed — using Flask built-in signed cookie sessions
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
-# ── Local packages (run from inside backend/) ─────────────────────────────────
+# ── Local packages ─────────────────────────────────────────────────────────────
 from backend.api import crypto_bp, session_bp
 from backend.api.errors import register_error_handlers
 from backend.api.middleware import add_security_headers
@@ -76,15 +73,13 @@ def _is_https():
         request.is_secure
         or request.headers.get('X-Forwarded-Proto') == 'https'
         or bool(os.environ.get('RENDER'))
-        or bool(os.environ.get('RAILWAY'))  # ── FIX: Added Railway detection ──
+        or bool(os.environ.get('RAILWAY'))
     )
 
 
 def create_app(test_config=None):
 
     # ── Flask app ──────────────────────────────────────────────────────────────
-    # Use absolute path so Flask finds frontend/ correctly regardless
-    # of working directory in Docker or whether this module lives at root.
     _basedir = os.path.abspath(os.path.dirname(__file__))
     _frontend = os.path.abspath(os.path.join(_basedir, 'frontend'))
 
@@ -97,6 +92,7 @@ def create_app(test_config=None):
     # ── Detect environment ─────────────────────────────────────────────────────
     IS_PROD = bool(
         os.environ.get('RENDER')
+        or os.environ.get('RAILWAY')
         or os.environ.get('FLASK_ENV') == 'production'
     )
 
@@ -106,7 +102,6 @@ def create_app(test_config=None):
         DEBUG                       = not IS_PROD and os.environ.get('FLASK_DEBUG', '0') == '1',
         JSON_SORT_KEYS              = False,
         TESTING                     = False,
-        # Flask built-in signed cookie sessions (no flask-session needed)
         SESSION_PERMANENT           = False,
         PERMANENT_SESSION_LIFETIME  = timedelta(hours=24),
         SESSION_COOKIE_NAME         = 'ghostchat_sess',
@@ -124,7 +119,7 @@ def create_app(test_config=None):
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
     # ── Upload folder ──────────────────────────────────────────────────────────
-    upload_folder = os.path.join(basedir, '..', 'frontend', 'assets', 'uploads')
+    upload_folder = os.path.join(basedir, 'frontend', 'assets', 'uploads')
     os.makedirs(upload_folder, exist_ok=True)
     app.config['UPLOAD_FOLDER'] = upload_folder
 
@@ -139,8 +134,6 @@ def create_app(test_config=None):
             db.create_all()
             log.info('Database ready')
 
-    # Session(app) removed — using Flask built-in sessions
-
     # ── CORS ───────────────────────────────────────────────────────────────────
     allowed_origins = [
         'http://localhost:5000',
@@ -148,7 +141,14 @@ def create_app(test_config=None):
         'https://ghostchat-5slo.onrender.com',
         'null',
     ]
-    # Also pick up any dynamically-configured Render URL
+    
+    # Railway URL detection
+    railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
+    if railway_url:
+        railway_url = f'https://{railway_url}'
+        if railway_url not in allowed_origins:
+            allowed_origins.append(railway_url)
+    
     render_url = os.environ.get('RENDER_EXTERNAL_URL', '').rstrip('/')
     if render_url and render_url not in allowed_origins:
         allowed_origins.append(render_url)
@@ -162,18 +162,16 @@ def create_app(test_config=None):
     )
 
     # ── Blueprints ─────────────────────────────────────────────────────────────
-    app.register_blueprint(crypto_bp)    # /encrypt, /decrypt  (session-key API)
-    app.register_blueprint(session_bp)   # /new-session, /session-info, etc.
+    app.register_blueprint(crypto_bp)
+    app.register_blueprint(session_bp)
 
     # ── Security headers + error handlers ──────────────────────────────────────
     app.after_request(add_security_headers)
     register_error_handlers(app)
 
     # ── SocketIO ──────────────────────────────────────────────────────────────
-    # ── FIX: SocketIO with proper async_mode handling ────────────────────────
     global socketio
     try:
-        # eventlet is already imported and monkey patched above
         socketio = SocketIO(
             app,
             cors_allowed_origins=allowed_origins,
@@ -196,15 +194,6 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
     # CSRF — Double-Submit Cookie Pattern
     # ═══════════════════════════════════════════════════════════════════════════
-    #
-    # 1. GET /api/csrf-token  → server generates token, sets as READABLE cookie
-    #                           AND returns in JSON.
-    # 2. Frontend stores token in memory, sends as X-CSRF-Token header.
-    # 3. Server compares header to cookie (constant-time).
-    #    Attacker on another origin cannot read the cookie → cannot forge header.
-    # 4. Stateless: no server-side session lookup for CSRF, eliminating the
-    #    race condition between OPTIONS preflight and the first POST.
-    # ═══════════════════════════════════════════════════════════════════════════
 
     CSRF_COOKIE = 'gc_csrf'
 
@@ -215,26 +204,21 @@ def create_app(test_config=None):
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
         resp = jsonify({'csrf_token': token})
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
         is_railway = bool(os.environ.get('RAILWAY'))
         secure_cookie = https or is_railway
         
         resp.set_cookie(
             CSRF_COOKIE,
             token,
-            httponly=False,                         # JS must read it
+            httponly=False,
             samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            secure=secure_cookie,
             max_age=3600,
             path='/',
         )
         return resp, 200
 
     def _check_csrf():
-        """
-        Validate CSRF for mutating requests.
-        Returns (None, None) on pass, (response, code) on failure.
-        """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
             return None, None
         if request.path in ('/api/csrf-token', '/health'):
@@ -272,7 +256,6 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _require_auth():
-        """Return (user, None) if authenticated, else (None, (response, code))."""
         if not DB_AVAILABLE:
             return None, (jsonify({'error': 'Database not available'}), 500)
         uid = session.get('user_id')
@@ -285,10 +268,8 @@ def create_app(test_config=None):
         return user, None
 
     def _rotate_csrf_cookie(resp):
-        """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
         is_railway = bool(os.environ.get('RAILWAY'))
         secure_cookie = https or is_railway
         
@@ -296,7 +277,7 @@ def create_app(test_config=None):
             CSRF_COOKIE, token,
             httponly=False,
             samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            secure=secure_cookie,
             max_age=3600, path='/',
         )
         return resp
@@ -319,7 +300,7 @@ def create_app(test_config=None):
         smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
         mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
 
-        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+        log_dir = os.path.join(os.path.dirname(__file__), 'logs')
         os.makedirs(log_dir, exist_ok=True)
         fallback_path = os.path.join(log_dir, 'reset_links.log')
 
@@ -429,13 +410,11 @@ def create_app(test_config=None):
             if not username or not password:
                 return jsonify({'error': 'Username and password are required'}), 400
 
-            # Accept username OR email
             user = (
                 User.query.filter_by(username=username).first()
                 or User.query.filter_by(email=username).first()
             )
 
-            # Constant-time failure — same message for wrong user and wrong password
             if not user or not user.check_password(password):
                 log.warning(f'Failed login for: {username[:30]}')
                 return jsonify({'error': 'Invalid credentials'}), 401
@@ -489,7 +468,6 @@ def create_app(test_config=None):
             user = User.query.filter_by(email=email).first()
             if user:
                 token = user.generate_reset_token()
-                # Override model's 24h expiry to 15 min (matches UI messaging)
                 user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
                 db.session.commit()
 
@@ -629,7 +607,7 @@ def create_app(test_config=None):
 
         user.set_password(new_password)
         db.session.commit()
-        session.clear()   # Force re-login after password change
+        session.clear()
         return jsonify({
             'success': True,
             'message': 'Password changed. Please sign in again.',
@@ -661,7 +639,6 @@ def create_app(test_config=None):
         if size > 2 * 1024 * 1024:
             return jsonify({'error': 'File too large — maximum 2 MB'}), 400
 
-        # Remove old avatar file
         if user.avatar and '/assets/uploads/' in (user.avatar or ''):
             old = os.path.join(app.config['UPLOAD_FOLDER'], os.path.basename(user.avatar))
             try:
@@ -685,7 +662,7 @@ def create_app(test_config=None):
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # ENCRYPT / DECRYPT  (password-based — used by encrypt.js / decrypt.js)
+    # ENCRYPT / DECRYPT
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route('/api/encrypt', methods=['POST', 'OPTIONS'])
@@ -835,11 +812,6 @@ def create_app(test_config=None):
             'version':     '3.0.0',
         }), 200
 
-    # Serve frontend — use app.send_static_file() instead of send_from_directory
-    # send_from_directory uses sendfile() syscall which eventlet doesn't patch,
-    # causing IncompleteRead errors on large files. send_static_file() goes
-    # through Flask's WSGI response which eventlet handles correctly.
-
     @app.route('/')
     def index():
         return app.send_static_file('index.html')
@@ -970,7 +942,7 @@ def create_app(test_config=None):
         return jsonify({'success': True}), 200
 
     # ══════════════════════════════════════
-    # PRIVATE CHAT MESSAGE ROUTES
+    # PRIVATE CHAT MESSAGE ROUTES — FIXED
     # ══════════════════════════════════════
 
     @app.route('/api/chat/<contact_id>/messages', methods=['GET','OPTIONS'])
@@ -978,44 +950,96 @@ def create_app(test_config=None):
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
-        limit  = request.args.get('limit', 50, type=int)
+        
+        limit = request.args.get('limit', 50, type=int)
         before = request.args.get('before', None)
-        query  = Message.query.filter(
-            Message.is_deleted == False, Message.message_type == 'chat',
+        
+        # ── FIX: Properly fetch messages between user and contact ──
+        query = Message.query.filter(
+            Message.is_deleted == False,
+            Message.message_type == 'chat',
             db.or_(
-                db.and_(Message.sender_id==user.id, Message.receiver_id==contact_id),
-                db.and_(Message.sender_id==contact_id, Message.receiver_id==user.id),
+                db.and_(Message.sender_id == user.id, Message.receiver_id == contact_id),
+                db.and_(Message.sender_id == contact_id, Message.receiver_id == user.id),
             )
         )
-        if before: query = query.filter(Message.created_at < before)
-        messages = query.order_by(Message.created_at.desc()).limit(limit).all()
-        messages.reverse()
-        unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False, message_type='chat').all()
+        
+        if before:
+            try:
+                before_date = datetime.fromisoformat(before.replace('Z', '+00:00'))
+                query = query.filter(Message.created_at < before_date)
+            except:
+                pass
+        
+        messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+        
+        # Mark messages as read
+        unread_msgs = Message.query.filter_by(
+            sender_id=contact_id, 
+            receiver_id=user.id, 
+            is_read=False, 
+            message_type='chat'
+        ).all()
+        
         for m in unread_msgs:
             m.is_read = True
             m.read_at = datetime.utcnow()
-        if unread_msgs: db.session.commit()
-        return jsonify({'success': True, 'messages': [m.to_dict() for m in messages]}), 200
+        
+        if unread_msgs:
+            db.session.commit()
+        
+        return jsonify({
+            'success': True, 
+            'messages': [m.to_dict() for m in messages]
+        }), 200
 
     @app.route('/api/chat/<contact_id>/messages', methods=['POST','OPTIONS'])
     def send_chat_message(contact_id):
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
-        data    = request.get_json() or {}
+        
+        data = request.get_json() or {}
         content = (data.get('content') or '').strip()
-        if not content: return jsonify({'error': 'content required'}), 400
-        msg = Message(user_id=user.id, sender_id=user.id, receiver_id=contact_id,
-                      encrypted_content=content, message_type='chat')
+        if not content:
+            return jsonify({'error': 'content required'}), 400
+        
+        # ── FIX: Save message to database ──
+        msg = Message(
+            user_id=user.id,
+            sender_id=user.id,
+            receiver_id=contact_id,
+            encrypted_content=content,
+            message_type='chat',
+            is_delivered=True
+        )
         db.session.add(msg)
         db.session.commit()
+        
+        # ── FIX: Build proper room ID ──
         room_id = '_'.join(sorted([user.id, contact_id]))
-        payload = {'id': msg.id, 'content': content, 'sender_id': user.id,
-                   'sender': user.username, 'avatar': user.avatar,
-                   'receiver_id': contact_id, 'created_at': msg.created_at.isoformat()}
+        payload = {
+            'id': msg.id,
+            'content': content,
+            'sender_id': user.id,
+            'sender': user.username,
+            'avatar': user.avatar,
+            'receiver_id': contact_id,
+            'created_at': msg.created_at.isoformat(),
+            'is_delivered': True,
+            'is_read': False
+        }
+        
+        # ── FIX: Emit to BOTH rooms ──
         if socketio:
             socketio.emit('receive_message', payload, room=f'private_{room_id}')
             socketio.emit('receive_message', payload, room=f'user_{contact_id}')
+            # Also emit to sender's room for delivery confirmation
+            socketio.emit('message_delivered', {
+                'message_id': msg.id,
+                'temp_id': data.get('temp_id', '')
+            }, room=f'user_{user.id}')
+        
         return jsonify({'success': True, 'message': msg.to_dict()}), 201
 
     # ══════════════════════════════════════
@@ -1025,7 +1049,6 @@ def create_app(test_config=None):
     @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
-        # ── FIX: Join user's personal room on connect ──
         uid = session.get('user_id')
         if uid:
             join_room(f'user_{uid}')
@@ -1037,7 +1060,6 @@ def create_app(test_config=None):
                         user.is_online = True
                         user.last_seen = datetime.utcnow()
                         db.session.commit()
-                        # Notify contacts that user is online
                         for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
                             socketio.emit('user_online', {'user_id': uid}, room=f'user_{c.contact_id}')
                 except Exception as e:
@@ -1112,11 +1134,10 @@ def create_app(test_config=None):
                 log.warning('Missing data in send_private_message')
                 return
             
-            # Generate a message ID
+            # ── FIX: Generate message ID ──
             msg_id = str(uuid.uuid4())
-            created_at = datetime.utcnow().isoformat()
             
-            # Save to database if available
+            # ── FIX: Save to database ──
             if DB_AVAILABLE:
                 try:
                     msg = Message(
@@ -1131,12 +1152,15 @@ def create_app(test_config=None):
                     db.session.add(msg)
                     db.session.commit()
                     created_at = msg.created_at.isoformat()
-                    log.info(f'Message {msg_id} saved to DB')
+                    log.info(f'Message {msg_id} saved to DB via SocketIO')
                 except Exception as e:
                     log.error(f'Failed to save message: {e}')
                     db.session.rollback()
+                    created_at = datetime.utcnow().isoformat()
+            else:
+                created_at = datetime.utcnow().isoformat()
             
-            # Prepare payload
+            # ── FIX: Prepare payload ──
             payload = {
                 'id': msg_id,
                 'content': content,
@@ -1146,23 +1170,26 @@ def create_app(test_config=None):
                 'receiver_id': receiver_id,
                 'created_at': created_at,
                 'temp_id': temp_id,
-                'is_delivered': True
+                'is_delivered': True,
+                'is_read': False
             }
             
-            # ── FIX: Emit to BOTH the room AND the recipient's user room ──
-            # First, emit to the private room if it exists
+            # ── FIX: Emit to BOTH rooms ──
             if room:
                 emit('receive_message', payload, room=room, include_self=False)
                 log.info(f'Emitted to room: {room}')
             
-            # Also emit to the recipient's personal room
+            # Emit to recipient's personal room
             recipient_room = f'user_{receiver_id}'
             emit('receive_message', payload, room=recipient_room)
             log.info(f'Emitted to recipient room: {recipient_room}')
             
-            # Also emit to sender's room for delivery confirmation
+            # Emit delivery confirmation to sender
             sender_room = f'user_{sender_id}'
-            emit('message_delivered', {'message_id': msg_id, 'temp_id': temp_id}, room=sender_room)
+            emit('message_delivered', {
+                'message_id': msg_id,
+                'temp_id': temp_id
+            }, room=sender_room)
             
         except Exception as e:
             log.error(f'Error in send_private_message: {e}')
@@ -1171,8 +1198,10 @@ def create_app(test_config=None):
     def handle_typing(data):
         room = data.get('room', '')
         if room:
-            emit('typing', {'user_id': data.get('user_id'), 'username': data.get('username')},
-                 room=room, include_self=False)
+            emit('typing', {
+                'user_id': data.get('user_id'),
+                'username': data.get('username')
+            }, room=room, include_self=False)
 
     @socketio.on('stop_typing')
     def handle_stop_typing(data):
@@ -1188,9 +1217,7 @@ def create_app(test_config=None):
 
 
 # ── Module-level variables for gunicorn ──────────────────────────────────────
-# gunicorn binds to flask_app:app
-# The socketio object is also available as flask_app:socketio for reference
-socketio = None   # will be set by create_app()
+socketio = None
 app = create_app()
 
 if __name__ == '__main__':
