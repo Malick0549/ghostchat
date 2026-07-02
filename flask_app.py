@@ -1018,9 +1018,30 @@ def create_app(test_config=None):
             socketio.emit('receive_message', payload, room=f'user_{contact_id}')
         return jsonify({'success': True, 'message': msg.to_dict()}), 201
 
+    # ══════════════════════════════════════
+    # SOCKETIO EVENT HANDLERS — FIXED
+    # ══════════════════════════════════════
+
     @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
+        # ── FIX: Join user's personal room on connect ──
+        uid = session.get('user_id')
+        if uid:
+            join_room(f'user_{uid}')
+            log.info(f'User {uid} joined room user_{uid}')
+            if DB_AVAILABLE:
+                try:
+                    user = User.query.get(uid)
+                    if user:
+                        user.is_online = True
+                        user.last_seen = datetime.utcnow()
+                        db.session.commit()
+                        # Notify contacts that user is online
+                        for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
+                            socketio.emit('user_online', {'user_id': uid}, room=f'user_{c.contact_id}')
+                except Exception as e:
+                    log.error(f'Error updating online status: {e}')
         emit('connected', {'status': 'connected', 'sid': request.sid})
 
     @socketio.on('disconnect')
@@ -1037,13 +1058,16 @@ def create_app(test_config=None):
                         db.session.commit()
                         for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
                             socketio.emit('user_offline', {'user_id': uid}, room=f'user_{c.contact_id}')
-            except Exception: pass
+            except Exception:
+                pass
 
     @socketio.on('join_user_room')
     def handle_join_user_room(data):
         user_id = data.get('user_id', '')
-        if not user_id: return
+        if not user_id:
+            return
         join_room(f'user_{user_id}')
+        log.info(f'Socket {request.sid} joined user room: user_{user_id}')
         emit('joined_room', {'room': f'user_{user_id}'})
         if DB_AVAILABLE:
             try:
@@ -1054,47 +1078,94 @@ def create_app(test_config=None):
                     db.session.commit()
                     for c in Contact.query.filter_by(user_id=user_id, is_blocked=False).all():
                         socketio.emit('user_online', {'user_id': user_id}, room=f'user_{c.contact_id}')
-            except Exception: pass
+            except Exception:
+                pass
 
     @socketio.on('join_room')
     def handle_join_room(data):
         room = data.get('room', '')
         if room:
             join_room(room)
+            log.info(f'Socket {request.sid} joined room: {room}')
             emit('joined_room', {'room': room})
 
     @socketio.on('leave_room')
     def handle_leave_room(data):
         room = data.get('room', '')
-        if room: leave_room(room)
+        if room:
+            leave_room(room)
+            log.info(f'Socket {request.sid} left room: {room}')
 
     @socketio.on('send_private_message')
-    def handle_private_message(data):
-        room        = data.get('room', '')
-        content     = (data.get('content') or '').strip()
-        sender_id   = data.get('sender_id', '')
-        sender      = data.get('sender', 'Ghost')
-        avatar      = data.get('avatar', '')
-        receiver_id = data.get('receiver_id', '')
-        temp_id     = data.get('temp_id', '')
-        if not content or not sender_id or not receiver_id: return
-        msg_id     = str(uuid.uuid4())
-        created_at = datetime.utcnow().isoformat()
-        if DB_AVAILABLE:
-            try:
-                msg = Message(id=msg_id, user_id=sender_id, sender_id=sender_id,
-                              receiver_id=receiver_id, encrypted_content=content,
-                              message_type='chat', is_delivered=True)
-                db.session.add(msg)
-                db.session.commit()
-                created_at = msg.created_at.isoformat()
-            except Exception as e:
-                log.error(f'Save chat msg failed: {e}')
-        payload = {'id': msg_id, 'content': content, 'sender_id': sender_id,
-                   'sender': sender, 'avatar': avatar, 'receiver_id': receiver_id,
-                   'created_at': created_at, 'temp_id': temp_id}
-        if room: emit('receive_message', payload, room=room)
-        emit('receive_message', payload, room=f'user_{receiver_id}')
+    def handle_send_private_message(data):
+        """Handle private message sent via SocketIO and forward to recipient."""
+        try:
+            room = data.get('room', '')
+            content = data.get('content', '').strip()
+            sender_id = data.get('sender_id', '')
+            sender = data.get('sender', 'Ghost')
+            avatar = data.get('avatar', '')
+            receiver_id = data.get('receiver_id', '')
+            temp_id = data.get('temp_id', '')
+            
+            if not content or not sender_id or not receiver_id:
+                log.warning('Missing data in send_private_message')
+                return
+            
+            # Generate a message ID
+            msg_id = str(uuid.uuid4())
+            created_at = datetime.utcnow().isoformat()
+            
+            # Save to database if available
+            if DB_AVAILABLE:
+                try:
+                    msg = Message(
+                        id=msg_id,
+                        user_id=sender_id,
+                        sender_id=sender_id,
+                        receiver_id=receiver_id,
+                        encrypted_content=content,
+                        message_type='chat',
+                        is_delivered=True
+                    )
+                    db.session.add(msg)
+                    db.session.commit()
+                    created_at = msg.created_at.isoformat()
+                    log.info(f'Message {msg_id} saved to DB')
+                except Exception as e:
+                    log.error(f'Failed to save message: {e}')
+                    db.session.rollback()
+            
+            # Prepare payload
+            payload = {
+                'id': msg_id,
+                'content': content,
+                'sender_id': sender_id,
+                'sender': sender,
+                'avatar': avatar,
+                'receiver_id': receiver_id,
+                'created_at': created_at,
+                'temp_id': temp_id,
+                'is_delivered': True
+            }
+            
+            # ── FIX: Emit to BOTH the room AND the recipient's user room ──
+            # First, emit to the private room if it exists
+            if room:
+                emit('receive_message', payload, room=room, include_self=False)
+                log.info(f'Emitted to room: {room}')
+            
+            # Also emit to the recipient's personal room
+            recipient_room = f'user_{receiver_id}'
+            emit('receive_message', payload, room=recipient_room)
+            log.info(f'Emitted to recipient room: {recipient_room}')
+            
+            # Also emit to sender's room for delivery confirmation
+            sender_room = f'user_{sender_id}'
+            emit('message_delivered', {'message_id': msg_id, 'temp_id': temp_id}, room=sender_room)
+            
+        except Exception as e:
+            log.error(f'Error in send_private_message: {e}')
 
     @socketio.on('typing')
     def handle_typing(data):
