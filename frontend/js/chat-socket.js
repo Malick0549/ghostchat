@@ -599,94 +599,46 @@ class GhostChatRealtime {
         }
     }
 
-    // ── FIX: Render search results with visible buttons ─────────────────────
-    _renderSearchResults(users) {
-        const container = document.getElementById('userSearchResults');
-        if (!container) return;
+    // ── FIX: Render search results with visible, clickable buttons ──
+_renderSearchResults(users) {
+    const container = document.getElementById('userSearchResults');
+    if (!container) return;
+    
+    if (!users.length) {
+        container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
+        return;
+    }
+    
+    container.innerHTML = users.map(u => {
+        const isContact = u.is_contact || false;
+        const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
         
-        if (!users.length) {
-            container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">No users found. Try a different search.</div>';
-            return;
+        let actionHtml = '';
+        if (isContact) {
+            actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
+        } else if (isPending) {
+            actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
+        } else {
+            actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
+                <i class="fas fa-user-plus"></i> Add
+            </button>`;
         }
         
-        container.innerHTML = users.map(u => {
-            const isContact = u.is_contact || false;
-            const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
-            
-            let actionHtml = '';
-            if (isContact) {
-                actionHtml = `<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(0,255,136,0.1);border:1px solid rgba(0,255,136,0.3);border-radius:20px;color:var(--green);font-size:.75rem;font-weight:600;">
-                    <i class="fas fa-check-circle"></i> Contact
-                </span>`;
-            } else if (isPending) {
-                actionHtml = `<span style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.3);border-radius:20px;color:var(--amber);font-size:.75rem;font-weight:600;">
-                    <i class="fas fa-clock"></i> Pending
-                </span>`;
-            } else {
-                actionHtml = `<button onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')" style="
-                    padding:8px 20px;
-                    background: linear-gradient(135deg, #00d4ff, #00a6ff);
-                    border: none;
-                    border-radius: 20px;
-                    color: #04060e;
-                    font-weight: 700;
-                    font-size: .8rem;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    box-shadow: 0 0 20px rgba(0,212,255,0.3);
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 8px;
-                " onmouseover="this.style.transform='scale(1.05)';this.style.boxShadow='0 0 30px rgba(0,212,255,0.5)';" onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 0 20px rgba(0,212,255,0.3)';" onmousedown="this.style.transform='scale(0.95)';">
-                    <i class="fas fa-user-plus"></i> Add
-                </button>`;
-            }
-            
-            return `
-            <div style="
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                padding: 12px 16px;
-                border-bottom: 1px solid var(--border);
-                gap: 12px;
-                background: var(--bg2);
-                border-radius: 8px;
-                margin-bottom: 4px;
-                transition: background 0.2s;
-            " onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='var(--bg2)'">
-                <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0;">
-                    <div style="
-                        width: 40px;
-                        height: 40px;
-                        border-radius: 50%;
-                        background: var(--bg3);
-                        border: 2px solid var(--border);
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        font-weight: 700;
-                        color: var(--primary);
-                        flex-shrink: 0;
-                        overflow: hidden;
-                        font-size: 1rem;
-                    ">
-                        ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                            ? `<img src="${u.avatar}" alt="${u.username[0]}" style="width:100%;height:100%;object-fit:cover;" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
-                            : `<span>${u.username[0].toUpperCase()}</span>`}
-                    </div>
-                    <div style="flex:1;min-width:0;">
-                        <div style="font-weight:600;font-size:.875rem;color:var(--t1);">${this._esc(u.username)}</div>
-                        <div style="font-size:.7rem;color:var(--t3);">
-                            ${u.is_online ? '🟢 Online' : '⚫ Offline'}
-                        </div>
-                    </div>
-                </div>
-                ${actionHtml}
-            </div>`;
-        }).join('');
-    }
-
+        return `
+        <div class="search-result-item">
+            <div class="result-avatar">
+                ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                    ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                    : `<span>${u.username[0].toUpperCase()}</span>`}
+            </div>
+            <div class="result-info">
+                <div class="result-name">${this._esc(u.username)}</div>
+                <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
+            </div>
+            ${actionHtml}
+        </div>`;
+    }).join('');
+}
     async sendFriendRequest(userId, username) {
         try {
             const csrfToken = this._getCsrf();
