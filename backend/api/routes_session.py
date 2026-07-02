@@ -13,7 +13,7 @@ All key management is delegated to:
 
 from flask import Blueprint, jsonify, g
 from .middleware import require_json
-from crypto.session_key_manager import (
+from ..crypto.session_key_manager import (
     default_session_manager as _session_mgr,
     KeyNotFoundError,
     KeyExpiredError,

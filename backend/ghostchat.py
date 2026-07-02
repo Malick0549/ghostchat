@@ -22,9 +22,9 @@ import os
 import base64
 from typing import Optional
 
-from crypto.aes_engine          import AES256Engine
-from crypto.session_key_manager import SessionKeyManager
-from obfuscation.emoji_mapper   import EmojiMapper
+from .crypto.aes_engine          import AES256Engine
+from .crypto.session_key_manager import SessionKeyManager
+from .obfuscation.emoji_mapper   import EmojiMapper
 
 try:
     from utils.secure_logger import log_encryption, log_decryption

@@ -1,963 +1,820 @@
 /**
- * GHOSTCHAT CHAT MODULE - REAL-TIME
- * Complete WhatsApp-like chat with WebSocket
+ * GHOSTCHAT REAL-TIME CHAT  v2.0
+ * WhatsApp-like private messaging with:
+ *   - Real contacts loaded from database
+ *   - Private per-user SocketIO rooms
+ *   - Add contact by username search
+ *   - AES-256 message encryption
+ *   - Online/offline presence
+ *   - Typing indicators
+ *   - Read receipts
+ *   - Message history from DB
+ *   - Keyboard shortcuts
  */
 
 class GhostChatRealtime {
     constructor() {
-        this.socket = null;
-        this.connected = false;
-        this.currentRoom = 'room';
-        this.username = '';
-        this.userId = '';
-        this.messages = [];
-        this.contacts = {};
-        this.password = '';
-        this.typingTimeout = null;
-        this.isTyping = false;
-        this.unreadCount = 0;
-        this.messageQueue = [];
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.isProcessingQueue = false;
-        
+        this.socket          = null;
+        this.connected       = false;
+        this.currentContact  = null;   // { contact_id, username, display_name, avatar }
+        this.contacts        = [];     // loaded from /api/contacts
+        this.messages        = [];     // messages for current chat
+        this.user            = null;   // current logged-in user
+        this.typingTimer     = null;
+        this.isTyping        = false;
+        this.encryptMessages = true;
+        this.password        = '';
+
         this.init();
     }
-    
-    init() {
-        this.loadUserProfile();
-        this.loadContacts();
-        this.loadMessages();
-        this.setupEventListeners();
-        this.connectToSocket();
-        this.renderContacts();
-        this.renderMessages();
-        this.setupEmojiPicker();
-        this.setupMobileResponsive();
-        this.setupKeyboardShortcuts();
-        this.startHeartbeat();
+
+    async init() {
+        this._loadUser();
+        await this._loadContacts();
+        this._connectSocket();
+        this._setupEventListeners();
+        this._setupKeyboardShortcuts();
+        this._setupMobile();
     }
-    
-    startHeartbeat() {
-        setInterval(() => {
-            if (this.socket && this.connected) {
-                this.socket.emit('ping', { timestamp: Date.now() });
-            }
-        }, 30000);
-    }
-    
-    setupKeyboardShortcuts() {
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+Enter to send message
-            if (e.ctrlKey && e.key === 'Enter') {
-                e.preventDefault();
-                this.sendMessage();
-            }
-            // Escape to close modals
-            if (e.key === 'Escape') {
-                document.querySelectorAll('.modal.active').forEach(modal => {
-                    modal.classList.remove('active');
-                });
-                document.getElementById('emojiPicker').style.display = 'none';
-            }
-            // Ctrl+K to focus search
-            if (e.ctrlKey && e.key === 'k') {
-                e.preventDefault();
-                const searchInput = document.getElementById('contactSearchInput');
-                if (searchInput) {
-                    searchInput.focus();
-                }
-            }
-        });
-    }
-    
-    setupMobileResponsive() {
-        // Mobile back button
-        const backBtn = document.getElementById('mobileBackBtn');
-        if (backBtn) {
-            backBtn.addEventListener('click', () => {
-                document.querySelector('.chat-main').classList.toggle('mobile-chat-open');
-            });
-        }
-        
-        // Contact search
-        const searchInput = document.getElementById('contactSearchInput');
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                this.filterContacts(e.target.value);
-            });
-        }
-        
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            this.handleMobileLayout();
-        });
-        this.handleMobileLayout();
-    }
-    
-    handleMobileLayout() {
-        const isMobile = window.innerWidth <= 768;
-        const sidebar = document.querySelector('.chat-sidebar');
-        const main = document.querySelector('.chat-main');
-        
-        if (isMobile) {
-            sidebar.classList.add('mobile-hidden');
-            main.classList.remove('mobile-chat-open');
-        } else {
-            sidebar.classList.remove('mobile-hidden');
-            main.classList.remove('mobile-chat-open');
-        }
-    }
-    
-    filterContacts(query) {
-        const container = document.getElementById('contactsList');
-        const items = container.querySelectorAll('.contact-item');
-        const search = query.toLowerCase().trim();
-        
-        items.forEach(item => {
-            const name = item.querySelector('.contact-name')?.textContent?.toLowerCase() || '';
-            const preview = item.querySelector('.contact-preview')?.textContent?.toLowerCase() || '';
-            const match = name.includes(search) || preview.includes(search);
-            item.style.display = match || !search ? '' : 'none';
-        });
-    }
-    
-    loadUserProfile() {
+
+    // ── Load current user from localStorage ─────────────────────
+    _loadUser() {
         try {
-            const user = JSON.parse(localStorage.getItem('ghostchat_user'));
-            if (user) {
-                this.username = user.username || 'Ghost';
-                this.userId = user.id || 'user_' + Date.now();
-                document.getElementById('chatUserName').textContent = user.username || 'Ghost User';
-                const avatarEl = document.getElementById('chatUserAvatar');
-                const initials = ((user.firstName?.[0] || '') + (user.lastName?.[0] || user.username?.[1] || '')).toUpperCase() || 'GH';
-                if (avatarEl) avatarEl.textContent = initials;
-                if (user.avatar) {
-                    avatarEl.innerHTML = `<img src="${user.avatar}" alt="Avatar" />`;
+            this.user = JSON.parse(localStorage.getItem('ghostchat_user') || '{}');
+            if (!this.user.id) {
+                window.location.href = 'login.html';
+                return;
+            }
+            // Populate UI
+            const nameEl   = document.getElementById('chatUserName');
+            const avatarEl = document.getElementById('chatUserAvatar');
+            if (nameEl)   nameEl.textContent = this.user.username || 'Ghost User';
+            if (avatarEl) {
+                if (this.user.avatar && this.user.avatar !== '/assets/images/default-avatar.png') {
+                    avatarEl.innerHTML = `<img src="${this.user.avatar}" alt="Avatar"
+                        onerror="this.outerHTML='<span>${(this.user.username||'G')[0].toUpperCase()}</span>';" />`;
+                } else {
+                    avatarEl.textContent = (this.user.username || 'G')[0].toUpperCase();
                 }
-            } else {
-                // Fallback for demo
-                this.username = 'GhostUser';
-                this.userId = 'demo_user_' + Date.now();
             }
         } catch (_) {
-            this.username = 'GhostUser';
-            this.userId = 'demo_user_' + Date.now();
+            window.location.href = 'login.html';
         }
     }
-    
-    loadContacts() {
-        const saved = localStorage.getItem('ghostchat_contacts');
-        this.contacts = saved ? JSON.parse(saved) : {
-            'room': { name: 'Secure Room', messages: [], unread: 0, lastMessage: '' },
-            'alice': { name: 'Alice', messages: [], unread: 0, lastMessage: '' },
-            'bob': { name: 'Bob', messages: [], unread: 0, lastMessage: '' }
-        };
-    }
-    
-    saveContacts() {
-        localStorage.setItem('ghostchat_contacts', JSON.stringify(this.contacts));
-    }
-    
-    loadMessages() {
-        const saved = localStorage.getItem('ghostchat_chat_messages');
-        this.messages = saved ? JSON.parse(saved) : [];
-    }
-    
-    saveMessages() {
-        localStorage.setItem('ghostchat_chat_messages', JSON.stringify(this.messages));
-        if (this.contacts[this.currentRoom]) {
-            this.contacts[this.currentRoom].messages = this.messages;
-            if (this.messages.length > 0) {
-                this.contacts[this.currentRoom].lastMessage = this.messages[this.messages.length - 1].text;
-            }
-            this.saveContacts();
-        }
-    }
-    
-    connectToSocket() {
-        const socketUrl = window.location.origin;
-        this.socket = io(socketUrl, {
-            transports: ['websocket', 'polling'],
-            withCredentials: true,
-            reconnection: true,
-            reconnectionAttempts: this.maxReconnectAttempts,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000
-        });
-        
-        this.socket.on('connect', () => {
-            console.log('✅ Connected to chat server');
-            this.connected = true;
-            this.reconnectAttempts = 0;
-            this.updateStatus(true);
-            this.joinRoom(this.currentRoom);
-            this.processQueue();
-            this.showToast('Connected to chat server', 'success');
-        });
-        
-        this.socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
-            this.reconnectAttempts++;
-            if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                this.showToast('Failed to connect to server', 'error');
-            }
-        });
-        
-        this.socket.on('disconnect', () => {
-            console.log('❌ Disconnected from chat server');
-            this.connected = false;
-            this.updateStatus(false);
-            this.showToast('Disconnected from chat server', 'error');
-        });
-        
-        this.socket.on('receive_message', (data) => {
-            console.log('📨 New message received:', data);
-            this.handleReceivedMessage(data);
-        });
-        
-        this.socket.on('message_delivered', (data) => {
-            this.handleMessageDelivered(data);
-        });
-        
-        this.socket.on('message_read', (data) => {
-            this.handleMessageRead(data);
-        });
-        
-        this.socket.on('connected', (data) => {
-            console.log('Server acknowledged:', data);
-        });
-        
-        this.socket.on('joined_room', (data) => {
-            console.log('Joined room:', data.room);
-            this.showToast(`Joined room: ${data.room}`, 'info');
-        });
-        
-        this.socket.on('error', (data) => {
-            console.error('Server error:', data);
-            this.showToast(data.message || 'Server error occurred', 'error');
-        });
-    }
-    
-    updateStatus(connected) {
-        const statusEl = document.querySelector('.user-status');
-        if (statusEl) {
-            statusEl.textContent = connected ? '🟢 Online' : '🔴 Offline';
-            statusEl.style.color = connected ? 'var(--green)' : 'var(--red)';
-        }
-        
-        const headerStatus = document.getElementById('chatHeaderStatus');
-        if (headerStatus) {
-            headerStatus.textContent = connected ? '🟢 Online' : '🔴 Offline';
-            headerStatus.style.color = connected ? 'var(--green)' : 'var(--red)';
-        }
-    }
-    
-    joinRoom(room) {
-        if (!this.socket || !this.connected) return;
-        
-        if (this.currentRoom) {
-            this.socket.emit('leave_room', { room: this.currentRoom });
-        }
-        
-        this.currentRoom = room;
-        this.socket.emit('join_room', { room: room });
-        
-        // Load messages for this room
-        if (this.contacts[room]) {
-            this.messages = this.contacts[room].messages || [];
-            // Reset unread count for this room
-            this.contacts[room].unread = 0;
-            this.saveContacts();
-        } else {
-            this.messages = [];
-        }
-        this.renderMessages();
-        this.updateContactBadge(room);
-        
-        // Update header
-        const contact = this.contacts[room] || { name: room };
-        document.getElementById('chatHeaderName').textContent = contact.name || room;
-        document.getElementById('chatHeaderAvatar').textContent = room === 'room' ? '👻' : '👤';
-    }
-    
-    setupEventListeners() {
-        // Send message
-        document.getElementById('sendBtn').addEventListener('click', () => this.sendMessage());
-        document.getElementById('chatInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.sendMessage();
-            }
-            this.handleTyping(e);
-        });
-        
-        // Auto-resize textarea
-        const input = document.getElementById('chatInput');
-        input.addEventListener('input', () => {
-            input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 150) + 'px';
-        });
-        
-        // Contact switching
-        document.querySelectorAll('.contact-item').forEach(el => {
-            el.addEventListener('click', () => {
-                const contact = el.dataset.contact;
-                this.switchContact(contact);
-            });
-        });
-        
-        // Clear chat
-        document.getElementById('clearChatBtn').addEventListener('click', () => {
-            if (confirm('Clear all messages in this chat?')) {
-                this.messages = [];
-                this.saveMessages();
-                this.renderMessages();
-                this.showToast('Chat cleared', 'info');
-            }
-        });
-        
-        // Export chat
-        document.getElementById('exportChatBtn').addEventListener('click', () => {
-            this.exportChat();
-        });
-        
-        // Add contact
-        document.getElementById('addContactBtn').addEventListener('click', () => {
-            document.getElementById('contactModal').classList.add('active');
-        });
-        document.getElementById('contactModalClose').addEventListener('click', () => {
-            document.getElementById('contactModal').classList.remove('active');
-        });
-        document.getElementById('addContactSubmitBtn').addEventListener('click', () => {
-            this.addContact();
-        });
-        
-        // Decrypt modal
-        document.getElementById('decryptModalClose').addEventListener('click', () => {
-            document.getElementById('decryptModal').classList.remove('active');
-            document.getElementById('decryptResultArea').innerHTML = '';
-        });
-        document.getElementById('decryptMessageBtn').addEventListener('click', () => {
-            this.decryptMessage();
-        });
-        document.getElementById('decryptPasswordInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') this.decryptMessage();
-        });
-        
-        // Logout
-        document.getElementById('chatLogout').addEventListener('click', () => {
-            if (confirm('Log out?')) {
-                if (this.socket) {
-                    this.socket.disconnect();
-                }
-                localStorage.removeItem('ghostchat_user');
-                window.location.href = 'login.html';
-            }
-        });
-        
-        // Close modals
-        document.querySelectorAll('.modal').forEach(modal => {
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    modal.classList.remove('active');
-                }
-            });
-        });
-        
-        // Emoji picker
-        const emojiBtn = document.getElementById('emojiPickerBtn');
-        if (emojiBtn) {
-            emojiBtn.addEventListener('click', () => {
-                const picker = document.getElementById('emojiPicker');
-                picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
-            });
-        }
-        
-        // Image upload (placeholder)
-        const attachBtn = document.getElementById('attachBtn');
-        if (attachBtn) {
-            attachBtn.addEventListener('click', () => {
-                this.showToast('Image upload coming soon!', 'info');
-            });
-        }
-    }
-    
-    setupEmojiPicker() {
-        const picker = document.getElementById('emojiPicker');
-        if (!picker) return;
-        
-        const emojis = ['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','😘','😗','😙','😚','🙂','🤗','🤔','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','😎','🤓','🧐','😕','😟','🙁','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙈','🙉','🙊','💋','💌','💘','💝','💖','💗','💓','💞','💕','💟','❣️','💔','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎'];
-        
-        picker.innerHTML = emojis.map(e => 
-            `<span class="emoji-item" onclick="window.chat.insertEmoji('${e}')">${e}</span>`
-        ).join('');
-    }
-    
-    insertEmoji(emoji) {
-        const input = document.getElementById('chatInput');
-        const start = input.selectionStart;
-        const end = input.selectionEnd;
-        const text = input.value;
-        input.value = text.substring(0, start) + emoji + text.substring(end);
-        input.selectionStart = input.selectionEnd = start + emoji.length;
-        input.focus();
-        document.getElementById('emojiPicker').style.display = 'none';
-        input.dispatchEvent(new Event('input'));
-    }
-    
-    handleTyping(e) {
-        const input = document.getElementById('chatInput');
-        const isCurrentlyTyping = input.value.length > 0;
-        
-        if (isCurrentlyTyping !== this.isTyping) {
-            this.isTyping = isCurrentlyTyping;
-            if (this.socket && this.connected) {
-                this.socket.emit('typing', { 
-                    room: this.currentRoom, 
-                    is_typing: isCurrentlyTyping 
-                });
-            }
-        }
-        
-        clearTimeout(this.typingTimeout);
-        this.typingTimeout = setTimeout(() => {
-            if (this.isTyping) {
-                this.isTyping = false;
-                if (this.socket && this.connected) {
-                    this.socket.emit('typing', { 
-                        room: this.currentRoom, 
-                        is_typing: false 
-                    });
-                }
-            }
-        }, 2000);
-    }
-    
-    sendMessage() {
-        const input = document.getElementById('chatInput');
-        const text = input.value.trim();
-        if (!text) return;
-        
-        const password = prompt('Enter encryption password for this message:');
-        if (!password) return;
-        
-        this.password = password;
-        input.disabled = true;
-        
-        window.GhostChatAPI.encryptSimple(text, password, false)
-            .then(result => {
-                if (result.success) {
-                    const message = {
-                        id: Date.now(),
-                        text: result.emoji_message,
-                        original: text,
-                        encrypted: true,
-                        timestamp: new Date().toISOString(),
-                        sender: this.username || 'me',
-                        contact: this.currentRoom,
-                        delivered: false,
-                        read: false
-                    };
-                    
-                    // Add to local messages
-                    this.messages.push(message);
-                    this.saveMessages();
-                    this.renderMessages();
-                    
-                    // Send via WebSocket
-                    if (this.socket && this.connected) {
-                        this.socket.emit('send_message', {
-                            room: this.currentRoom,
-                            message: message.text,
-                            sender: this.userId || this.username,
-                            timestamp: message.timestamp,
-                            message_id: message.id
-                        });
-                        message.delivered = true;
-                        this.saveMessages();
-                        this.showToast('Message sent securely!', 'success');
-                    } else {
-                        // Queue message for later
-                        this.messageQueue.push(message);
-                        this.showToast('Offline - message queued', 'warning');
-                    }
-                    
-                    // Auto-decrypt for sender
-                    setTimeout(() => {
-                        const msgEl = document.querySelector(`.message[data-id="${message.id}"]`);
-                        if (msgEl) {
-                            const decryptedDiv = msgEl.querySelector('.msg-decrypted');
-                            if (decryptedDiv) {
-                                decryptedDiv.innerHTML = `<span class="msg-decrypted-label"><i class="fas fa-check-circle"></i> Decrypted</span>${this.escapeHtml(text)}`;
-                                decryptedDiv.style.display = 'block';
-                            }
-                            const lockEl = msgEl.querySelector('.msg-lock i');
-                            if (lockEl) {
-                                lockEl.className = 'fas fa-lock-open';
-                                lockEl.style.color = 'var(--green)';
-                            }
-                        }
-                    }, 100);
-                    
-                    input.value = '';
-                    input.style.height = 'auto';
-                    input.disabled = false;
-                    input.focus();
-                    
-                    // Update contact badge
-                    this.updateContactBadge(this.currentRoom);
-                    this.unreadCount = 0;
-                    this.updateUnreadBadge();
-                    
-                } else {
-                    this.showToast('Encryption failed: ' + (result.error || 'Unknown error'), 'error');
-                    input.disabled = false;
-                }
-            })
-            .catch(err => {
-                this.showToast('Encryption error: ' + err.message, 'error');
-                input.disabled = false;
-            });
-    }
-    
-    processQueue() {
-        if (this.isProcessingQueue || this.messageQueue.length === 0) return;
-        
-        this.isProcessingQueue = true;
-        const messages = [...this.messageQueue];
-        this.messageQueue = [];
-        
-        messages.forEach(msg => {
-            if (this.socket && this.connected) {
-                this.socket.emit('send_message', {
-                    room: msg.contact || this.currentRoom,
-                    message: msg.text,
-                    sender: this.userId || this.username,
-                    timestamp: msg.timestamp,
-                    message_id: msg.id
-                });
-                msg.delivered = true;
-                this.saveMessages();
-                this.showToast('Queued message sent!', 'success');
-            } else {
-                this.messageQueue.push(msg);
-            }
-        });
-        
-        this.isProcessingQueue = false;
-    }
-    
-    handleReceivedMessage(data) {
-        // Check if message already exists
-        if (this.messages.some(m => m.id === data.message_id)) {
-            return;
-        }
-        
-        const message = {
-            id: data.message_id || Date.now() + Math.random(),
-            text: data.message,
-            encrypted: true,
-            timestamp: data.timestamp || new Date().toISOString(),
-            sender: data.sender || 'other',
-            contact: this.currentRoom,
-            received: true,
-            delivered: true,
-            read: false
-        };
-        
-        // Check if message is from a different room
-        const room = data.room || this.currentRoom;
-        if (room !== this.currentRoom && this.contacts[room]) {
-            // Store in the correct room's messages
-            if (!this.contacts[room].messages) {
-                this.contacts[room].messages = [];
-            }
-            this.contacts[room].messages.push(message);
-            this.contacts[room].unread = (this.contacts[room].unread || 0) + 1;
-            this.saveContacts();
-            this.renderContacts();
-            this.updateUnreadBadge();
-            this.showToast(`New message from ${message.sender} in ${room}`, 'info');
-            return;
-        }
-        
-        this.messages.push(message);
-        this.saveMessages();
-        this.renderMessages();
-        
-        // Update contact badge
-        if (this.contacts[this.currentRoom]) {
-            this.contacts[this.currentRoom].unread = (this.contacts[this.currentRoom].unread || 0) + 1;
-            this.saveContacts();
-        }
-        this.updateContactBadge(this.currentRoom);
-        this.updateUnreadBadge();
-        
-        // Show notification
-        this.showToast(`New message from ${message.sender}`, 'info');
-        
-        // Play sound
-        this.playNotificationSound();
-        
-        // Auto-decrypt if password is available
-        if (this.password) {
-            window.GhostChatAPI.decryptSimple(message.text, this.password)
-                .then(result => {
-                    if (result.success) {
-                        message.original = result.decrypted_message;
-                        message.decrypted = true;
-                        this.saveMessages();
-                        this.renderMessages();
-                    }
-                })
-                .catch(() => {});
-        }
-    }
-    
-    handleMessageDelivered(data) {
-        const msg = this.messages.find(m => m.id === data.message_id);
-        if (msg) {
-            msg.delivered = true;
-            this.saveMessages();
-            const msgEl = document.querySelector(`.message[data-id="${data.message_id}"]`);
-            if (msgEl) {
-                const statusEl = msgEl.querySelector('.msg-status');
-                if (statusEl) {
-                    statusEl.textContent = '✓';
-                }
-            }
-        }
-    }
-    
-    handleMessageRead(data) {
-        const msg = this.messages.find(m => m.id === data.message_id);
-        if (msg) {
-            msg.read = true;
-            this.saveMessages();
-            const msgEl = document.querySelector(`.message[data-id="${data.message_id}"]`);
-            if (msgEl) {
-                const statusEl = msgEl.querySelector('.msg-status');
-                if (statusEl) {
-                    statusEl.textContent = '✓✓ Read';
-                    statusEl.style.color = 'var(--primary)';
-                }
-            }
-        }
-    }
-    
-    playNotificationSound() {
+
+    // ── Load contacts from server ─────────────────────────────────
+    async _loadContacts() {
         try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = 660;
-            gain.gain.value = 0.08;
-            osc.start();
-            setTimeout(() => { osc.stop(); ctx.close(); }, 150);
-        } catch (_) {}
+            const res  = await fetch(`${this._base()}/api/contacts`, {
+                credentials: 'include',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const data = await res.json();
+            if (data.success) {
+                this.contacts = data.contacts || [];
+            }
+        } catch (_) {
+            this.contacts = [];
+        }
+        this._renderContacts();
     }
-    
-    switchContact(contact) {
-        this.currentRoom = contact;
-        this.unreadCount = 0;
-        this.updateUnreadBadge();
-        
+
+    // ── Render contacts sidebar ───────────────────────────────────
+    _renderContacts() {
+        const list = document.getElementById('contactsList');
+        if (!list) return;
+
+        if (!this.contacts.length) {
+            list.innerHTML = `
+                <div style="padding:24px 16px;text-align:center;color:var(--t3);">
+                    <i class="fas fa-user-plus" style="font-size:2rem;margin-bottom:12px;display:block;color:var(--primary);opacity:.5;"></i>
+                    <p style="font-size:.875rem;">No contacts yet.</p>
+                    <p style="font-size:.8125rem;margin-top:4px;">Click <strong>+</strong> to add someone.</p>
+                </div>`;
+            return;
+        }
+
+        list.innerHTML = this.contacts.map(c => {
+            const initials = (c.display_name || c.username || '?')[0].toUpperCase();
+            const avatarHtml = c.avatar && c.avatar !== '/assets/images/default-avatar.png'
+                ? `<img src="${c.avatar}" alt="${initials}"
+                    onerror="this.outerHTML='<span>${initials}</span>';" />`
+                : `<span>${initials}</span>`;
+
+            const lastMsg  = c.last_message?.content
+                ? this._truncate(c.last_message.content, 36)
+                : 'Start a secure conversation';
+            const lastTime = c.last_message?.created_at
+                ? this._formatTime(c.last_message.created_at)
+                : '';
+            const unread = c.unread_count > 0
+                ? `<span class="contact-unread">${c.unread_count > 99 ? '99+' : c.unread_count}</span>`
+                : '';
+            const online = c.is_online
+                ? '<span class="online-dot"></span>'
+                : '';
+
+            const isActive = this.currentContact?.contact_id === c.contact_id;
+
+            return `
+            <div class="contact-item ${isActive ? 'active' : ''}"
+                 data-id="${c.contact_id}"
+                 data-name="${this._esc(c.display_name || c.username)}"
+                 role="button" tabindex="0"
+                 aria-label="Chat with ${this._esc(c.display_name || c.username)}"
+                 onclick="window.chat.openChat('${c.contact_id}', '${this._esc(c.display_name || c.username)}', '${c.avatar || ''}')">
+                <div class="contact-avatar">
+                    ${avatarHtml}
+                    ${online}
+                </div>
+                <div class="contact-info">
+                    <div class="contact-header">
+                        <span class="contact-name">${this._esc(c.display_name || c.username)}</span>
+                        <span class="contact-time">${lastTime}</span>
+                    </div>
+                    <div class="contact-footer">
+                        <span class="contact-preview">${this._esc(lastMsg)}</span>
+                        ${unread}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ── Open a private chat ───────────────────────────────────────
+    async openChat(contactId, displayName, avatar) {
+        this.currentContact = { contact_id: contactId, display_name: displayName, avatar };
+
+        // Update header
+        const headerName   = document.getElementById('chatHeaderName');
+        const headerAvatar = document.getElementById('chatHeaderAvatar');
+        const headerStatus = document.getElementById('chatHeaderStatus');
+        if (headerName)   headerName.textContent = displayName;
+        if (headerStatus) headerStatus.textContent = '🔒 End-to-End Encrypted';
+        if (headerAvatar) {
+            const contact = this.contacts.find(c => c.contact_id === contactId);
+            if (avatar && avatar !== '/assets/images/default-avatar.png') {
+                headerAvatar.innerHTML = `<img src="${avatar}" alt="${displayName[0]}"
+                    style="width:100%;height:100%;object-fit:cover;border-radius:50%;"
+                    onerror="this.outerHTML='<span>${displayName[0].toUpperCase()}</span>';" />`;
+            } else {
+                headerAvatar.textContent = displayName[0].toUpperCase();
+            }
+        }
+
+        // Join private SocketIO room
+        if (this.socket && this.connected) {
+            this.socket.emit('join_room', { room: `private_${this._roomId(contactId)}` });
+        }
+
+        // Load message history
+        await this._loadMessages(contactId);
+
+        // Mark contact active in sidebar
         document.querySelectorAll('.contact-item').forEach(el => {
-            el.classList.toggle('active', el.dataset.contact === contact);
+            el.classList.toggle('active', el.dataset.id === contactId);
         });
-        
-        this.joinRoom(contact);
-        
-        const contactData = this.contacts[contact] || { name: contact };
-        document.getElementById('chatHeaderName').textContent = contactData.name || contact;
-        document.getElementById('chatHeaderAvatar').textContent = contact === 'room' ? '👻' : '👤';
-        
-        // Mobile: hide sidebar when chat opens
-        if (window.innerWidth <= 768) {
-            document.querySelector('.chat-main').classList.add('mobile-chat-open');
-        }
+
+        // On mobile: show chat panel
+        document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
+        document.getElementById('chatInput')?.focus();
     }
-    
-    updateContactBadge(contactId) {
-        const unread = this.contacts[contactId]?.unread || 0;
-        const badge = document.querySelector(`.contact-item[data-contact="${contactId}"] .contact-badge`);
-        if (badge) {
-            badge.textContent = unread;
-            badge.style.display = unread > 0 ? '' : 'none';
-        }
-    }
-    
-    updateUnreadBadge() {
-        const totalUnread = Object.values(this.contacts).reduce((sum, c) => sum + (c.unread || 0), 0);
-        const badge = document.querySelector('.nav-badge');
-        if (badge) {
-            badge.textContent = totalUnread;
-            badge.style.display = totalUnread > 0 ? '' : 'none';
-        }
-    }
-    
-    renderMessages() {
+
+    // ── Load message history from server ────────────────────────────
+    async _loadMessages(contactId) {
         const container = document.getElementById('chatMessages');
         if (!container) return;
-        
+
+        container.innerHTML = `
+            <div style="display:flex;justify-content:center;padding:32px;">
+                <div class="spinner" aria-label="Loading messages"></div>
+            </div>`;
+
+        try {
+            const res  = await fetch(`${this._base()}/api/chat/${contactId}/messages?limit=50`, {
+                credentials: 'include',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const data = await res.json();
+            this.messages = data.messages || [];
+        } catch (_) {
+            this.messages = [];
+        }
+
+        this._renderMessages();
+    }
+
+    // ── Render messages ───────────────────────────────────────────
+    _renderMessages() {
+        const container = document.getElementById('chatMessages');
+        if (!container) return;
+
         if (!this.messages.length) {
             container.innerHTML = `
                 <div class="chat-welcome">
                     <i class="fas fa-ghost"></i>
-                    <h3>No messages yet</h3>
-                    <p>Send your first encrypted message below.</p>
-                    ${this.connected ? '<p style="color:var(--green);font-size:.8rem;">🟢 Connected to secure channel</p>' : '<p style="color:var(--red);font-size:.8rem;">🔴 Offline - reconnecting...</p>'}
-                </div>
-            `;
+                    <h3>Start a secure conversation</h3>
+                    <p>Messages are encrypted with AES-256 before sending.</p>
+                </div>`;
             return;
         }
-        
-        container.innerHTML = this.messages.map(msg => {
-            const isMine = msg.sender === this.username || msg.sender === 'me' || msg.sender === this.userId;
-            const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const isDecrypted = msg.decrypted || msg.original;
-            
-            const statusIcon = msg.read ? '✓✓' : (msg.delivered ? '✓' : '');
-            const statusColor = msg.read ? 'var(--primary)' : 'var(--t3)';
-            
-            return `
-                <div class="message ${isMine ? 'sent' : 'received'}" data-id="${msg.id}">
-                    <div class="msg-encrypted" onclick="window.chat.decryptPrompt(${msg.id})" title="Click to decrypt">
-                        ${this.escapeHtml(msg.text)}
-                    </div>
-                    ${isDecrypted ? `
-                        <div class="msg-decrypted" style="display: block;">
-                            <span class="msg-decrypted-label"><i class="fas fa-check-circle"></i> Decrypted</span>
-                            ${this.escapeHtml(msg.original || msg.decrypted_text || '')}
-                        </div>
-                    ` : `
-                        <div class="msg-decrypted" style="display: none;">
-                            <span class="msg-decrypted-label"><i class="fas fa-spinner fa-spin"></i> Click lock to decrypt</span>
-                        </div>
-                    `}
-                    <div class="msg-actions">
-                        <button onclick="window.chat.copyMessage(${msg.id})" title="Copy"><i class="fas fa-copy"></i></button>
-                        <button onclick="window.chat.decryptPrompt(${msg.id})" title="Decrypt"><i class="fas fa-lock"></i></button>
-                        <button onclick="window.chat.reactToMessage(${msg.id})" title="React"><i class="fas fa-smile"></i></button>
-                    </div>
-                    <span class="msg-time">${time}</span>
-                    ${isMine ? `<span class="msg-status" style="color:${statusColor}">${statusIcon}</span>` : ''}
-                    ${!isMine && !isDecrypted ? '<span class="msg-lock"><i class="fas fa-lock"></i></span>' : ''}
-                    ${isMine && isDecrypted ? '<span class="msg-lock"><i class="fas fa-lock-open" style="color:var(--green);"></i></span>' : ''}
-                    ${msg.received && !isMine ? '<span style="font-size:10px;color:var(--t3);margin-left:4px;">📩</span>' : ''}
-                    <div class="msg-reactions"></div>
-                </div>
-            `;
-        }).join('');
-        
-        container.scrollTop = container.scrollHeight;
-    }
-    
-    decryptPrompt(messageId) {
-        const message = this.messages.find(m => m.id === messageId);
-        if (!message) return;
-        
-        const modal = document.getElementById('decryptModal');
-        if (!modal) return;
-        
-        document.getElementById('modalEncryptedText').textContent = message.text;
-        document.getElementById('decryptPasswordInput').value = '';
-        document.getElementById('decryptResultArea').innerHTML = '';
-        modal.classList.add('active');
-        modal.dataset.messageId = messageId;
-    }
-    
-    decryptMessage() {
-        const modal = document.getElementById('decryptModal');
-        const messageId = parseInt(modal.dataset.messageId);
-        const password = document.getElementById('decryptPasswordInput').value.trim();
-        const resultArea = document.getElementById('decryptResultArea');
-        
-        if (!password) {
-            resultArea.innerHTML = '<div class="error">Please enter the password.</div>';
-            return;
-        }
-        
-        const message = this.messages.find(m => m.id === messageId);
-        if (!message) {
-            resultArea.innerHTML = '<div class="error">Message not found.</div>';
-            return;
-        }
-        
-        resultArea.innerHTML = '<div class="loading">Decrypting...</div>';
-        
-        window.GhostChatAPI.decryptSimple(message.text, password)
-            .then(result => {
-                if (result.success) {
-                    message.original = result.decrypted_message;
-                    message.decrypted = true;
-                    this.saveMessages();
-                    
-                    resultArea.innerHTML = `
-                        <div class="success">
-                            <i class="fas fa-check-circle"></i> 
-                            <strong>Decrypted:</strong> ${this.escapeHtml(result.decrypted_message)}
-                        </div>
-                    `;
-                    
-                    this.renderMessages();
-                    
-                    setTimeout(() => {
-                        modal.classList.remove('active');
-                        resultArea.innerHTML = '';
-                    }, 3000);
-                } else {
-                    resultArea.innerHTML = `<div class="error">${this.escapeHtml(result.error || 'Decryption failed. Wrong password?')}</div>`;
-                }
-            })
-            .catch(err => {
-                resultArea.innerHTML = `<div class="error">Error: ${this.escapeHtml(err.message)}</div>`;
-            });
-    }
-    
-    reactToMessage(messageId) {
-        const reaction = prompt('Enter reaction (emoji):', '👍');
-        if (reaction && this.socket && this.connected) {
-            this.socket.emit('add_reaction', {
-                message_id: messageId,
-                reaction: reaction,
-                room: this.currentRoom
-            });
-            
-            const msgEl = document.querySelector(`.message[data-id="${messageId}"]`);
-            if (msgEl) {
-                let reactionsEl = msgEl.querySelector('.msg-reactions');
-                if (!reactionsEl) {
-                    reactionsEl = document.createElement('div');
-                    reactionsEl.className = 'msg-reactions';
-                    msgEl.appendChild(reactionsEl);
-                }
-                const reactionSpan = document.createElement('span');
-                reactionSpan.textContent = reaction;
-                reactionsEl.appendChild(reactionSpan);
+
+        let html = '';
+        let lastDate = '';
+
+        this.messages.forEach(msg => {
+            const isMine  = msg.sender_id === this.user.id;
+            const msgDate = new Date(msg.created_at).toLocaleDateString();
+
+            // Date separator
+            if (msgDate !== lastDate) {
+                lastDate = msgDate;
+                html += `<div class="msg-date-sep"><span>${this._formatDate(msg.created_at)}</span></div>`;
             }
-        }
-    }
-    
-    copyMessage(messageId) {
-        const message = this.messages.find(m => m.id === messageId);
-        if (!message) return;
-        
-        const text = message.original || message.text;
-        navigator.clipboard.writeText(text)
-            .then(() => { this.showToast('Message copied!', 'success'); })
-            .catch(() => {
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
-                this.showToast('Message copied!', 'success');
-            });
-    }
-    
-    addContact() {
-        const name = document.getElementById('contactNameInput').value.trim();
-        const id = document.getElementById('contactIdInput').value.trim() || name.toLowerCase().replace(/\s/g, '_');
-        
-        if (!name) {
-            this.showToast('Please enter a contact name.', 'error');
-            return;
-        }
-        
-        if (this.contacts[id]) {
-            this.showToast('Contact already exists.', 'error');
-            return;
-        }
-        
-        this.contacts[id] = { name: name, messages: [], unread: 0, lastMessage: '' };
-        this.saveContacts();
-        this.renderContacts();
-        
-        document.getElementById('contactModal').classList.remove('active');
-        document.getElementById('contactNameInput').value = '';
-        document.getElementById('contactIdInput').value = '';
-        
-        this.showToast(`Contact "${name}" added!`, 'success');
-    }
-    
-    renderContacts() {
-        const container = document.getElementById('contactsList');
-        if (!container) return;
-        
-        container.innerHTML = Object.entries(this.contacts).map(([id, contact]) => {
-            const isActive = id === this.currentRoom;
-            const unread = contact.unread || 0;
-            const lastMsg = contact.lastMessage || '';
-            const preview = lastMsg ? lastMsg.substring(0, 25) + (lastMsg.length > 25 ? '...' : '') : 'No messages';
-            
-            return `
-                <div class="contact-item ${isActive ? 'active' : ''}" data-contact="${id}">
-                    <div class="contact-avatar">${id === 'room' ? '👻' : '👤'}</div>
-                    <div class="contact-info">
-                        <div class="contact-name">${this.escapeHtml(contact.name)}</div>
-                        <div class="contact-preview">${this.escapeHtml(preview)}</div>
-                        <div class="contact-status">${this.connected ? '🟢 Online' : '⚪ Offline'}</div>
+
+            const time    = this._formatTime(msg.created_at);
+            const content = this._esc(msg.encrypted_content || '');
+            const status  = isMine
+                ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>`
+                : '';
+            const isEncrypted = content.includes('GHOST');
+            const lockIcon = isEncrypted
+                ? `<button class="msg-decrypt-btn" title="Decrypt message"
+                    onclick="window.chat.promptDecrypt('${msg.id}', this)">
+                    <i class="fas fa-lock"></i>
+                   </button>`
+                : '';
+
+            html += `
+            <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
+                <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
+                    <div class="msg-content" id="content-${msg.id}">${content}</div>
+                    ${lockIcon}
+                    <div class="msg-meta">
+                        <span class="msg-time">${time}</span>
+                        ${status}
                     </div>
-                    ${unread > 0 ? `<span class="contact-badge">${unread}</span>` : ''}
                 </div>
-            `;
-        }).join('');
-        
-        container.querySelectorAll('.contact-item').forEach(el => {
-            el.addEventListener('click', () => {
-                const contact = el.dataset.contact;
-                this.switchContact(contact);
+            </div>`;
+        });
+
+        container.innerHTML = html;
+        this._scrollToBottom();
+    }
+
+    // ── Send message ──────────────────────────────────────────────
+    async sendMessage() {
+        const input = document.getElementById('chatInput');
+        if (!input) return;
+        const text = input.value.trim();
+        if (!text || !this.currentContact) return;
+
+        input.value = '';
+        input.style.height = 'auto';
+
+        // Encrypt if password set
+        let content = text;
+        if (this.encryptMessages && this.password) {
+            try {
+                const encResult = await fetch(`${this._base()}/api/encrypt`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    body: JSON.stringify({ message: text, password: this.password }),
+                });
+                const encData = await encResult.json();
+                if (encData.success) content = encData.emoji_message;
+            } catch (_) { /* send unencrypted if encryption fails */ }
+        }
+
+        const room = `private_${this._roomId(this.currentContact.contact_id)}`;
+
+        // Optimistic UI — show message immediately
+        const tempId  = 'temp_' + Date.now();
+        const tempMsg = {
+            id:                tempId,
+            sender_id:         this.user.id,
+            receiver_id:       this.currentContact.contact_id,
+            encrypted_content: content,
+            message_type:      'chat',
+            created_at:        new Date().toISOString(),
+            is_read:           false,
+            is_delivered:      false,
+        };
+        this.messages.push(tempMsg);
+        this._renderMessages();
+
+        // Send via SocketIO
+        if (this.socket && this.connected) {
+            this.socket.emit('send_private_message', {
+                room:        room,
+                content:     content,
+                sender_id:   this.user.id,
+                sender:      this.user.username,
+                avatar:      this.user.avatar,
+                receiver_id: this.currentContact.contact_id,
+                temp_id:     tempId,
             });
+        } else {
+            // Fallback to REST API
+            try {
+                await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    body: JSON.stringify({ content }),
+                });
+            } catch (_) {}
+        }
+
+        // Update contact's last message in sidebar
+        const contact = this.contacts.find(c => c.contact_id === this.currentContact.contact_id);
+        if (contact) {
+            contact.last_message = { content, created_at: new Date().toISOString(), is_mine: true };
+            this._renderContacts();
+        }
+
+        // Stop typing indicator
+        this._stopTyping();
+    }
+
+    // ── Decrypt a message inline ─────────────────────────────────
+    async promptDecrypt(msgId, btn) {
+        const password = prompt('Enter the encryption password to decrypt this message:');
+        if (!password) return;
+
+        const contentEl = document.getElementById(`content-${msgId}`);
+        if (!contentEl) return;
+
+        try {
+            const res  = await fetch(`${this._base()}/api/decrypt`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ emoji_message: contentEl.textContent, password }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                contentEl.textContent = data.decrypted_message;
+                contentEl.style.color = 'var(--green)';
+                btn?.remove();
+            } else {
+                this._toast('Wrong password or invalid message', 'error');
+            }
+        } catch (_) {
+            this._toast('Decryption failed', 'error');
+        }
+    }
+
+    // ── WebSocket connection ──────────────────────────────────────
+    _connectSocket() {
+        const socketUrl = window.location.origin;
+        this.socket = io(socketUrl, {
+            transports:            ['websocket', 'polling'],
+            withCredentials:       true,
+            reconnection:          true,
+            reconnectionAttempts:  10,
+            reconnectionDelay:     1000,
+            reconnectionDelayMax:  5000,
+        });
+
+        this.socket.on('connect', () => {
+            this.connected = true;
+            this._updateOnlineStatus(true);
+            // Join personal room to receive private messages
+            this.socket.emit('join_user_room', { user_id: this.user.id });
+            if (this.currentContact) {
+                this.socket.emit('join_room', {
+                    room: `private_${this._roomId(this.currentContact.contact_id)}`
+                });
+            }
+        });
+
+        this.socket.on('disconnect', () => {
+            this.connected = false;
+            this._updateOnlineStatus(false);
+        });
+
+        this.socket.on('connect_error', () => {
+            this.connected = false;
+            this._updateOnlineStatus(false);
+        });
+
+        // Receive private message
+        this.socket.on('receive_message', data => {
+            // Only show if it's for the current chat
+            if (!this.currentContact) return;
+            const isCurrentChat = (
+                (data.sender_id   === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
+                (data.receiver_id === this.currentContact.contact_id && data.sender_id   === this.user.id)
+            );
+
+            if (isCurrentChat) {
+                // Replace optimistic temp message or add new
+                const idx = this.messages.findIndex(m => m.id === data.temp_id);
+                if (idx > -1) {
+                    this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
+                } else {
+                    this.messages.push({
+                        id:                data.id,
+                        sender_id:         data.sender_id,
+                        receiver_id:       data.receiver_id || this.user.id,
+                        encrypted_content: data.content,
+                        message_type:      'chat',
+                        created_at:        data.created_at || new Date().toISOString(),
+                        is_read:           false,
+                        is_delivered:      true,
+                    });
+                }
+                this._renderMessages();
+            }
+
+            // Update sidebar preview + unread badge
+            const contact = this.contacts.find(c => c.contact_id === data.sender_id);
+            if (contact) {
+                contact.last_message = {
+                    content:    data.content,
+                    created_at: data.created_at,
+                    is_mine:    data.sender_id === this.user.id,
+                };
+                if (!isCurrentChat || !document.hasFocus()) {
+                    contact.unread_count = (contact.unread_count || 0) + 1;
+                    this._notifyNewMessage(data);
+                }
+                this._renderContacts();
+            }
+        });
+
+        // Typing indicator
+        this.socket.on('typing', data => {
+            if (data.user_id !== this.user.id &&
+                this.currentContact?.contact_id === data.user_id) {
+                this._showTyping(data.username);
+            }
+        });
+        this.socket.on('stop_typing', data => {
+            if (this.currentContact?.contact_id === data.user_id) {
+                this._hideTyping();
+            }
+        });
+
+        // Online presence
+        this.socket.on('user_online', data => {
+            const c = this.contacts.find(x => x.contact_id === data.user_id);
+            if (c) { c.is_online = true; this._renderContacts(); }
+        });
+        this.socket.on('user_offline', data => {
+            const c = this.contacts.find(x => x.contact_id === data.user_id);
+            if (c) { c.is_online = false; this._renderContacts(); }
         });
     }
-    
-    exportChat() {
-        const data = {
-            contact: this.currentRoom,
-            contactName: this.contacts[this.currentRoom]?.name || this.currentRoom,
-            messages: this.messages.map(m => ({
-                ...m,
-                timestamp: m.timestamp,
-                sender: m.sender
-            })),
-            exported: new Date().toISOString(),
-            totalMessages: this.messages.length
-        };
-        
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `ghostchat_export_${this.currentRoom}_${new Date().toISOString().slice(0,10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        this.showToast('Chat exported!', 'success');
-    }
-    
-    showToast(message, type = 'info') {
-        if (window.UI && window.UI.showToast) {
-            window.UI.showToast(message, type);
-        } else {
-            console.log(`[${type}] ${message}`);
+
+    // ── Add contact flow ─────────────────────────────────────────
+    async searchUsers(query) {
+        if (query.length < 2) {
+            document.getElementById('userSearchResults').innerHTML = '';
+            return;
+        }
+        try {
+            const res  = await fetch(`${this._base()}/api/contacts/search?q=${encodeURIComponent(query)}`, {
+                credentials: 'include',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const data = await res.json();
+            this._renderSearchResults(data.users || []);
+        } catch (_) {
+            document.getElementById('userSearchResults').innerHTML =
+                '<p style="color:var(--red);font-size:.875rem;padding:8px;">Search failed. Try again.</p>';
         }
     }
-    
-    escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+
+    _renderSearchResults(users) {
+        const container = document.getElementById('userSearchResults');
+        if (!container) return;
+        if (!users.length) {
+            container.innerHTML = '<p style="color:var(--t3);font-size:.875rem;padding:8px;">No users found.</p>';
+            return;
+        }
+        container.innerHTML = users.map(u => `
+            <div class="search-result-item">
+                <div class="contact-avatar" style="width:36px;height:36px;font-size:.875rem;">
+                    ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                        ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                        : `<span>${u.username[0].toUpperCase()}</span>`}
+                </div>
+                <div style="flex:1;">
+                    <div style="font-weight:600;font-size:.875rem;">${this._esc(u.username)}</div>
+                    <div style="font-size:.75rem;color:var(--t3);">
+                        ${u.is_online ? '🟢 Online' : '⚫ Offline'}
+                    </div>
+                </div>
+                ${u.is_contact
+                    ? `<span style="font-size:.75rem;color:var(--green);"><i class="fas fa-check"></i> Added</span>`
+                    : `<button class="btn btn-primary btn-sm" onclick="window.chat.addContact('${u.id}', '${this._esc(u.username)}')">
+                           <i class="fas fa-plus"></i> Add
+                       </button>`}
+            </div>`
+        ).join('');
+    }
+
+    async addContact(contactId, username) {
+        try {
+            const res  = await fetch(`${this._base()}/api/contacts`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type':    'application/json',
+                    'X-Requested-With':'XMLHttpRequest',
+                    'X-CSRF-Token':    this._getCsrf(),
+                },
+                body: JSON.stringify({ contact_id: contactId }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                this._toast(`${username} added to contacts!`, 'success');
+                closeModal('newChatModal');
+                await this._loadContacts();
+                this.openChat(contactId, username, data.avatar || '');
+            } else {
+                this._toast(data.error || 'Failed to add contact', 'error');
+            }
+        } catch (_) {
+            this._toast('Failed to add contact', 'error');
+        }
+    }
+
+    // ── Event listeners ───────────────────────────────────────────
+    _setupEventListeners() {
+        // Send button
+        document.getElementById('sendBtn')?.addEventListener('click', () => this.sendMessage());
+
+        // Chat input — Enter to send, Shift+Enter for newline, typing indicator
+        const input = document.getElementById('chatInput');
+        input?.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendMessage();
+            } else if (e.key !== 'Escape') {
+                this._handleTyping();
+            }
+        });
+        input?.addEventListener('input', () => {
+            // Only resize if it's a textarea
+            if (input.tagName === 'TEXTAREA') {
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+            }
+        });
+
+        // Add contact button
+        document.getElementById('addContactBtn')?.addEventListener('click', () => {
+            openModal('newChatModal');
+        });
+
+        // Contact search in modal
+        document.getElementById('newChatSearch')?.addEventListener('input', e => {
+            this.searchUsers(e.target.value.trim());
+        });
+
+        // Contact search in sidebar
+        document.getElementById('contactSearch')?.addEventListener('input', e => {
+            this._filterContacts(e.target.value.trim());
+        });
+
+        // Logout
+        document.getElementById('chatLogout')?.addEventListener('click', async () => {
+            await window.GhostChatAPI?.logout();
+            window.location.href = 'login.html';
+        });
+
+        // Encryption toggle in header (lock icon in input bar)
+        document.getElementById('encryptToggle')?.addEventListener('click', () => {
+            this._toggleEncryption();
+        });
+
+        // Set password
+        document.getElementById('setPasswordBtn')?.addEventListener('click', () => {
+            const pw = prompt('Set encryption password (shared with your contact):');
+            if (pw) {
+                this.password = pw;
+                this.encryptMessages = true;
+                this._toast('Encryption password set. Messages will be encrypted.', 'success');
+            }
+        });
+
+        // Mobile back button
+        document.getElementById('mobileBackBtn')?.addEventListener('click', () => {
+            document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
+        });
+
+        // Menu button → show chat info
+        document.getElementById('chatMenuBtn')?.addEventListener('click', () => {
+            const panel = document.getElementById('infoPanel');
+            if (panel) panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+        });
+    }
+
+    _setupKeyboardShortcuts() {
+        document.addEventListener('keydown', e => {
+            // Escape — close modals
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
+                document.getElementById('emojiPicker').style.display = 'none';
+                document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
+            }
+            // Ctrl+K — focus search
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('contactSearch')?.focus();
+            }
+            // Alt+N — new chat
+            if (e.altKey && e.key === 'n') {
+                e.preventDefault();
+                openModal('newChatModal');
+                document.getElementById('newChatSearch')?.focus();
+            }
+            // Alt+E — toggle encryption
+            if (e.altKey && e.key === 'e') {
+                e.preventDefault();
+                this._toggleEncryption();
+            }
+        });
+    }
+
+    _setupMobile() {
+        const handleResize = () => {
+            const isMobile = window.innerWidth <= 768;
+            const sidebar  = document.querySelector('.chat-sidebar');
+            if (!sidebar) return;
+            if (isMobile && this.currentContact) {
+                sidebar.classList.add('mobile-hidden');
+            } else {
+                sidebar.classList.remove('mobile-hidden');
+            }
+        };
+        window.addEventListener('resize', handleResize);
+        handleResize();
+    }
+
+    // ── Typing indicator ─────────────────────────────────────────
+    _handleTyping() {
+        if (!this.socket || !this.connected || !this.currentContact) return;
+        if (!this.isTyping) {
+            this.isTyping = true;
+            this.socket.emit('typing', {
+                room:     `private_${this._roomId(this.currentContact.contact_id)}`,
+                user_id:  this.user.id,
+                username: this.user.username,
+            });
+        }
+        clearTimeout(this.typingTimer);
+        this.typingTimer = setTimeout(() => this._stopTyping(), 2500);
+    }
+
+    _stopTyping() {
+        if (!this.isTyping || !this.socket || !this.currentContact) return;
+        this.isTyping = false;
+        this.socket.emit('stop_typing', {
+            room:    `private_${this._roomId(this.currentContact.contact_id)}`,
+            user_id: this.user.id,
+        });
+    }
+
+    _showTyping(username) {
+        let el = document.getElementById('typingIndicator');
+        if (!el) {
+            el = document.createElement('div');
+            el.id        = 'typingIndicator';
+            el.className = 'typing-indicator';
+            document.getElementById('chatMessages')?.appendChild(el);
+        }
+        el.innerHTML = `
+            <div class="typing-bubble">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+            <span class="typing-text">${this._esc(username)} is typing…</span>`;
+        this._scrollToBottom();
+        clearTimeout(this._typingDisplayTimer);
+        this._typingDisplayTimer = setTimeout(() => this._hideTyping(), 4000);
+    }
+
+    _hideTyping() {
+        document.getElementById('typingIndicator')?.remove();
+    }
+
+    // ── Encryption toggle ─────────────────────────────────────────
+    _toggleEncryption() {
+        if (!this.password && !this.encryptMessages) {
+            const pw = prompt('Enter a shared encryption password:');
+            if (!pw) return;
+            this.password        = pw;
+            this.encryptMessages = true;
+        } else {
+            this.encryptMessages = !this.encryptMessages;
+        }
+        const btn = document.getElementById('encryptToggle');
+        if (btn) {
+            btn.innerHTML = this.encryptMessages
+                ? '<i class="fas fa-lock" style="color:var(--green)"></i>'
+                : '<i class="fas fa-lock-open" style="color:var(--t3)"></i>';
+            btn.title = this.encryptMessages ? 'Encryption ON' : 'Encryption OFF';
+        }
+        this._toast(
+            this.encryptMessages ? 'Messages will be encrypted' : 'Encryption disabled',
+            this.encryptMessages ? 'success' : 'info'
+        );
+    }
+
+    // ── Online status ─────────────────────────────────────────────
+    _updateOnlineStatus(online) {
+        const el = document.getElementById('userStatus');
+        if (el) {
+            el.textContent = online ? '🟢 Online' : '🔴 Offline';
+            el.style.color = online ? 'var(--green)' : 'var(--red)';
+        }
+    }
+
+    // ── Contact filter ─────────────────────────────────────────────
+    _filterContacts(query) {
+        document.querySelectorAll('.contact-item').forEach(el => {
+            const name    = el.dataset.name?.toLowerCase() || '';
+            el.style.display = !query || name.includes(query.toLowerCase()) ? '' : 'none';
+        });
+    }
+
+    // ── Browser notification ──────────────────────────────────────
+    _notifyNewMessage(data) {
+        if (window.UI) UI.showToast(`New message from ${data.sender}`, 'info');
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────
+    _scrollToBottom() {
+        const el = document.getElementById('chatMessages');
+        if (el) setTimeout(() => { el.scrollTop = el.scrollHeight; }, 50);
+    }
+
+    _base() {
+        return window.location.origin.includes('localhost')
+            ? 'http://127.0.0.1:5000'
+            : window.location.origin;
+    }
+
+    _roomId(contactId) {
+        // Deterministic room ID — same for both participants
+        return [this.user.id, contactId].sort().join('_');
+    }
+
+    _getCsrf() {
+        const match = document.cookie.match(/(?:^|;\s*)gc_csrf=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    _truncate(str, n) {
+        return str.length > n ? str.substring(0, n) + '…' : str;
+    }
+
+    _esc(str) {
+        const d = document.createElement('div');
+        d.textContent = String(str || '');
+        return d.innerHTML;
+    }
+
+    _formatTime(iso) {
+        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    _formatDate(iso) {
+        const d   = new Date(iso);
+        const now = new Date();
+        const diff = Math.floor((now - d) / 86400000);
+        if (diff === 0) return 'Today';
+        if (diff === 1) return 'Yesterday';
+        return d.toLocaleDateString();
+    }
+
+    _toast(msg, type = 'info') {
+        if (window.UI) UI.showToast(msg, type);
     }
 }
 
-// Initialize chat
+// ── Global helpers for onclick attributes ────────────────────────
+function openModal(id) {
+    const m = document.getElementById(id);
+    if (m) m.classList.add('active');
+}
+function closeModal(id) {
+    const m = document.getElementById(id);
+    if (m) m.classList.remove('active');
+}
+
+// Close modal on backdrop click
+document.addEventListener('click', e => {
+    if (e.target.classList.contains('modal')) {
+        e.target.classList.remove('active');
+    }
+});
+
+// ── Boot ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     window.chat = new GhostChatRealtime();
 });

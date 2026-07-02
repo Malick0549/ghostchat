@@ -14,8 +14,17 @@ Deployed on Render:
 """
 
 # ── FIX: eventlet monkey patch MUST be first ─────────────────────────────────
-import eventlet
-eventlet.monkey_patch()
+import sys
+try:
+    import eventlet
+    eventlet.monkey_patch()
+    EVENTLET_AVAILABLE = True
+except Exception as exc:
+    EVENTLET_AVAILABLE = False
+    sys.stderr.write(
+        f"Warning: eventlet unavailable ({exc}). "
+        "Falling back to threading for local debugging.\n"
+    )
 
 import os
 import logging
@@ -59,7 +68,6 @@ def _is_https():
         request.is_secure
         or request.headers.get('X-Forwarded-Proto') == 'https'
         or bool(os.environ.get('RENDER'))
-        or bool(os.environ.get('RAILWAY'))  # ── FIX: Added Railway detection ──
     )
 
 
@@ -198,16 +206,12 @@ def create_app(test_config=None):
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
         resp  = jsonify({'csrf_token': token})
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
-        is_railway = bool(os.environ.get('RAILWAY'))
-        secure_cookie = https or is_railway
-        
         resp.set_cookie(
             CSRF_COOKIE,
             token,
             httponly=False,                         # JS must read it
-            samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            samesite='None' if https else 'Lax',
+            secure=https,
             max_age=3600,
             path='/',
         )
@@ -219,9 +223,6 @@ def create_app(test_config=None):
         Returns (None, None) on pass, (response, code) on failure.
         """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
-            return None, None
-        # ── FIX: Skip CSRF for SocketIO endpoints ────────────────────────────
-        if request.path.startswith('/socket.io/'):
             return None, None
         if request.path in ('/api/csrf-token', '/health'):
             return None, None
@@ -274,15 +275,11 @@ def create_app(test_config=None):
         """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
-        is_railway = bool(os.environ.get('RAILWAY'))
-        secure_cookie = https or is_railway
-        
         resp.set_cookie(
             CSRF_COOKIE, token,
             httponly=False,
-            samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            samesite='None' if https else 'Lax',
+            secure=https,
             max_age=3600, path='/',
         )
         return resp
@@ -847,63 +844,257 @@ def create_app(test_config=None):
     log.info(f'GhostChat ready  [{"production" if IS_PROD else "development"}]')
     
     # ── WebSocket Events ──────────────────────────────────────────────────────
+
+    # ══════════════════════════════════════
+    # CONTACT ROUTES
+    # ══════════════════════════════════════
+
+    @app.route('/api/contacts', methods=['GET','OPTIONS'])
+    def get_contacts():
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        contacts = Contact.query.filter_by(user_id=user.id, is_blocked=False).all()
+        result = []
+        for c in contacts:
+            cu = User.query.get(c.contact_id)
+            if not cu: continue
+            last_msg = Message.query.filter(
+                Message.is_deleted == False, Message.message_type == 'chat',
+                db.or_(
+                    db.and_(Message.sender_id==user.id, Message.receiver_id==c.contact_id),
+                    db.and_(Message.sender_id==c.contact_id, Message.receiver_id==user.id),
+                )
+            ).order_by(Message.created_at.desc()).first()
+            unread = Message.query.filter_by(
+                sender_id=c.contact_id, receiver_id=user.id,
+                is_read=False, message_type='chat'
+            ).count()
+            result.append({
+                'id': c.id, 'contact_id': cu.id, 'username': cu.username,
+                'display_name': c.display_name or cu.username,
+                'avatar': cu.avatar, 'about': cu.about,
+                'is_online': cu.is_online,
+                'last_seen': cu.last_seen.isoformat() if cu.last_seen else None,
+                'is_favorite': c.is_favorite, 'unread_count': unread,
+                'last_message': {
+                    'content': last_msg.encrypted_content,
+                    'created_at': last_msg.created_at.isoformat(),
+                    'is_mine': last_msg.sender_id == user.id,
+                } if last_msg else None,
+            })
+        result.sort(key=lambda x: (not x['is_favorite'], x['last_message']['created_at'] if x['last_message'] else ''))
+        return jsonify({'success': True, 'contacts': result}), 200
+
+    @app.route('/api/contacts/search', methods=['GET','OPTIONS'])
+    def search_users():
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        q = (request.args.get('q') or '').strip()
+        if len(q) < 2: return jsonify({'success': True, 'users': []}), 200
+        matches = User.query.filter(
+            User.id != user.id, User.is_active == True,
+            db.or_(User.username.ilike(f'%{q}%'), User.email.ilike(f'%{q}%'))
+        ).limit(20).all()
+        existing = {c.contact_id for c in Contact.query.filter_by(user_id=user.id).all()}
+        return jsonify({'success': True, 'users': [{
+            'id': u.id, 'username': u.username, 'avatar': u.avatar,
+            'about': u.about, 'is_online': u.is_online, 'is_contact': u.id in existing,
+        } for u in matches]}), 200
+
+    @app.route('/api/contacts', methods=['POST','OPTIONS'])
+    def add_contact():
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        data = request.get_json() or {}
+        contact_id = (data.get('contact_id') or '').strip()
+        display_name = (data.get('display_name') or '').strip()
+        if not contact_id: return jsonify({'error': 'contact_id required'}), 400
+        if contact_id == user.id: return jsonify({'error': 'Cannot add yourself'}), 400
+        cu = User.query.get(contact_id)
+        if not cu: return jsonify({'error': 'User not found'}), 404
+        existing = Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first()
+        if existing:
+            if existing.is_blocked:
+                existing.is_blocked = False
+                db.session.commit()
+                return jsonify({'success': True, 'message': 'Contact unblocked'}), 200
+            return jsonify({'error': 'Already in contacts'}), 400
+        db.session.add(Contact(user_id=user.id, contact_id=contact_id, display_name=display_name or cu.username))
+        if not Contact.query.filter_by(user_id=contact_id, contact_id=user.id).first():
+            db.session.add(Contact(user_id=contact_id, contact_id=user.id, display_name=user.username))
+        db.session.commit()
+        if socketio:
+            socketio.emit('new_contact', {'user_id': user.id, 'username': user.username, 'avatar': user.avatar}, room=f'user_{contact_id}')
+        return jsonify({'success': True, 'message': f'{cu.username} added', 'contact_id': contact_id, 'username': cu.username, 'avatar': cu.avatar}), 201
+
+    @app.route('/api/contacts/<contact_id>', methods=['DELETE','OPTIONS'])
+    def remove_contact(contact_id):
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        c = Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first()
+        if not c: return jsonify({'error': 'Not found'}), 404
+        db.session.delete(c)
+        db.session.commit()
+        return jsonify({'success': True}), 200
+
+    @app.route('/api/contacts/<contact_id>/block', methods=['POST','OPTIONS'])
+    def block_contact(contact_id):
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        c = Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first()
+        if not c: return jsonify({'error': 'Not found'}), 404
+        c.is_blocked = True
+        db.session.commit()
+        return jsonify({'success': True}), 200
+
+    # ══════════════════════════════════════
+    # PRIVATE CHAT MESSAGE ROUTES
+    # ══════════════════════════════════════
+
+    @app.route('/api/chat/<contact_id>/messages', methods=['GET','OPTIONS'])
+    def get_chat_messages(contact_id):
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        limit  = request.args.get('limit', 50, type=int)
+        before = request.args.get('before', None)
+        query  = Message.query.filter(
+            Message.is_deleted == False, Message.message_type == 'chat',
+            db.or_(
+                db.and_(Message.sender_id==user.id, Message.receiver_id==contact_id),
+                db.and_(Message.sender_id==contact_id, Message.receiver_id==user.id),
+            )
+        )
+        if before: query = query.filter(Message.created_at < before)
+        messages = query.order_by(Message.created_at.desc()).limit(limit).all()
+        messages.reverse()
+        unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False, message_type='chat').all()
+        for m in unread_msgs:
+            m.is_read = True
+            m.read_at = datetime.utcnow()
+        if unread_msgs: db.session.commit()
+        return jsonify({'success': True, 'messages': [m.to_dict() for m in messages]}), 200
+
+    @app.route('/api/chat/<contact_id>/messages', methods=['POST','OPTIONS'])
+    def send_chat_message(contact_id):
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        data    = request.get_json() or {}
+        content = (data.get('content') or '').strip()
+        if not content: return jsonify({'error': 'content required'}), 400
+        msg = Message(user_id=user.id, sender_id=user.id, receiver_id=contact_id,
+                      encrypted_content=content, message_type='chat')
+        db.session.add(msg)
+        db.session.commit()
+        room_id = '_'.join(sorted([user.id, contact_id]))
+        payload = {'id': msg.id, 'content': content, 'sender_id': user.id,
+                   'sender': user.username, 'avatar': user.avatar,
+                   'receiver_id': contact_id, 'created_at': msg.created_at.isoformat()}
+        if socketio:
+            socketio.emit('receive_message', payload, room=f'private_{room_id}')
+            socketio.emit('receive_message', payload, room=f'user_{contact_id}')
+        return jsonify({'success': True, 'message': msg.to_dict()}), 201
+
     @socketio.on('connect')
     def handle_connect():
-        """Client connected to chat server"""
-        print(f'Client connected: {request.sid}')
-        emit('connected', {'status': 'connected'})
+        log.info(f'Socket connected: {request.sid}')
+        emit('connected', {'status': 'connected', 'sid': request.sid})
 
     @socketio.on('disconnect')
     def handle_disconnect():
-        """Client disconnected from chat server"""
-        print(f'Client disconnected: {request.sid}')
+        log.info(f'Socket disconnected: {request.sid}')
+        if DB_AVAILABLE:
+            try:
+                uid = session.get('user_id')
+                if uid:
+                    u = User.query.get(uid)
+                    if u:
+                        u.is_online = False
+                        u.last_seen = datetime.utcnow()
+                        db.session.commit()
+                        for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
+                            socketio.emit('user_offline', {'user_id': uid}, room=f'user_{c.contact_id}')
+            except Exception: pass
+
+    @socketio.on('join_user_room')
+    def handle_join_user_room(data):
+        user_id = data.get('user_id', '')
+        if not user_id: return
+        join_room(f'user_{user_id}')
+        emit('joined_room', {'room': f'user_{user_id}'})
+        if DB_AVAILABLE:
+            try:
+                u = User.query.get(user_id)
+                if u:
+                    u.is_online = True
+                    u.last_seen = datetime.utcnow()
+                    db.session.commit()
+                    for c in Contact.query.filter_by(user_id=user_id, is_blocked=False).all():
+                        socketio.emit('user_online', {'user_id': user_id}, room=f'user_{c.contact_id}')
+            except Exception: pass
 
     @socketio.on('join_room')
     def handle_join_room(data):
-        """User joins a chat room"""
-        room = data.get('room', 'default')
-        join_room(room)
-        print(f'User joined room: {room}')
-        emit('joined_room', {'room': room}, room=room)
+        room = data.get('room', '')
+        if room:
+            join_room(room)
+            emit('joined_room', {'room': room})
 
     @socketio.on('leave_room')
     def handle_leave_room(data):
-        """User leaves a chat room"""
-        room = data.get('room', 'default')
-        leave_room(room)
-        emit('left_room', {'room': room}, room=room)
+        room = data.get('room', '')
+        if room: leave_room(room)
 
-    @socketio.on('send_message')
-    def handle_send_message(data):
-        """Send a message to all users in the room"""
-        room = data.get('room', 'default')
-        message = data.get('message', '')
-        sender = data.get('sender', 'anonymous')
-        timestamp = data.get('timestamp', datetime.utcnow().isoformat())
-        
-        # Save message to database (optional)
-        try:
-            from backend.models import Message, db
-            msg = Message(
-                id=str(uuid.uuid4()),
-                user_id=sender,
-                encrypted_content=message,
-                message_type='chat',
-                created_at=datetime.utcnow()
-            )
-            db.session.add(msg)
-            db.session.commit()
-        except Exception as e:
-            print(f'Failed to save message: {e}')
-        
-        # Broadcast to room
-        emit('receive_message', {
-            'id': str(uuid.uuid4()),
-            'message': message,
-            'sender': sender,
-            'timestamp': timestamp,
-            'encrypted': True
-        }, room=room)
+    @socketio.on('send_private_message')
+    def handle_private_message(data):
+        room        = data.get('room', '')
+        content     = (data.get('content') or '').strip()
+        sender_id   = data.get('sender_id', '')
+        sender      = data.get('sender', 'Ghost')
+        avatar      = data.get('avatar', '')
+        receiver_id = data.get('receiver_id', '')
+        temp_id     = data.get('temp_id', '')
+        if not content or not sender_id or not receiver_id: return
+        msg_id     = str(uuid.uuid4())
+        created_at = datetime.utcnow().isoformat()
+        if DB_AVAILABLE:
+            try:
+                msg = Message(id=msg_id, user_id=sender_id, sender_id=sender_id,
+                              receiver_id=receiver_id, encrypted_content=content,
+                              message_type='chat', is_delivered=True)
+                db.session.add(msg)
+                db.session.commit()
+                created_at = msg.created_at.isoformat()
+            except Exception as e:
+                log.error(f'Save chat msg failed: {e}')
+        payload = {'id': msg_id, 'content': content, 'sender_id': sender_id,
+                   'sender': sender, 'avatar': avatar, 'receiver_id': receiver_id,
+                   'created_at': created_at, 'temp_id': temp_id}
+        if room: emit('receive_message', payload, room=room)
+        emit('receive_message', payload, room=f'user_{receiver_id}')
+
+    @socketio.on('typing')
+    def handle_typing(data):
+        room = data.get('room', '')
+        if room:
+            emit('typing', {'user_id': data.get('user_id'), 'username': data.get('username')},
+                 room=room, include_self=False)
+
+    @socketio.on('stop_typing')
+    def handle_stop_typing(data):
+        room = data.get('room', '')
+        if room:
+            emit('stop_typing', {'user_id': data.get('user_id')}, room=room, include_self=False)
+
+    @socketio.on('ping')
+    def handle_ping(data):
+        emit('pong', {'timestamp': data.get('timestamp', 0)})
 
     return app
 

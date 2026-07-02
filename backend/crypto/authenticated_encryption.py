@@ -18,7 +18,7 @@ from typing import Dict, Tuple
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
-from crypto.session_key_manager import SessionKeyManager, SessionKeyError
+from .session_key_manager import SessionKeyManager, SessionKeyError
 
 
 class AuthenticatedEncryptionError(Exception):

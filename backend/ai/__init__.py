@@ -9,4 +9,4 @@ encrypted communication is occurring.
 The REAL security remains AES-256 encryption.
 """
 
-from ai.camouflage_generator import CamouflageLayer, AICamouflage, CasualCamouflage, WeatherCamouflage
+from .camouflage_generator import CamouflageLayer, AICamouflage, CasualCamouflage, WeatherCamouflage
