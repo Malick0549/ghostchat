@@ -456,34 +456,41 @@
   .mobile-back { display: flex; }
   .msg-wrapper { max-width: 88%; }
 }
-/* ── Fix: Ensure Add Contact button is visible ────────────────── */
+
+/* ══════════════════════════════════════════════════════════════════
+   FIX: Buttons visibility and styling
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Sidebar action buttons ────────────────────────────────────── */
 .sidebar-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .sidebar-actions .icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: transparent;
-  border: none;
+  background: var(--bg3);
+  border: 1px solid var(--border);
   color: var(--t2);
   cursor: pointer;
   font-size: 15px;
-  transition: background var(--fast), color var(--fast);
+  transition: all var(--fast) var(--ease);
   text-decoration: none;
   flex-shrink: 0;
 }
 
 .sidebar-actions .icon-btn:hover {
-  background: var(--bg3);
+  background: var(--bg2);
   color: var(--t1);
+  border-color: var(--border2);
+  transform: scale(1.05);
 }
 
 .sidebar-actions .icon-btn#addContactBtn {
@@ -495,5 +502,302 @@
 .sidebar-actions .icon-btn#addContactBtn:hover {
   background: var(--primary);
   color: #04060e;
+  border-color: var(--primary);
   box-shadow: var(--glow-sm);
+  transform: scale(1.08);
+}
+
+.sidebar-actions .icon-btn#addContactBtn i {
+  font-size: 16px;
+}
+
+/* ── Search result buttons ────────────────────────────────────── */
+.search-result-item .btn-add-contact {
+  padding: 6px 16px;
+  border-radius: var(--rf);
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border: none;
+  color: #04060e;
+  font-weight: 600;
+  font-size: .75rem;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+  box-shadow: 0 0 12px rgba(0,212,255,.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.search-result-item .btn-add-contact:hover {
+  transform: scale(1.05);
+  box-shadow: var(--glow);
+}
+
+.search-result-item .btn-add-contact:active {
+  transform: scale(.95);
+}
+
+.search-result-item .already-added {
+  color: var(--green);
+  font-size: .75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.search-result-item .pending-request {
+  color: var(--amber);
+  font-size: .75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Modal buttons ──────────────────────────────────────────────── */
+.modal .btn-primary {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: #04060e;
+  border: none;
+  padding: 10px 24px;
+  border-radius: var(--r2);
+  font-weight: 600;
+  font-size: .875rem;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+  box-shadow: 0 0 16px rgba(0,212,255,.22);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal .btn-primary:hover {
+  box-shadow: var(--glow);
+  transform: translateY(-2px);
+}
+
+.modal .btn-primary:active {
+  transform: scale(.97);
+}
+
+.modal .icon-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--t2);
+  cursor: pointer;
+  transition: all var(--fast);
+}
+
+.modal .icon-btn:hover {
+  background: var(--bg2);
+  color: var(--t1);
+  border-color: var(--border2);
+}
+
+/* ── Input bar buttons ──────────────────────────────────────────── */
+.chat-input-bar .icon-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--t2);
+  cursor: pointer;
+  font-size: 15px;
+  transition: all var(--fast);
+  flex-shrink: 0;
+}
+
+.chat-input-bar .icon-btn:hover {
+  background: var(--bg2);
+  color: var(--t1);
+  border-color: var(--border2);
+}
+
+.chat-input-bar .icon-btn#encryptToggle {
+  background: var(--primary-dim);
+  border-color: var(--border2);
+  color: var(--primary);
+}
+
+.chat-input-bar .icon-btn#encryptToggle:hover {
+  background: var(--primary);
+  color: #04060e;
+  box-shadow: var(--glow-sm);
+}
+
+/* ── Header action buttons ──────────────────────────────────────── */
+.chat-header-actions .icon-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--t2);
+  cursor: pointer;
+  font-size: 15px;
+  transition: all var(--fast);
+}
+
+.chat-header-actions .icon-btn:hover {
+  background: var(--bg3);
+  color: var(--t1);
+}
+
+.chat-header-actions .icon-btn#encryptToggle {
+  background: var(--primary-dim);
+  border: 1px solid var(--border2);
+  color: var(--primary);
+}
+
+.chat-header-actions .icon-btn#encryptToggle:hover {
+  background: var(--primary);
+  color: #04060e;
+  box-shadow: var(--glow-sm);
+}
+
+/* ── Search results container ───────────────────────────────────── */
+#userSearchResults {
+  margin-top: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+#userSearchResults .search-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+}
+
+#userSearchResults .search-result-item:last-child {
+  border-bottom: none;
+}
+
+#userSearchResults .search-result-item:hover {
+  background: var(--bg3);
+  border-radius: var(--r1);
+}
+
+#userSearchResults .search-result-item .user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+#userSearchResults .search-result-item .user-info .username {
+  font-weight: 600;
+  font-size: .875rem;
+  color: var(--t1);
+}
+
+#userSearchResults .search-result-item .user-info .user-status {
+  font-size: .7rem;
+  color: var(--t3);
+}
+
+/* ── Modal input ────────────────────────────────────────────────── */
+.modal-body .input-wrap {
+  position: relative;
+}
+
+.modal-body .input-wrap .icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--t3);
+  font-size: 14px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+#newChatSearch {
+  width: 100%;
+  padding: 12px 12px 12px 40px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--rf);
+  color: var(--t1);
+  font-family: var(--font);
+  font-size: .875rem;
+  outline: none;
+  transition: border-color var(--fast), box-shadow var(--fast);
+}
+
+#newChatSearch:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+#newChatSearch::placeholder {
+  color: var(--t3);
+}
+
+/* ── Contact item active state ──────────────────────────────────── */
+.contact-item.active {
+  background: var(--primary-dim);
+  border-left: 3px solid var(--primary);
+  padding-left: 13px;
+}
+
+.contact-item.active .contact-name {
+  color: var(--primary);
+}
+
+/* ── Mobile back button ──────────────────────────────────────────── */
+.mobile-back {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-back {
+    display: flex !important;
+  }
+}
+
+/* ── Decrypt button enhanced ────────────────────────────────────── */
+.msg-decrypt-btn {
+  background: rgba(0,212,255,.12);
+  border: 1px solid var(--border2);
+  border-radius: var(--r1);
+  color: var(--primary);
+  font-size: .72rem;
+  padding: 4px 12px;
+  cursor: pointer;
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--fast);
+  font-weight: 500;
+}
+
+.msg-decrypt-btn:hover {
+  background: var(--primary);
+  color: #04060e;
+  box-shadow: var(--glow-sm);
+  transform: scale(1.02);
+}
+
+/* ── Send button disabled state ──────────────────────────────────── */
+.send-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+  transform: none;
 }
