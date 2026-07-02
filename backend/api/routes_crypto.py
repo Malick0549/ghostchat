@@ -18,7 +18,7 @@ from cryptography.exceptions import InvalidTag
 from crypto.session_key_manager      import default_session_manager as _session_mgr
 from crypto.aes_engine               import AES256Engine as AESEngine
 from obfuscation.emoji_mapper        import EmojiMapper
-from api.middleware                  import require_json
+from .middleware                    import require_json
 
 # ── AI camouflage (optional — import gracefully) ──────────────────────────────
 try:
