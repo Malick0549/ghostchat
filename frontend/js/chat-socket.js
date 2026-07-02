@@ -166,6 +166,11 @@ class GhostChatRealtime {
             el.classList.toggle('active', el.dataset.id === contactId);
         });
 
+        const chatWindow = document.getElementById('chatWindow');
+        const chatEmpty = document.getElementById('chatEmptyState');
+        if (chatWindow) chatWindow.style.display = 'block';
+        if (chatEmpty) chatEmpty.style.display = 'none';
+
         document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
         document.getElementById('chatInput')?.focus();
     }
@@ -451,6 +456,19 @@ class GhostChatRealtime {
                 this._handleReceivedMessage(data);
             });
 
+            this.socket.on('message_delivered', data => {
+                if (!data || !data.temp_id) return;
+                const idx = this.messages.findIndex(m => m.id === data.temp_id);
+                if (idx > -1) {
+                    this.messages[idx] = {
+                        ...this.messages[idx],
+                        id: data.message_id || this.messages[idx].id,
+                        is_delivered: true,
+                    };
+                    this._renderMessages();
+                }
+            });
+
             this.socket.on('typing', data => {
                 if (data.user_id !== this.user.id && this.currentContact?.contact_id === data.user_id) {
                     this._showTyping(data.username);
@@ -495,37 +513,42 @@ class GhostChatRealtime {
     }
 
     _handleReceivedMessage(data) {
-        if (!this.currentContact) return;
+        if (!this.currentContact || !data) return;
+
         const isCurrentChat = (
-            (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
-            (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
+            (data.sender_id === this.user.id && data.receiver_id === this.currentContact.contact_id) ||
+            (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id)
         );
 
         if (isCurrentChat) {
-            const idx = this.messages.findIndex(m => m.id === data.temp_id);
+            const idx = this.messages.findIndex(m => m.id === data.temp_id || m.id === data.id);
+            const msg = {
+                id: data.id || data.temp_id,
+                sender_id: data.sender_id,
+                receiver_id: data.receiver_id || this.user.id,
+                encrypted_content: data.content || '',
+                message_type: 'chat',
+                created_at: data.created_at || new Date().toISOString(),
+                is_read: false,
+                is_delivered: true,
+            };
+
             if (idx > -1) {
-                this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
+                this.messages[idx] = { ...this.messages[idx], ...msg };
             } else {
-                this.messages.push({
-                    id: data.id,
-                    sender_id: data.sender_id,
-                    receiver_id: data.receiver_id || this.user.id,
-                    encrypted_content: data.content,
-                    message_type: 'chat',
-                    created_at: data.created_at || new Date().toISOString(),
-                    is_read: false,
-                    is_delivered: true,
-                });
+                this.messages.push(msg);
             }
+
             this._renderMessages();
             this._notifyNewMessage(data);
         }
 
-        const contact = this.contacts.find(c => c.contact_id === data.sender_id);
+        const contactId = data.sender_id === this.user.id ? data.receiver_id : data.sender_id;
+        const contact = this.contacts.find(c => c.contact_id === contactId);
         if (contact) {
             contact.last_message = {
                 content: data.content,
-                created_at: data.created_at,
+                created_at: data.created_at || new Date().toISOString(),
                 is_mine: data.sender_id === this.user.id,
             };
             if (!isCurrentChat || !document.hasFocus()) {
