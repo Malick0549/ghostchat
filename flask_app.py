@@ -192,6 +192,7 @@ def create_app(test_config=None):
 
     @app.route('/api/csrf-token', methods=['GET', 'OPTIONS'])
     def csrf_token():
+        
         if request.method == 'OPTIONS':
             return '', 200
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
@@ -214,9 +215,6 @@ def create_app(test_config=None):
         Returns (None, None) on pass, (response, code) on failure.
         """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
-            return None, None
-        # ── FIX: Skip CSRF for SocketIO endpoints ────────────────────────────
-        if request.path.startswith('/socket.io/'):
             return None, None
         if request.path in ('/api/csrf-token', '/health'):
             return None, None
