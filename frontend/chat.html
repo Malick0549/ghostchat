@@ -9,6 +9,48 @@
   <link rel="stylesheet" href="css/ghostchat.css" />
   <link rel="stylesheet" href="css/chat.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    /* ── FIX: Ensure Add Contact button is visible ────────────────── */
+    .sidebar-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .sidebar-actions .icon-btn {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: transparent;
+      border: none;
+      color: var(--t2);
+      cursor: pointer;
+      font-size: 15px;
+      transition: background var(--fast), color var(--fast);
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .sidebar-actions .icon-btn:hover {
+      background: var(--bg3);
+      color: var(--t1);
+    }
+    .sidebar-actions .icon-btn#addContactBtn {
+      background: var(--primary-dim);
+      border: 1px solid var(--border2);
+      color: var(--primary);
+    }
+    .sidebar-actions .icon-btn#addContactBtn:hover {
+      background: var(--primary);
+      color: #04060e;
+      box-shadow: var(--glow-sm);
+    }
+    .sidebar-actions .icon-btn#addContactBtn i {
+      font-size: 16px;
+    }
+  </style>
   <!-- Socket.IO client -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
@@ -37,6 +79,7 @@
         </div>
       </div>
       <div class="sidebar-actions">
+        <!-- ── FIX: Add Contact button with visible styling ── -->
         <button class="icon-btn" id="addContactBtn"
                 title="Add contact (Alt+N)" aria-label="Add new contact">
           <i class="fas fa-user-plus"></i>
