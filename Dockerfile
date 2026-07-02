@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
-# Work from backend/ so all local imports resolve correctly
-WORKDIR /app/backend
+# The app module lives in the repo root, so keep /app as the working directory
+ENV PYTHONPATH=/app
 
 # eventlet MUST use --workers 1 (it's concurrent within one process)
 # Use shell form so $PORT expands correctly
