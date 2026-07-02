@@ -300,8 +300,73 @@
 <script src="js/profile.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/dashboard.js"></script>
+
+<style>
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.6);
+    backdrop-filter: blur(6px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+.modal.active { display: flex; }
+.modal-content {
+    background: var(--card);
+    border: 1px solid var(--border2);
+    border-radius: var(--r4);
+    width: 100%;
+    max-width: 480px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--sh);
+}
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.modal-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.modal-header h3 i { color: var(--primary); }
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+.search-result-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+.search-result-item:last-child { border-bottom: none; }
+.btn-primary.btn-sm {
+    padding: 4px 12px;
+    font-size: .75rem;
+    border-radius: var(--rf);
+    background: var(--primary);
+    color: #04060e;
+    border: none;
+    cursor: pointer;
+}
+.btn-primary.btn-sm:hover { opacity: .8; }
+</style>
+
 <script>
-/* ── Dashboard bootstrap ─────────────────────────────────────── */
 (function(){
   const API = window.GhostChatAPI;
 
@@ -545,6 +610,25 @@
   }
 })();
 </script>
+
+<div class="modal" id="newChatModal" role="dialog" aria-labelledby="newChatTitle" aria-modal="true">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="newChatTitle"><i class="fas fa-user-plus"></i> Add Contact</h3>
+      <button class="icon-btn" type="button" onclick="closeModal('newChatModal')" aria-label="Close">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:.8125rem;color:var(--t2);margin-bottom:16px;">Search by username or email to add someone to your contacts.</p>
+      <div class="input-wrap" style="margin-bottom:16px;">
+        <i class="fas fa-search icon"></i>
+        <input type="search" id="newChatSearch" class="form-input" placeholder="Search by username or email…" autocomplete="off" aria-label="Search users" />
+      </div>
+      <div id="userSearchResults" role="list" aria-label="Search results"></div>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

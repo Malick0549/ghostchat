@@ -186,38 +186,24 @@
     btn.disabled = true;
 
     try {
-      const res = await fetch(`${window.GhostChatAPI.baseURL}/api/auth/login`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type':    'application/json',
-          'X-Requested-With':'XMLHttpRequest',
-          'X-CSRF-Token': window.GhostChatAPI.getCsrfToken()
-                       || document.getElementById('csrfToken').value
-                       || '',
-        },
-        body: JSON.stringify({ username, password, remember_me: remember }),
-      });
-      const data = await res.json();
+      const data = await window.GhostChatAPI.login(username, password, remember);
 
-      if (res.ok && data.success) {
-        if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
-        showOk('Login successful! Redirecting…');
-        setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
-      } else if (res.status === 401) {
+      if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+      showOk('Login successful! Redirecting…');
+      setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
+    } catch (err) {
+      const status = err?.status;
+      if (status === 401) {
         showErr('Invalid credentials. Please try again.');
         document.getElementById('loginPw').value = '';
         document.getElementById('loginPw').focus();
-      } else if (res.status === 403) {
-        // CSRF expired — refetch and ask user to retry
+      } else if (status === 403) {
         await window.GhostChatAPI.fetchCsrfToken();
         document.getElementById('csrfToken').value = window.GhostChatAPI.getCsrfToken() || '';
         showErr('Security token refreshed. Please try again.');
       } else {
-        showErr(data.error || 'Login failed. Please try again.');
+        showErr(err?.data?.error || err?.message || 'Login failed. Please try again.');
       }
-    } catch (_) {
-      showErr('Cannot reach the server. Please check your connection.');
     } finally {
       btn.classList.remove('btn-loading');
       btn.disabled = false;
