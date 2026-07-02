@@ -1,5 +1,5 @@
 /**
- * GHOSTCHAT REAL-TIME CHAT  v2.0
+ * GHOSTCHAT REAL-TIME CHAT  v2.1
  * WhatsApp-like private messaging with:
  *   - Real contacts loaded from database
  *   - Private per-user SocketIO rooms
@@ -10,6 +10,13 @@
  *   - Read receipts
  *   - Message history from DB
  *   - Keyboard shortcuts
+ * 
+ * FIXES APPLIED v2.1:
+ *   - Encryption no longer blocks sending messages
+ *   - Removed confirm() popup for friend requests
+ *   - Direct contact adding (no pending status)
+ *   - Fixed emojiPicker crash in keyboard shortcuts
+ *   - Encryption default: OFF (user enables if wanted)
  */
 
 class GhostChatRealtime {
@@ -22,7 +29,7 @@ class GhostChatRealtime {
         this.user            = null;
         this.typingTimer     = null;
         this.isTyping        = false;
-        this.encryptMessages = true;
+        this.encryptMessages = false; // ── FIX: Default to OFF ──
         this.password        = '';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
@@ -282,6 +289,7 @@ class GhostChatRealtime {
         }
     }
 
+    // ── FIX: sendMessage() works WITHOUT password ──
     async sendMessage() {
         const input = document.getElementById('chatInput');
         if (!input) return;
@@ -293,6 +301,7 @@ class GhostChatRealtime {
 
         let content = text;
         
+        // ── FIX: Only encrypt if explicitly enabled AND password set ──
         if (this.encryptMessages && this.password) {
             try {
                 const encResult = await fetch(`${this._base()}/api/encrypt`, {
@@ -313,16 +322,17 @@ class GhostChatRealtime {
                     content = encData.emoji_message;
                     console.log('Message encrypted successfully');
                 } else {
-                    this._toast('Encryption failed', 'error');
+                    this._toast('Encryption failed, sending plain text', 'warning');
                 }
             } catch (error) {
                 console.error('Encryption error:', error);
-                this._toast('Encryption failed', 'error');
+                this._toast('Encryption unavailable, sending plain text', 'warning');
             }
-        } else if (!this.password) {
-            this._toast('Please set an encryption password first (click the key icon)', 'warning');
-            return;
+        } else if (this.encryptMessages && !this.password) {
+            this._toast('⚠️ Encryption enabled but no password set. Sending plain text.', 'warning');
+            // ── FIX: Allow sending without password, just warn ──
         }
+        // ── FIX: Removed the return that was blocking sends ──
 
         const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
 
@@ -599,46 +609,46 @@ class GhostChatRealtime {
         }
     }
 
-    // ── FIX: Render search results with visible, clickable buttons ──
-_renderSearchResults(users) {
-    const container = document.getElementById('userSearchResults');
-    if (!container) return;
-    
-    if (!users.length) {
-        container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
-        return;
-    }
-    
-    container.innerHTML = users.map(u => {
-        const isContact = u.is_contact || false;
-        const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
+    // ── FIX: Render search results with direct Add button (no pending state) ──
+    _renderSearchResults(users) {
+        const container = document.getElementById('userSearchResults');
+        if (!container) return;
         
-        let actionHtml = '';
-        if (isContact) {
-            actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
-        } else if (isPending) {
-            actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
-        } else {
-            actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
-                <i class="fas fa-user-plus"></i> Add
-            </button>`;
+        if (!users.length) {
+            container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
+            return;
         }
         
-        return `
-        <div class="search-result-item">
-            <div class="result-avatar">
-                ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                    ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
-                    : `<span>${u.username[0].toUpperCase()}</span>`}
-            </div>
-            <div class="result-info">
-                <div class="result-name">${this._esc(u.username)}</div>
-                <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
-            </div>
-            ${actionHtml}
-        </div>`;
-    }).join('');
-}
+        container.innerHTML = users.map(u => {
+            const isContact = u.is_contact || false;
+            // ── FIX: Removed pending state ──
+            
+            let actionHtml = '';
+            if (isContact) {
+                actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
+            } else {
+                actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
+                    <i class="fas fa-user-plus"></i> Add
+                </button>`;
+            }
+            
+            return `
+            <div class="search-result-item">
+                <div class="result-avatar">
+                    ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                        ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                        : `<span>${u.username[0].toUpperCase()}</span>`}
+                </div>
+                <div class="result-info">
+                    <div class="result-name">${this._esc(u.username)}</div>
+                    <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
+                </div>
+                ${actionHtml}
+            </div>`;
+        }).join('');
+    }
+
+    // ── FIX: Direct add contact - no pending status ──
     async sendFriendRequest(userId, username) {
         try {
             const csrfToken = this._getCsrf();
@@ -652,44 +662,45 @@ _renderSearchResults(users) {
                     'X-CSRF-Token': csrfToken || '',
                 },
                 body: JSON.stringify({ 
-                    contact_id: userId,
-                    status: 'pending' 
+                    contact_id: userId
+                    // ── FIX: No 'status' field - backend adds immediately ──
                 }),
             });
             
             const data = await res.json();
-            console.log('Friend request response:', data);
+            console.log('Add contact response:', data);
             
             if (data.success) {
-                this._toast(`Friend request sent to ${username}!`, 'success');
-                this.pendingRequests.push({ to: userId, from: this.user.id, username: username });
-                this._savePendingRequests();
+                this._toast(`✅ ${username} added to your contacts!`, 'success');
+                // ── FIX: Remove pending requests handling ──
                 closeModal('newChatModal');
                 
+                // ── FIX: Reload contacts and open chat immediately ──
+                await this._loadContacts();
+                this.openChat(userId, username, data.avatar || '');
+                
                 if (this.socket && this.connected) {
-                    this.socket.emit('friend_request', {
+                    this.socket.emit('new_contact', {
                         to: userId,
                         from: this.user.id,
                         username: this.user.username,
                     });
                 }
             } else {
-                this._toast(data.error || 'Failed to send friend request', 'error');
+                this._toast(data.error || 'Failed to add contact', 'error');
             }
         } catch (error) {
-            console.error('Friend request error:', error);
-            this._toast('Failed to send friend request', 'error');
+            console.error('Add contact error:', error);
+            this._toast('Failed to add contact', 'error');
         }
     }
 
+    // ── FIX: Remove confirm() popup, auto-accept ──
     _handleFriendRequest(data) {
         this._toast(`${data.username} sent you a friend request!`, 'info');
         
-        if (confirm(`${data.username} sent you a friend request. Accept?`)) {
-            this._acceptFriendRequest(data.from, data.username);
-        } else {
-            this._rejectFriendRequest(data.from, data.username);
-        }
+        // ── FIX: Auto-accept with a simple toast, no blocking confirm() ──
+        this._acceptFriendRequest(data.from, data.username);
     }
 
     async _acceptFriendRequest(userId, username) {
@@ -705,8 +716,8 @@ _renderSearchResults(users) {
                     'X-CSRF-Token': csrfToken || '',
                 },
                 body: JSON.stringify({ 
-                    contact_id: userId,
-                    status: 'accepted' 
+                    contact_id: userId
+                    // ── FIX: No status field ──
                 }),
             });
             
@@ -829,11 +840,14 @@ _renderSearchResults(users) {
         });
     }
 
+    // ── FIX: Keyboard shortcuts - safe emojiPicker check ──
     _setupKeyboardShortcuts() {
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
                 document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
-                document.getElementById('emojiPicker').style.display = 'none';
+                // ── FIX: Check if emojiPicker exists before using it ──
+                const picker = document.getElementById('emojiPicker');
+                if (picker) picker.style.display = 'none';
                 document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
             }
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
