@@ -28,6 +28,7 @@ class GhostChatRealtime {
         this.maxReconnectAttempts = 5;
         this.pendingRequests = [];
         this.decryptData = {};
+        this.joinedRooms = [];
 
         this.init();
     }
@@ -147,10 +148,16 @@ class GhostChatRealtime {
             }
         }
 
+        // ── FIX: Join private SocketIO room ───────────────────────────────
         if (this.socket && this.connected) {
             const roomId = `private_${this._roomId(contactId)}`;
-            console.log('Joining room:', roomId);
+            console.log('📡 Joining room:', roomId);
             this.socket.emit('join_room', { room: roomId });
+            if (!this.joinedRooms.includes(roomId)) {
+                this.joinedRooms.push(roomId);
+            }
+        } else {
+            console.warn('⚠️ Socket not ready, will join room on connect');
         }
 
         await this._loadMessages(contactId);
@@ -282,6 +289,7 @@ class GhostChatRealtime {
         }
     }
 
+    // ── Send message ──────────────────────────────────────────────
     async sendMessage() {
         const input = document.getElementById('chatInput');
         if (!input) return;
@@ -311,13 +319,15 @@ class GhostChatRealtime {
                 const encData = await encResult.json();
                 if (encData.success) {
                     content = encData.emoji_message;
-                    console.log('Message encrypted successfully');
+                    console.log('✅ Message encrypted successfully');
                 } else {
                     this._toast('Encryption failed', 'error');
+                    return;
                 }
             } catch (error) {
                 console.error('Encryption error:', error);
                 this._toast('Encryption failed', 'error');
+                return;
             }
         } else if (!this.password) {
             this._toast('Please set an encryption password first (click the key icon)', 'warning');
@@ -326,6 +336,19 @@ class GhostChatRealtime {
 
         const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
 
+        // ── FIX: Make sure we're in the room ─────────────────────────────
+        if (this.socket && this.connected) {
+            // Ensure we're in the room
+            if (!this.joinedRooms.includes(roomId)) {
+                console.log('📡 Not in room, joining:', roomId);
+                this.socket.emit('join_room', { room: roomId });
+                this.joinedRooms.push(roomId);
+                // Wait a bit for the room to be joined
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+
+        // Optimistic UI
         const tempId = 'temp_' + Date.now();
         const tempMsg = {
             id: tempId,
@@ -340,8 +363,10 @@ class GhostChatRealtime {
         this.messages.push(tempMsg);
         this._renderMessages();
 
+        // ── FIX: Send via SocketIO ──────────────────────────────────────
         if (this.socket && this.connected) {
-            console.log('Sending message to room:', roomId);
+            console.log('📤 Sending message to room:', roomId);
+            console.log('📤 Message length:', content.length);
             this.socket.emit('send_private_message', {
                 room: roomId,
                 content: content,
@@ -351,8 +376,19 @@ class GhostChatRealtime {
                 receiver_id: this.currentContact.contact_id,
                 temp_id: tempId,
             });
+            
+            // Also send to the receiver's personal room for redundancy
+            this.socket.emit('send_private_message', {
+                room: `user_${this.currentContact.contact_id}`,
+                content: content,
+                sender_id: this.user.id,
+                sender: this.user.username,
+                avatar: this.user.avatar || '',
+                receiver_id: this.currentContact.contact_id,
+                temp_id: tempId,
+            });
         } else {
-            console.warn('Socket not connected, using REST fallback');
+            console.warn('⚠️ Socket not connected, using REST fallback');
             try {
                 await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
                     method: 'POST',
@@ -363,6 +399,7 @@ class GhostChatRealtime {
                     },
                     body: JSON.stringify({ content }),
                 });
+                this._toast('Message sent via fallback', 'info');
             } catch (error) {
                 console.error('REST fallback failed:', error);
                 this._toast('Failed to send message', 'error');
@@ -378,6 +415,7 @@ class GhostChatRealtime {
         this._stopTyping();
     }
 
+    // ── WebSocket connection ──────────────────────────────────────
     _connectSocket() {
         const socketUrl = window.location.origin;
         
@@ -398,13 +436,26 @@ class GhostChatRealtime {
                 this.reconnectAttempts = 0;
                 this._updateOnlineStatus(true);
                 
+                // ── FIX: Join user room ────────────────────────────────────
                 this.socket.emit('join_user_room', { user_id: this.user.id });
-                console.log('Joined user room:', `user_${this.user.id}`);
+                console.log('📡 Joined user room:', `user_${this.user.id}`);
                 
+                // ── FIX: Re-join any previously joined rooms ──────────────
+                if (this.joinedRooms.length > 0) {
+                    this.joinedRooms.forEach(roomId => {
+                        console.log('📡 Re-joining room:', roomId);
+                        this.socket.emit('join_room', { room: roomId });
+                    });
+                }
+                
+                // ── FIX: Join current chat room if any ────────────────────
                 if (this.currentContact) {
                     const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
-                    console.log('Re-joining room:', roomId);
-                    this.socket.emit('join_room', { room: roomId });
+                    if (!this.joinedRooms.includes(roomId)) {
+                        console.log('📡 Joining current room:', roomId);
+                        this.socket.emit('join_room', { room: roomId });
+                        this.joinedRooms.push(roomId);
+                    }
                 }
                 
                 const statusEl = document.getElementById('userStatus');
@@ -436,6 +487,7 @@ class GhostChatRealtime {
                 }
             });
 
+            // ── FIX: Receive private message ─────────────────────────────
             this.socket.on('receive_message', data => {
                 console.log('📨 Message received:', data);
                 this._handleReceivedMessage(data);
@@ -485,13 +537,17 @@ class GhostChatRealtime {
     }
 
     _handleReceivedMessage(data) {
-        if (!this.currentContact) return;
-        const isCurrentChat = (
-            (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
-            (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
+        // ── FIX: Check if message is for this user ──────────────────────
+        const isForMe = data.receiver_id === this.user.id || data.receiver_id === this.user.username;
+        const isFromCurrent = this.currentContact && (
+            data.sender_id === this.currentContact.contact_id ||
+            data.sender_id === this.currentContact.username
         );
-
-        if (isCurrentChat) {
+        
+        console.log('📨 Message check - isForMe:', isForMe, 'isFromCurrent:', isFromCurrent);
+        
+        // Always add to messages if it's for this user and from current contact
+        if (isForMe && isFromCurrent) {
             const idx = this.messages.findIndex(m => m.id === data.temp_id);
             if (idx > -1) {
                 this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
@@ -508,9 +564,11 @@ class GhostChatRealtime {
                 });
             }
             this._renderMessages();
+            this._scrollToBottom();
             this._notifyNewMessage(data);
         }
 
+        // Update sidebar preview + unread badge
         const contact = this.contacts.find(c => c.contact_id === data.sender_id);
         if (contact) {
             contact.last_message = {
@@ -518,7 +576,7 @@ class GhostChatRealtime {
                 created_at: data.created_at,
                 is_mine: data.sender_id === this.user.id,
             };
-            if (!isCurrentChat || !document.hasFocus()) {
+            if (!isFromCurrent || !document.hasFocus()) {
                 contact.unread_count = (contact.unread_count || 0) + 1;
             }
             this._renderContacts();
@@ -548,12 +606,12 @@ class GhostChatRealtime {
         if (!resultsContainer) return;
         
         if (query.length < 2) {
-            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
+            resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
             return;
         }
         
         try {
-            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Searching...</div>';
+            resultsContainer.innerHTML = '<div class="search-loading">Searching...</div>';
             
             let csrfToken = this._getCsrf();
             if (!csrfToken) {
@@ -579,7 +637,7 @@ class GhostChatRealtime {
             });
             
             if (res.status === 401 || res.status === 403) {
-                resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
+                resultsContainer.innerHTML = '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
                 return;
             }
             
@@ -590,55 +648,55 @@ class GhostChatRealtime {
                 this._renderSearchResults(data.users || []);
             } else {
                 resultsContainer.innerHTML = 
-                    `<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${data.error || 'Search failed'}</div>`;
+                    `<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${data.error || 'Search failed'}</div>`;
             }
         } catch (error) {
             console.error('Search error:', error);
             resultsContainer.innerHTML = 
-                '<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Please try again.</div>';
+                '<div class="no-results" style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Please try again.</div>';
         }
     }
 
-    // ── FIX: Render search results with visible, clickable buttons ──
-_renderSearchResults(users) {
-    const container = document.getElementById('userSearchResults');
-    if (!container) return;
-    
-    if (!users.length) {
-        container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
-        return;
-    }
-    
-    container.innerHTML = users.map(u => {
-        const isContact = u.is_contact || false;
-        const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
+    _renderSearchResults(users) {
+        const container = document.getElementById('userSearchResults');
+        if (!container) return;
         
-        let actionHtml = '';
-        if (isContact) {
-            actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
-        } else if (isPending) {
-            actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
-        } else {
-            actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
-                <i class="fas fa-user-plus"></i> Add
-            </button>`;
+        if (!users.length) {
+            container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
+            return;
         }
         
-        return `
-        <div class="search-result-item">
-            <div class="result-avatar">
-                ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                    ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
-                    : `<span>${u.username[0].toUpperCase()}</span>`}
-            </div>
-            <div class="result-info">
-                <div class="result-name">${this._esc(u.username)}</div>
-                <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
-            </div>
-            ${actionHtml}
-        </div>`;
-    }).join('');
-}
+        container.innerHTML = users.map(u => {
+            const isContact = u.is_contact || false;
+            const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
+            
+            let actionHtml = '';
+            if (isContact) {
+                actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
+            } else if (isPending) {
+                actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
+            } else {
+                actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
+                    <i class="fas fa-user-plus"></i> Add
+                </button>`;
+            }
+            
+            return `
+            <div class="search-result-item">
+                <div class="result-avatar">
+                    ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                        ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                        : `<span>${u.username[0].toUpperCase()}</span>`}
+                </div>
+                <div class="result-info">
+                    <div class="result-name">${this._esc(u.username)}</div>
+                    <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
+                </div>
+                ${actionHtml}
+            </div>`;
+        }).join('');
+    }
+
     async sendFriendRequest(userId, username) {
         try {
             const csrfToken = this._getCsrf();
