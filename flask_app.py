@@ -50,7 +50,15 @@ from backend.api.middleware import add_security_headers
 
 # ── Database models ────────────────────────────────────────────────────────────
 try:
-    from backend.models import db, bcrypt, User, UserSession, Message, IntegrationToken
+    from backend.models import (
+        db,
+        bcrypt,
+        User,
+        UserSession,
+        Message,
+        IntegrationToken,
+        Contact,
+    )
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
@@ -74,10 +82,10 @@ def _is_https():
 def create_app(test_config=None):
 
     # ── Flask app ──────────────────────────────────────────────────────────────
-    # Use absolute path so Flask finds frontend/ correctly
-    # regardless of working directory in Docker
+    # Use absolute path so Flask finds frontend/ correctly regardless
+    # of working directory in Docker or whether this module lives at root.
     _basedir = os.path.abspath(os.path.dirname(__file__))
-    _frontend = os.path.join(_basedir, '..', 'frontend')
+    _frontend = os.path.abspath(os.path.join(_basedir, 'frontend'))
 
     app = Flask(
         __name__,
