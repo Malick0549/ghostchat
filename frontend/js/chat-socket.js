@@ -89,7 +89,7 @@ class GhostChatRealtime {
                 <div style="padding:24px 16px;text-align:center;color:var(--t3);">
                     <i class="fas fa-user-plus" style="font-size:2rem;margin-bottom:12px;display:block;color:var(--primary);opacity:.5;"></i>
                     <p style="font-size:.875rem;">No contacts yet.</p>
-                    <p style="font-size:.8125rem;margin-top:4px;">Click <strong>+</strong> to add someone.</p>
+                    <p style="font-size:.8125rem;margin-top:4px;">Press <strong>Alt+N</strong> or click <strong>+</strong> to add someone.</p>
                 </div>`;
             return;
         }
@@ -215,6 +215,9 @@ class GhostChatRealtime {
                     <i class="fas fa-ghost"></i>
                     <h3>Start a secure conversation</h3>
                     <p>Messages are encrypted with AES-256 before sending.</p>
+                    <p style="font-size:.75rem;color:var(--t3);margin-top:8px;">
+                        <kbd>Alt+N</kbd> Add contact · <kbd>Alt+E</kbd> Toggle encryption
+                    </p>
                 </div>`;
             return;
         }
@@ -241,7 +244,7 @@ class GhostChatRealtime {
             const lockIcon = isEncrypted
                 ? `<button class="msg-decrypt-btn" title="Decrypt message"
                     onclick="window.chat.promptDecrypt('${msg.id}', this)">
-                    <i class="fas fa-lock"></i>
+                    <i class="fas fa-lock"></i> Decrypt
                    </button>`
                 : '';
 
@@ -569,6 +572,7 @@ class GhostChatRealtime {
         // Add contact button
         document.getElementById('addContactBtn')?.addEventListener('click', () => {
             openModal('newChatModal');
+            setTimeout(() => document.getElementById('newChatSearch')?.focus(), 100);
         });
 
         // Contact search in modal
@@ -625,13 +629,17 @@ class GhostChatRealtime {
             // Ctrl+K — focus search
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
-                document.getElementById('contactSearch')?.focus();
+                const search = document.getElementById('contactSearch');
+                if (search) {
+                    search.focus();
+                    search.select();
+                }
             }
             // Alt+N — new chat
             if (e.altKey && e.key === 'n') {
                 e.preventDefault();
                 openModal('newChatModal');
-                document.getElementById('newChatSearch')?.focus();
+                setTimeout(() => document.getElementById('newChatSearch')?.focus(), 100);
             }
             // Alt+E — toggle encryption
             if (e.altKey && e.key === 'e') {
@@ -685,7 +693,7 @@ class GhostChatRealtime {
         if (!el) {
             el = document.createElement('div');
             el.id        = 'typingIndicator';
-            el.className = 'typing-indicator';
+            el.className = 'typing-indicator-wrap';
             document.getElementById('chatMessages')?.appendChild(el);
         }
         el.innerHTML = `
@@ -717,7 +725,7 @@ class GhostChatRealtime {
             btn.innerHTML = this.encryptMessages
                 ? '<i class="fas fa-lock" style="color:var(--green)"></i>'
                 : '<i class="fas fa-lock-open" style="color:var(--t3)"></i>';
-            btn.title = this.encryptMessages ? 'Encryption ON' : 'Encryption OFF';
+            btn.title = this.encryptMessages ? 'Encryption ON (Alt+E)' : 'Encryption OFF (Alt+E)';
         }
         this._toast(
             this.encryptMessages ? 'Messages will be encrypted' : 'Encryption disabled',
