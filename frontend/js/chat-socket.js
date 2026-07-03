@@ -1,5 +1,5 @@
 /**
- * GHOSTCHAT REAL-TIME CHAT  v2.1
+ * GHOSTCHAT REAL-TIME CHAT  v2.0
  * WhatsApp-like private messaging with:
  *   - Real contacts loaded from database
  *   - Private per-user SocketIO rooms
@@ -10,13 +10,6 @@
  *   - Read receipts
  *   - Message history from DB
  *   - Keyboard shortcuts
- * 
- * FIXES APPLIED v2.1:
- *   - Encryption no longer blocks sending messages
- *   - Removed confirm() popup for friend requests
- *   - Direct contact adding (no pending status)
- *   - Fixed emojiPicker crash in keyboard shortcuts
- *   - Encryption default: OFF (user enables if wanted)
  */
 
 class GhostChatRealtime {
@@ -29,7 +22,7 @@ class GhostChatRealtime {
         this.user            = null;
         this.typingTimer     = null;
         this.isTyping        = false;
-        this.encryptMessages = false; // ── FIX: Default to OFF ──
+        this.encryptMessages = true;
         this.password        = '';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
@@ -166,11 +159,6 @@ class GhostChatRealtime {
             el.classList.toggle('active', el.dataset.id === contactId);
         });
 
-        const chatWindow = document.getElementById('chatWindow');
-        const chatEmpty = document.getElementById('chatEmptyState');
-        if (chatWindow) chatWindow.style.display = 'block';
-        if (chatEmpty) chatEmpty.style.display = 'none';
-
         document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
         document.getElementById('chatInput')?.focus();
     }
@@ -294,7 +282,6 @@ class GhostChatRealtime {
         }
     }
 
-    // ── FIX: sendMessage() works WITHOUT password ──
     async sendMessage() {
         const input = document.getElementById('chatInput');
         if (!input) return;
@@ -305,39 +292,37 @@ class GhostChatRealtime {
         input.style.height = 'auto';
 
         let content = text;
-        
-        // ── FIX: Only encrypt if explicitly enabled AND password set ──
+
+        // Encrypt only if encryption is ON and password is set
+        // If no password is set, send as plain text (user can enable later)
         if (this.encryptMessages && this.password) {
             try {
                 const encResult = await fetch(`${this._base()}/api/encrypt`, {
                     method: 'POST',
                     credentials: 'include',
-                    headers: { 
-                        'Content-Type': 'application/json', 
-                        'X-Requested-With': 'XMLHttpRequest' 
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRF-Token': this._getCsrf(),
                     },
-                    body: JSON.stringify({ 
-                        message: text, 
+                    body: JSON.stringify({
+                        message: text,
                         password: this.password,
-                        use_decoys: false 
+                        use_decoys: false,
                     }),
                 });
                 const encData = await encResult.json();
                 if (encData.success) {
                     content = encData.emoji_message;
-                    console.log('Message encrypted successfully');
                 } else {
-                    this._toast('Encryption failed, sending plain text', 'warning');
+                    // Encryption failed — send as plain text with warning
+                    this._toast('Encryption failed — sending as plain text', 'info');
                 }
-            } catch (error) {
-                console.error('Encryption error:', error);
-                this._toast('Encryption unavailable, sending plain text', 'warning');
+            } catch (_) {
+                this._toast('Encryption unavailable — sending as plain text', 'info');
             }
-        } else if (this.encryptMessages && !this.password) {
-            this._toast('⚠️ Encryption enabled but no password set. Sending plain text.', 'warning');
-            // ── FIX: Allow sending without password, just warn ──
         }
-        // ── FIX: Removed the return that was blocking sends ──
+        // No else-block: if no password set, just send plain text normally
 
         const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
 
@@ -456,19 +441,6 @@ class GhostChatRealtime {
                 this._handleReceivedMessage(data);
             });
 
-            this.socket.on('message_delivered', data => {
-                if (!data || !data.temp_id) return;
-                const idx = this.messages.findIndex(m => m.id === data.temp_id);
-                if (idx > -1) {
-                    this.messages[idx] = {
-                        ...this.messages[idx],
-                        id: data.message_id || this.messages[idx].id,
-                        is_delivered: true,
-                    };
-                    this._renderMessages();
-                }
-            });
-
             this.socket.on('typing', data => {
                 if (data.user_id !== this.user.id && this.currentContact?.contact_id === data.user_id) {
                     this._showTyping(data.username);
@@ -513,42 +485,37 @@ class GhostChatRealtime {
     }
 
     _handleReceivedMessage(data) {
-        if (!this.currentContact || !data) return;
-
+        if (!this.currentContact) return;
         const isCurrentChat = (
-            (data.sender_id === this.user.id && data.receiver_id === this.currentContact.contact_id) ||
-            (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id)
+            (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
+            (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
         );
 
         if (isCurrentChat) {
-            const idx = this.messages.findIndex(m => m.id === data.temp_id || m.id === data.id);
-            const msg = {
-                id: data.id || data.temp_id,
-                sender_id: data.sender_id,
-                receiver_id: data.receiver_id || this.user.id,
-                encrypted_content: data.content || '',
-                message_type: 'chat',
-                created_at: data.created_at || new Date().toISOString(),
-                is_read: false,
-                is_delivered: true,
-            };
-
+            const idx = this.messages.findIndex(m => m.id === data.temp_id);
             if (idx > -1) {
-                this.messages[idx] = { ...this.messages[idx], ...msg };
+                this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
             } else {
-                this.messages.push(msg);
+                this.messages.push({
+                    id: data.id,
+                    sender_id: data.sender_id,
+                    receiver_id: data.receiver_id || this.user.id,
+                    encrypted_content: data.content,
+                    message_type: 'chat',
+                    created_at: data.created_at || new Date().toISOString(),
+                    is_read: false,
+                    is_delivered: true,
+                });
             }
-
             this._renderMessages();
             this._notifyNewMessage(data);
         }
 
-        const contactId = data.sender_id === this.user.id ? data.receiver_id : data.sender_id;
-        const contact = this.contacts.find(c => c.contact_id === contactId);
+        const contact = this.contacts.find(c => c.contact_id === data.sender_id);
         if (contact) {
             contact.last_message = {
                 content: data.content,
-                created_at: data.created_at || new Date().toISOString(),
+                created_at: data.created_at,
                 is_mine: data.sender_id === this.user.id,
             };
             if (!isCurrentChat || !document.hasFocus()) {
@@ -632,46 +599,46 @@ class GhostChatRealtime {
         }
     }
 
-    // ── FIX: Render search results with direct Add button (no pending state) ──
-    _renderSearchResults(users) {
-        const container = document.getElementById('userSearchResults');
-        if (!container) return;
+    // ── FIX: Render search results with visible, clickable buttons ──
+_renderSearchResults(users) {
+    const container = document.getElementById('userSearchResults');
+    if (!container) return;
+    
+    if (!users.length) {
+        container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
+        return;
+    }
+    
+    container.innerHTML = users.map(u => {
+        const isContact = u.is_contact || false;
+        const isPending = this.pendingRequests.some(r => r.to === u.id || r.from === u.id);
         
-        if (!users.length) {
-            container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
-            return;
+        let actionHtml = '';
+        if (isContact) {
+            actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
+        } else if (isPending) {
+            actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
+        } else {
+            actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
+                <i class="fas fa-user-plus"></i> Add
+            </button>`;
         }
         
-        container.innerHTML = users.map(u => {
-            const isContact = u.is_contact || false;
-            // ── FIX: Removed pending state ──
-            
-            let actionHtml = '';
-            if (isContact) {
-                actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Contact</span>`;
-            } else {
-                actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
-                    <i class="fas fa-user-plus"></i> Add
-                </button>`;
-            }
-            
-            return `
-            <div class="search-result-item">
-                <div class="result-avatar">
-                    ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                        ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
-                        : `<span>${u.username[0].toUpperCase()}</span>`}
-                </div>
-                <div class="result-info">
-                    <div class="result-name">${this._esc(u.username)}</div>
-                    <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
-                </div>
-                ${actionHtml}
-            </div>`;
-        }).join('');
-    }
-
-    // ── FIX: Direct add contact - no pending status ──
+        return `
+        <div class="search-result-item">
+            <div class="result-avatar">
+                ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                    ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                    : `<span>${u.username[0].toUpperCase()}</span>`}
+            </div>
+            <div class="result-info">
+                <div class="result-name">${this._esc(u.username)}</div>
+                <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
+            </div>
+            ${actionHtml}
+        </div>`;
+    }).join('');
+}
     async sendFriendRequest(userId, username) {
         try {
             const csrfToken = this._getCsrf();
@@ -685,45 +652,44 @@ class GhostChatRealtime {
                     'X-CSRF-Token': csrfToken || '',
                 },
                 body: JSON.stringify({ 
-                    contact_id: userId
-                    // ── FIX: No 'status' field - backend adds immediately ──
+                    contact_id: userId,
+                    status: 'pending' 
                 }),
             });
             
             const data = await res.json();
-            console.log('Add contact response:', data);
+            console.log('Friend request response:', data);
             
             if (data.success) {
-                this._toast(`✅ ${username} added to your contacts!`, 'success');
-                // ── FIX: Remove pending requests handling ──
+                this._toast(`Friend request sent to ${username}!`, 'success');
+                this.pendingRequests.push({ to: userId, from: this.user.id, username: username });
+                this._savePendingRequests();
                 closeModal('newChatModal');
                 
-                // ── FIX: Reload contacts and open chat immediately ──
-                await this._loadContacts();
-                this.openChat(userId, username, data.avatar || '');
-                
                 if (this.socket && this.connected) {
-                    this.socket.emit('new_contact', {
+                    this.socket.emit('friend_request', {
                         to: userId,
                         from: this.user.id,
                         username: this.user.username,
                     });
                 }
             } else {
-                this._toast(data.error || 'Failed to add contact', 'error');
+                this._toast(data.error || 'Failed to send friend request', 'error');
             }
         } catch (error) {
-            console.error('Add contact error:', error);
-            this._toast('Failed to add contact', 'error');
+            console.error('Friend request error:', error);
+            this._toast('Failed to send friend request', 'error');
         }
     }
 
-    // ── FIX: Remove confirm() popup, auto-accept ──
     _handleFriendRequest(data) {
         this._toast(`${data.username} sent you a friend request!`, 'info');
         
-        // ── FIX: Auto-accept with a simple toast, no blocking confirm() ──
-        this._acceptFriendRequest(data.from, data.username);
+        if (confirm(`${data.username} sent you a friend request. Accept?`)) {
+            this._acceptFriendRequest(data.from, data.username);
+        } else {
+            this._rejectFriendRequest(data.from, data.username);
+        }
     }
 
     async _acceptFriendRequest(userId, username) {
@@ -739,8 +705,8 @@ class GhostChatRealtime {
                     'X-CSRF-Token': csrfToken || '',
                 },
                 body: JSON.stringify({ 
-                    contact_id: userId
-                    // ── FIX: No status field ──
+                    contact_id: userId,
+                    status: 'accepted' 
                 }),
             });
             
@@ -782,8 +748,40 @@ class GhostChatRealtime {
         }
     }
 
-    async addContact(contactId, username) {
-        await this.sendFriendRequest(contactId, username);
+    async addContact(contactId, username, avatar) {
+        // Add directly — no confirmation needed (like WhatsApp)
+        // The backend adds both users as mutual contacts immediately
+        try {
+            const res = await fetch(`${this._base()}/api/contacts`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+                body: JSON.stringify({ contact_id: contactId }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                this._toast(`${username} added to contacts!`, 'success');
+                closeModal('newChatModal');
+                document.getElementById('newChatSearch').value = '';
+                document.getElementById('userSearchResults').innerHTML = '';
+                await this._loadContacts();
+                // Open the chat immediately after adding
+                this.openChat(contactId, username, avatar || data.avatar || '');
+            } else if (data.error === 'Already in contacts') {
+                // Already a contact — just open the chat
+                closeModal('newChatModal');
+                this.openChat(contactId, username, avatar || '');
+            } else {
+                this._toast(data.error || 'Failed to add contact', 'error');
+            }
+        } catch (_) {
+            this._toast('Failed to add contact. Please try again.', 'error');
+        }
     }
 
     _setupEventListeners() {
@@ -863,12 +861,10 @@ class GhostChatRealtime {
         });
     }
 
-    // ── FIX: Keyboard shortcuts - safe emojiPicker check ──
     _setupKeyboardShortcuts() {
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
                 document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
-                // ── FIX: Check if emojiPicker exists before using it ──
                 const picker = document.getElementById('emojiPicker');
                 if (picker) picker.style.display = 'none';
                 document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');

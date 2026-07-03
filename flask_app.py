@@ -1,19 +1,29 @@
 """
-GhostChat :: flask_app.py
+GhostChat :: backend/flask_app.py
 ==================================
-Flask serves BOTH the frontend (./frontend/) and the API.
+Flask serves BOTH the frontend (../frontend/) and the API.
 
 Run locally:
+    cd backend
     python flask_app.py
 
-Deployed on Railway:
+Deployed on Render:
     - Set env var FLASK_SECRET to a long random string
-    - Set DATABASE_URL to your PostgreSQL URL on Railway
-    - The app auto-detects Railway and sets cookies correctly
+    - Set env var RENDER=true  (Render sets this automatically)
+    - The app auto-detects HTTPS and sets cookies correctly
 """
 
 # ── FIX: eventlet monkey patch MUST be first ─────────────────────────────────
 import sys
+import os as _os
+
+# When flask_app.py runs from the repo ROOT, add backend/ to sys.path
+# so that `from backend.models import ...` and `from backend.api import ...` work.
+# When running from inside backend/ (local dev), this is a no-op.
+_backend_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'backend')
+if _os.path.isdir(_backend_dir) and _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 try:
     import eventlet
     eventlet.monkey_patch()
@@ -39,9 +49,10 @@ from flask import (
     send_from_directory
 )
 from flask_cors import CORS
+# flask_session removed — using Flask built-in signed cookie sessions
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
-# ── Local packages ─────────────────────────────────────────────────────────────
+# ── Local packages (run from inside backend/) ─────────────────────────────────
 from backend.api import crypto_bp, session_bp
 from backend.api.errors import register_error_handlers
 from backend.api.middleware import add_security_headers
@@ -74,13 +85,15 @@ def _is_https():
         request.is_secure
         or request.headers.get('X-Forwarded-Proto') == 'https'
         or bool(os.environ.get('RENDER'))
-        or bool(os.environ.get('RAILWAY'))
+        or bool(os.environ.get('RAILWAY'))  # ── FIX: Added Railway detection ──
     )
 
 
 def create_app(test_config=None):
 
     # ── Flask app ──────────────────────────────────────────────────────────────
+    # Use absolute path so Flask finds frontend/ correctly regardless
+    # of working directory in Docker or whether this module lives at root.
     _basedir = os.path.abspath(os.path.dirname(__file__))
     _frontend = os.path.abspath(os.path.join(_basedir, 'frontend'))
 
@@ -93,7 +106,6 @@ def create_app(test_config=None):
     # ── Detect environment ─────────────────────────────────────────────────────
     IS_PROD = bool(
         os.environ.get('RENDER')
-        or os.environ.get('RAILWAY')
         or os.environ.get('FLASK_ENV') == 'production'
     )
 
@@ -103,6 +115,7 @@ def create_app(test_config=None):
         DEBUG                       = not IS_PROD and os.environ.get('FLASK_DEBUG', '0') == '1',
         JSON_SORT_KEYS              = False,
         TESTING                     = False,
+        # Flask built-in signed cookie sessions (no flask-session needed)
         SESSION_PERMANENT           = False,
         PERMANENT_SESSION_LIFETIME  = timedelta(hours=24),
         SESSION_COOKIE_NAME         = 'ghostchat_sess',
@@ -113,29 +126,14 @@ def create_app(test_config=None):
 
     # ── Database ───────────────────────────────────────────────────────────────
     basedir = os.path.abspath(os.path.dirname(__file__))
-    
-    # ── FIX: Use PostgreSQL if available, fallback to SQLite ──
-    database_url = os.environ.get('DATABASE_URL')
-    if database_url:
-        # Railway uses postgres:// but SQLAlchemy needs postgresql://
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        log.info(f'Using PostgreSQL database')
-    else:
-        # Fallback to SQLite (local development)
-        database_url = f'sqlite:///{os.path.join(basedir, "ghostchat.db")}'
-        log.info(f'Using SQLite database at {os.path.join(basedir, "ghostchat.db")}')
-    
-    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+    app.config['SQLALCHEMY_DATABASE_URI'] = (
+        os.environ.get('DATABASE_URL')
+        or f'sqlite:///{os.path.join(basedir, "ghostchat.db")}'
+    )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'pool_size': 10,
-        'pool_recycle': 300,
-        'pool_pre_ping': True,
-    }
 
     # ── Upload folder ──────────────────────────────────────────────────────────
-    upload_folder = os.path.join(basedir, 'frontend', 'assets', 'uploads')
+    upload_folder = os.path.join(basedir, '..', 'frontend', 'assets', 'uploads')
     os.makedirs(upload_folder, exist_ok=True)
     app.config['UPLOAD_FOLDER'] = upload_folder
 
@@ -147,11 +145,10 @@ def create_app(test_config=None):
         db.init_app(app)
         bcrypt.init_app(app)
         with app.app_context():
-            try:
-                db.create_all()
-                log.info('Database tables created/verified')
-            except Exception as e:
-                log.error(f'Database initialization error: {e}')
+            db.create_all()
+            log.info('Database ready')
+
+    # Session(app) removed — using Flask built-in sessions
 
     # ── CORS ───────────────────────────────────────────────────────────────────
     allowed_origins = [
@@ -160,13 +157,7 @@ def create_app(test_config=None):
         'https://ghostchat-5slo.onrender.com',
         'null',
     ]
-    
-    railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '')
-    if railway_url:
-        railway_url = f'https://{railway_url}'
-        if railway_url not in allowed_origins:
-            allowed_origins.append(railway_url)
-    
+    # Also pick up any dynamically-configured Render URL
     render_url = os.environ.get('RENDER_EXTERNAL_URL', '').rstrip('/')
     if render_url and render_url not in allowed_origins:
         allowed_origins.append(render_url)
@@ -180,16 +171,18 @@ def create_app(test_config=None):
     )
 
     # ── Blueprints ─────────────────────────────────────────────────────────────
-    app.register_blueprint(crypto_bp)
-    app.register_blueprint(session_bp)
+    app.register_blueprint(crypto_bp)    # /encrypt, /decrypt  (session-key API)
+    app.register_blueprint(session_bp)   # /new-session, /session-info, etc.
 
     # ── Security headers + error handlers ──────────────────────────────────────
     app.after_request(add_security_headers)
     register_error_handlers(app)
 
     # ── SocketIO ──────────────────────────────────────────────────────────────
+    # ── FIX: SocketIO with proper async_mode handling ────────────────────────
     global socketio
     try:
+        # eventlet is already imported and monkey patched above
         socketio = SocketIO(
             app,
             cors_allowed_origins=allowed_origins,
@@ -212,6 +205,15 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
     # CSRF — Double-Submit Cookie Pattern
     # ═══════════════════════════════════════════════════════════════════════════
+    #
+    # 1. GET /api/csrf-token  → server generates token, sets as READABLE cookie
+    #                           AND returns in JSON.
+    # 2. Frontend stores token in memory, sends as X-CSRF-Token header.
+    # 3. Server compares header to cookie (constant-time).
+    #    Attacker on another origin cannot read the cookie → cannot forge header.
+    # 4. Stateless: no server-side session lookup for CSRF, eliminating the
+    #    race condition between OPTIONS preflight and the first POST.
+    # ═══════════════════════════════════════════════════════════════════════════
 
     CSRF_COOKIE = 'gc_csrf'
 
@@ -222,21 +224,26 @@ def create_app(test_config=None):
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
         resp = jsonify({'csrf_token': token})
         https = _is_https()
+        # ── FIX: Force secure for Railway ────────────────────────────────────
         is_railway = bool(os.environ.get('RAILWAY'))
         secure_cookie = https or is_railway
         
         resp.set_cookie(
             CSRF_COOKIE,
             token,
-            httponly=False,
+            httponly=False,                         # JS must read it
             samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,
+            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
             max_age=3600,
             path='/',
         )
         return resp, 200
 
     def _check_csrf():
+        """
+        Validate CSRF for mutating requests.
+        Returns (None, None) on pass, (response, code) on failure.
+        """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
             return None, None
         if request.path in ('/api/csrf-token', '/health'):
@@ -274,6 +281,7 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _require_auth():
+        """Return (user, None) if authenticated, else (None, (response, code))."""
         if not DB_AVAILABLE:
             return None, (jsonify({'error': 'Database not available'}), 500)
         uid = session.get('user_id')
@@ -286,8 +294,10 @@ def create_app(test_config=None):
         return user, None
 
     def _rotate_csrf_cookie(resp):
+        """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
         https = _is_https()
+        # ── FIX: Force secure for Railway ────────────────────────────────────
         is_railway = bool(os.environ.get('RAILWAY'))
         secure_cookie = https or is_railway
         
@@ -295,7 +305,7 @@ def create_app(test_config=None):
             CSRF_COOKIE, token,
             httponly=False,
             samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,
+            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
             max_age=3600, path='/',
         )
         return resp
@@ -318,7 +328,7 @@ def create_app(test_config=None):
         smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
         mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
 
-        log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+        log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
         os.makedirs(log_dir, exist_ok=True)
         fallback_path = os.path.join(log_dir, 'reset_links.log')
 
@@ -428,11 +438,13 @@ def create_app(test_config=None):
             if not username or not password:
                 return jsonify({'error': 'Username and password are required'}), 400
 
+            # Accept username OR email
             user = (
                 User.query.filter_by(username=username).first()
                 or User.query.filter_by(email=username).first()
             )
 
+            # Constant-time failure — same message for wrong user and wrong password
             if not user or not user.check_password(password):
                 log.warning(f'Failed login for: {username[:30]}')
                 return jsonify({'error': 'Invalid credentials'}), 401
@@ -486,6 +498,7 @@ def create_app(test_config=None):
             user = User.query.filter_by(email=email).first()
             if user:
                 token = user.generate_reset_token()
+                # Override model's 24h expiry to 15 min (matches UI messaging)
                 user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
                 db.session.commit()
 
@@ -625,7 +638,7 @@ def create_app(test_config=None):
 
         user.set_password(new_password)
         db.session.commit()
-        session.clear()
+        session.clear()   # Force re-login after password change
         return jsonify({
             'success': True,
             'message': 'Password changed. Please sign in again.',
@@ -657,6 +670,7 @@ def create_app(test_config=None):
         if size > 2 * 1024 * 1024:
             return jsonify({'error': 'File too large — maximum 2 MB'}), 400
 
+        # Remove old avatar file
         if user.avatar and '/assets/uploads/' in (user.avatar or ''):
             old = os.path.join(app.config['UPLOAD_FOLDER'], os.path.basename(user.avatar))
             try:
@@ -680,7 +694,7 @@ def create_app(test_config=None):
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # ENCRYPT / DECRYPT
+    # ENCRYPT / DECRYPT  (password-based — used by encrypt.js / decrypt.js)
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route('/api/encrypt', methods=['POST', 'OPTIONS'])
@@ -822,20 +836,18 @@ def create_app(test_config=None):
 
     @app.route('/health')
     def health():
-        db_status = 'connected'
-        if DB_AVAILABLE:
-            try:
-                db.session.execute('SELECT 1')
-            except Exception as e:
-                db_status = f'error: {str(e)}'
-        
         return jsonify({
             'status':      'ok',
             'service':     'GhostChat API',
             'environment': 'production' if IS_PROD else 'development',
-            'database':    db_status,
+            'database':    'connected' if DB_AVAILABLE else 'disabled',
             'version':     '3.0.0',
         }), 200
+
+    # Serve frontend — use app.send_static_file() instead of send_from_directory
+    # send_from_directory uses sendfile() syscall which eventlet doesn't patch,
+    # causing IncompleteRead errors on large files. send_static_file() goes
+    # through Flask's WSGI response which eventlet handles correctly.
 
     @app.route('/')
     def index():
@@ -985,7 +997,8 @@ def create_app(test_config=None):
             )
         )
         if before: query = query.filter(Message.created_at < before)
-        messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+        messages = query.order_by(Message.created_at.desc()).limit(limit).all()
+        messages.reverse()
         unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False, message_type='chat').all()
         for m in unread_msgs:
             m.is_read = True
@@ -1014,28 +1027,9 @@ def create_app(test_config=None):
             socketio.emit('receive_message', payload, room=f'user_{contact_id}')
         return jsonify({'success': True, 'message': msg.to_dict()}), 201
 
-    # ══════════════════════════════════════
-    # SOCKETIO EVENT HANDLERS
-    # ══════════════════════════════════════
-
     @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
-        uid = session.get('user_id')
-        if uid:
-            join_room(f'user_{uid}')
-            log.info(f'User {uid} joined room user_{uid}')
-            if DB_AVAILABLE:
-                try:
-                    user = User.query.get(uid)
-                    if user:
-                        user.is_online = True
-                        user.last_seen = datetime.utcnow()
-                        db.session.commit()
-                        for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
-                            socketio.emit('user_online', {'user_id': uid}, room=f'user_{c.contact_id}')
-                except Exception as e:
-                    log.error(f'Error updating online status: {e}')
         emit('connected', {'status': 'connected', 'sid': request.sid})
 
     @socketio.on('disconnect')
@@ -1052,16 +1046,13 @@ def create_app(test_config=None):
                         db.session.commit()
                         for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
                             socketio.emit('user_offline', {'user_id': uid}, room=f'user_{c.contact_id}')
-            except Exception:
-                pass
+            except Exception: pass
 
     @socketio.on('join_user_room')
     def handle_join_user_room(data):
         user_id = data.get('user_id', '')
-        if not user_id:
-            return
+        if not user_id: return
         join_room(f'user_{user_id}')
-        log.info(f'Socket {request.sid} joined user room: user_{user_id}')
         emit('joined_room', {'room': f'user_{user_id}'})
         if DB_AVAILABLE:
             try:
@@ -1072,101 +1063,54 @@ def create_app(test_config=None):
                     db.session.commit()
                     for c in Contact.query.filter_by(user_id=user_id, is_blocked=False).all():
                         socketio.emit('user_online', {'user_id': user_id}, room=f'user_{c.contact_id}')
-            except Exception:
-                pass
+            except Exception: pass
 
     @socketio.on('join_room')
     def handle_join_room(data):
         room = data.get('room', '')
         if room:
             join_room(room)
-            log.info(f'Socket {request.sid} joined room: {room}')
             emit('joined_room', {'room': room})
 
     @socketio.on('leave_room')
     def handle_leave_room(data):
         room = data.get('room', '')
-        if room:
-            leave_room(room)
-            log.info(f'Socket {request.sid} left room: {room}')
+        if room: leave_room(room)
 
     @socketio.on('send_private_message')
-    def handle_send_private_message(data):
-        try:
-            room = data.get('room', '')
-            content = data.get('content', '').strip()
-            sender_id = data.get('sender_id', '')
-            sender = data.get('sender', 'Ghost')
-            avatar = data.get('avatar', '')
-            receiver_id = data.get('receiver_id', '')
-            temp_id = data.get('temp_id', '')
-            
-            if not content or not sender_id or not receiver_id:
-                log.warning('Missing data in send_private_message')
-                return
-            
-            msg_id = str(uuid.uuid4())
-            
-            if DB_AVAILABLE:
-                try:
-                    msg = Message(
-                        id=msg_id,
-                        user_id=sender_id,
-                        sender_id=sender_id,
-                        receiver_id=receiver_id,
-                        encrypted_content=content,
-                        message_type='chat',
-                        is_delivered=True
-                    )
-                    db.session.add(msg)
-                    db.session.commit()
-                    created_at = msg.created_at.isoformat()
-                    log.info(f'Message {msg_id} saved to DB via SocketIO')
-                except Exception as e:
-                    log.error(f'Failed to save message: {e}')
-                    db.session.rollback()
-                    created_at = datetime.utcnow().isoformat()
-            else:
-                created_at = datetime.utcnow().isoformat()
-            
-            payload = {
-                'id': msg_id,
-                'content': content,
-                'sender_id': sender_id,
-                'sender': sender,
-                'avatar': avatar,
-                'receiver_id': receiver_id,
-                'created_at': created_at,
-                'temp_id': temp_id,
-                'is_delivered': True,
-                'is_read': False
-            }
-            
-            if room:
-                emit('receive_message', payload, room=room, include_self=False)
-                log.info(f'Emitted to room: {room}')
-            
-            recipient_room = f'user_{receiver_id}'
-            emit('receive_message', payload, room=recipient_room)
-            log.info(f'Emitted to recipient room: {recipient_room}')
-            
-            sender_room = f'user_{sender_id}'
-            emit('message_delivered', {
-                'message_id': msg_id,
-                'temp_id': temp_id
-            }, room=sender_room)
-            
-        except Exception as e:
-            log.error(f'Error in send_private_message: {e}')
+    def handle_private_message(data):
+        room        = data.get('room', '')
+        content     = (data.get('content') or '').strip()
+        sender_id   = data.get('sender_id', '')
+        sender      = data.get('sender', 'Ghost')
+        avatar      = data.get('avatar', '')
+        receiver_id = data.get('receiver_id', '')
+        temp_id     = data.get('temp_id', '')
+        if not content or not sender_id or not receiver_id: return
+        msg_id     = str(uuid.uuid4())
+        created_at = datetime.utcnow().isoformat()
+        if DB_AVAILABLE:
+            try:
+                msg = Message(id=msg_id, user_id=sender_id, sender_id=sender_id,
+                              receiver_id=receiver_id, encrypted_content=content,
+                              message_type='chat', is_delivered=True)
+                db.session.add(msg)
+                db.session.commit()
+                created_at = msg.created_at.isoformat()
+            except Exception as e:
+                log.error(f'Save chat msg failed: {e}')
+        payload = {'id': msg_id, 'content': content, 'sender_id': sender_id,
+                   'sender': sender, 'avatar': avatar, 'receiver_id': receiver_id,
+                   'created_at': created_at, 'temp_id': temp_id}
+        if room: emit('receive_message', payload, room=room)
+        emit('receive_message', payload, room=f'user_{receiver_id}')
 
     @socketio.on('typing')
     def handle_typing(data):
         room = data.get('room', '')
         if room:
-            emit('typing', {
-                'user_id': data.get('user_id'),
-                'username': data.get('username')
-            }, room=room, include_self=False)
+            emit('typing', {'user_id': data.get('user_id'), 'username': data.get('username')},
+                 room=room, include_self=False)
 
     @socketio.on('stop_typing')
     def handle_stop_typing(data):
@@ -1182,7 +1126,9 @@ def create_app(test_config=None):
 
 
 # ── Module-level variables for gunicorn ──────────────────────────────────────
-socketio = None
+# gunicorn binds to flask_app:app
+# The socketio object is also available as flask_app:socketio for reference
+socketio = None   # will be set by create_app()
 app = create_app()
 
 if __name__ == '__main__':
