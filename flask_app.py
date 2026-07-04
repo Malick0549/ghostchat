@@ -91,6 +91,13 @@ def _is_https():
 
 
 def create_app(test_config=None):
+    # ── FIX: tracks which user a given socket sid belongs to, set at join time.
+    # handle_disconnect previously used flask.session to figure out who
+    # disconnected, which is unreliable inside SocketIO event handlers — this
+    # is why online/offline status was inconsistent. ──
+    global sid_to_user
+    sid_to_user = {}
+
 
     # ── Flask app ──────────────────────────────────────────────────────────────
     # Use absolute path so Flask finds frontend/ correctly regardless
@@ -1145,24 +1152,25 @@ def create_app(test_config=None):
     @socketio.on('disconnect')
     def handle_disconnect():
         log.info(f'Socket disconnected: {request.sid}')
-        if DB_AVAILABLE:
+        uid = sid_to_user.pop(request.sid, None)
+        if DB_AVAILABLE and uid:
             try:
-                uid = session.get('user_id')
-                if uid:
-                    u = User.query.get(uid)
-                    if u:
-                        u.is_online = False
-                        u.last_seen = datetime.utcnow()
-                        db.session.commit()
-                        for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
-                            socketio.emit('user_offline', {'user_id': uid}, room=f'user_{c.contact_id}')
-            except Exception: pass
+                u = User.query.get(uid)
+                if u:
+                    u.is_online = False
+                    u.last_seen = datetime.utcnow()
+                    db.session.commit()
+                    for c in Contact.query.filter_by(user_id=uid, is_blocked=False).all():
+                        socketio.emit('user_offline', {'user_id': uid}, room=f'user_{c.contact_id}')
+            except Exception as e:
+                log.error(f'Presence update on disconnect failed: {e}')
 
     @socketio.on('join_user_room')
     def handle_join_user_room(data):
         user_id = data.get('user_id', '')
         if not user_id: return
         join_room(f'user_{user_id}')
+        sid_to_user[request.sid] = user_id   # ── FIX: needed so disconnect knows who this socket belonged to ──
         log.info(f'[room] sid={request.sid} joined user_{user_id} '
                  f'(room now has {_room_size(f"user_{user_id}")} socket(s))')
         emit('joined_room', {'room': f'user_{user_id}'})
