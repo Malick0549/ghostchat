@@ -355,15 +355,28 @@ class GhostChatRealtime {
         } else {
             console.warn('Socket not connected, using REST fallback');
             try {
-                await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
+                const res = await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
                     method: 'POST',
                     credentials: 'include',
                     headers: { 
                         'Content-Type': 'application/json', 
-                        'X-Requested-With': 'XMLHttpRequest' 
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRF-Token': this._getCsrf(),   // ── FIX: was missing, caused 403 on every fallback send ──
                     },
                     body: JSON.stringify({ content }),
                 });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `HTTP ${res.status}`);
+                }
+                const data = await res.json();
+                // The REST path doesn't get a socket ack back, so replace the
+                // optimistic temp message with the real saved one directly here.
+                const idx = this.messages.findIndex(m => m.id === tempId);
+                if (idx > -1 && data.message) {
+                    this.messages[idx] = { ...this.messages[idx], id: data.message.id, is_delivered: true };
+                    this._renderMessages();
+                }
             } catch (error) {
                 console.error('REST fallback failed:', error);
                 this._toast('Failed to send message', 'error');
@@ -384,12 +397,21 @@ class GhostChatRealtime {
         
         try {
             this.socket = io(socketUrl, {
-                transports: ['websocket', 'polling'],
+                // ── FIX: 'websocket' first meant the client only ever attempted
+                // a raw WebSocket handshake and kept retrying that same transport
+                // on every reconnect. Railway's edge was refusing/dropping it
+                // (NS_ERROR_WEBSOCKET_CONNECTION_REFUSED), so the socket never
+                // connected at all. Polling-first does the initial handshake over
+                // plain HTTP (works through virtually any proxy), then upgrades
+                // to WebSocket only if that succeeds — and just keeps using
+                // polling if it doesn't. ──
+                transports: ['polling', 'websocket'],
                 withCredentials: true,
                 reconnection: true,
                 reconnectionAttempts: 10,
                 reconnectionDelay: 1000,
                 reconnectionDelayMax: 5000,
+                timeout: 20000,
                 path: '/socket.io',
             });
 

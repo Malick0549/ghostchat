@@ -156,12 +156,23 @@ def create_app(test_config=None):
         'http://localhost:5000',
         'http://127.0.0.1:5000',
         'https://ghostchat-5slo.onrender.com',
+        'https://ghostchat-production-6c0b.up.railway.app',  # ── FIX: explicit current Railway domain ──
         'null',
     ]
-    # Also pick up any dynamically-configured Render URL
+    # Also pick up any dynamically-configured Render URL (kept for compatibility)
     render_url = os.environ.get('RENDER_EXTERNAL_URL', '').rstrip('/')
     if render_url and render_url not in allowed_origins:
         allowed_origins.append(render_url)
+
+    # ── FIX: this only ever checked for a Render URL, a leftover from before
+    # the migration to Railway — it never picked up the actual Railway domain.
+    # Railway sets RAILWAY_PUBLIC_DOMAIN automatically to the live public host,
+    # so this keeps CORS/SocketIO working even if the domain changes later. ──
+    railway_domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '').strip()
+    if railway_domain:
+        railway_url = f'https://{railway_domain}'.rstrip('/')
+        if railway_url not in allowed_origins:
+            allowed_origins.append(railway_url)
 
     CORS(
         app,
@@ -170,6 +181,7 @@ def create_app(test_config=None):
         allow_headers=['Content-Type', 'X-CSRF-Token', 'X-Requested-With'],
         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     )
+    log.info(f'Allowed origins: {allowed_origins}')
 
     # ── Blueprints ─────────────────────────────────────────────────────────────
     app.register_blueprint(crypto_bp)    # /encrypt, /decrypt  (session-key API)
