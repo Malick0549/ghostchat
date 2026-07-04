@@ -67,6 +67,7 @@ try:
         Message,
         IntegrationToken,
         Contact,
+        ContactRequest,   # ── FIX: use the existing dedicated request table instead of a Contact.status hack ──
     )
     DB_AVAILABLE = True
 except ImportError:
@@ -147,24 +148,6 @@ def create_app(test_config=None):
         with app.app_context():
             db.create_all()
             log.info('Database ready')
-            # ── FIX: Contact.status is a new column — db.create_all() only creates
-            # missing TABLES, it never ALTERs existing ones. Without this, every
-            # query filtering on status (contacts list, search, add/respond) 500s
-            # on any database created before this column existed. ──
-            try:
-                from sqlalchemy import inspect, text
-                inspector = inspect(db.engine)
-                table_name = Contact.__tablename__
-                existing_cols = [c['name'] for c in inspector.get_columns(table_name)]
-                if 'status' not in existing_cols:
-                    db.session.execute(text(
-                        f"ALTER TABLE {table_name} ADD COLUMN status VARCHAR(20) "
-                        f"DEFAULT 'accepted' NOT NULL"
-                    ))
-                    db.session.commit()
-                    log.info(f"Migrated: added 'status' column to {table_name}")
-            except Exception as e:
-                log.error(f'Contact.status migration check failed: {e}')
 
     # Session(app) removed — using Flask built-in sessions
 
@@ -898,7 +881,7 @@ def create_app(test_config=None):
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
-        contacts = Contact.query.filter_by(user_id=user.id, is_blocked=False, status='accepted').all()
+        contacts = Contact.query.filter_by(user_id=user.id, is_blocked=False).all()
         result = []
         for c in contacts:
             cu = User.query.get(c.contact_id)
@@ -941,24 +924,33 @@ def create_app(test_config=None):
             User.id != user.id, User.is_active == True,
             db.or_(User.username.ilike(f'%{q}%'), User.email.ilike(f'%{q}%'))
         ).limit(20).all()
-        existing = {c.contact_id for c in Contact.query.filter_by(user_id=user.id, status='accepted').all()}
-        pending  = {c.contact_id for c in Contact.query.filter_by(user_id=user.id, status='pending_sent').all()}
-        incoming = {c.contact_id for c in Contact.query.filter_by(user_id=user.id, status='pending_received').all()}
+        existing  = {c.contact_id for c in Contact.query.filter_by(user_id=user.id).all()}
+        pending   = {r.recipient_id for r in ContactRequest.query.filter_by(sender_id=user.id, status='pending').all()}
+        incoming  = {r.sender_id for r in ContactRequest.query.filter_by(recipient_id=user.id, status='pending').all()}
         return jsonify({'success': True, 'users': [{
             'id': u.id, 'username': u.username, 'avatar': u.avatar,
             'about': u.about, 'is_online': u.is_online, 'is_contact': u.id in existing,
             'is_pending': u.id in pending, 'is_incoming': u.id in incoming,
         } for u in matches]}), 200
 
-    def _accept_contact_request(user, requester_id):
-        """Both sides flip to 'accepted'. Called when the invited user confirms."""
-        mine   = Contact.query.filter_by(user_id=user.id, contact_id=requester_id).first()
-        theirs = Contact.query.filter_by(user_id=requester_id, contact_id=user.id).first()
-        if not mine or not theirs:
+    def _accept_contact_request(user, requester_id, req_row=None):
+        """Marks the request accepted and creates the mutual Contact rows."""
+        req_row = req_row or ContactRequest.query.filter_by(
+            sender_id=requester_id, recipient_id=user.id, status='pending').first()
+        if not req_row:
             return jsonify({'error': 'No pending request found'}), 404
-        mine.status = 'accepted'
-        theirs.status = 'accepted'
+
+        req_row.status = 'accepted'
+        requester = User.query.get(requester_id)
+
+        if not Contact.query.filter_by(user_id=user.id, contact_id=requester_id).first():
+            db.session.add(Contact(user_id=user.id, contact_id=requester_id,
+                                    display_name=requester.username if requester else None))
+        if not Contact.query.filter_by(user_id=requester_id, contact_id=user.id).first():
+            db.session.add(Contact(user_id=requester_id, contact_id=user.id,
+                                    display_name=user.username))
         db.session.commit()
+
         if socketio:
             socketio.emit('friend_request_accepted', {
                 'from': user.id, 'username': user.username, 'avatar': user.avatar,
@@ -982,24 +974,24 @@ def create_app(test_config=None):
         cu = User.query.get(contact_id)
         if not cu: return jsonify({'error': 'User not found'}), 404
 
-        existing = Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first()
+        if Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first():
+            return jsonify({'error': 'Already in contacts'}), 400
+
+        # They already sent you a request — this call accepts it instead of duplicating it
+        incoming = ContactRequest.query.filter_by(
+            sender_id=contact_id, recipient_id=user.id, status='pending').first()
+        if incoming:
+            return _accept_contact_request(user, contact_id, req_row=incoming)
+
+        existing = ContactRequest.query.filter_by(sender_id=user.id, recipient_id=contact_id).first()
         if existing:
-            if existing.status == 'accepted' and not existing.is_blocked:
-                return jsonify({'error': 'Already in contacts'}), 400
-            if existing.status == 'pending_sent':
+            if existing.status == 'pending':
                 return jsonify({'error': 'Request already sent'}), 400
-            if existing.status == 'pending_received':
-                # They already asked you first — this call is treated as acceptance.
-                return _accept_contact_request(user, contact_id)
-            # Re-requesting a blocked/removed relationship
-            existing.is_blocked = False
-            existing.status = 'pending_sent'
+            existing.status = 'pending'   # re-request after a prior rejection
+            existing.updated_at = datetime.utcnow()
             db.session.commit()
         else:
-            db.session.add(Contact(user_id=user.id, contact_id=contact_id,
-                                    display_name=cu.username, status='pending_sent'))
-            db.session.add(Contact(user_id=contact_id, contact_id=user.id,
-                                    display_name=user.username, status='pending_received'))
+            db.session.add(ContactRequest(sender_id=user.id, recipient_id=contact_id, status='pending'))
             db.session.commit()
 
         if socketio:
@@ -1017,10 +1009,10 @@ def create_app(test_config=None):
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
-        rows = Contact.query.filter_by(user_id=user.id, status='pending_received').all()
+        rows = ContactRequest.query.filter_by(recipient_id=user.id, status='pending').all()
         result = []
         for r in rows:
-            u = User.query.get(r.contact_id)
+            u = User.query.get(r.sender_id)
             if u:
                 result.append({'contact_id': u.id, 'username': u.username, 'avatar': u.avatar})
         return jsonify({'success': True, 'requests': result}), 200
@@ -1033,19 +1025,16 @@ def create_app(test_config=None):
         if err: return err
         action = ((request.get_json() or {}).get('action') or '').strip().lower()
 
-        mine = Contact.query.filter_by(user_id=user.id, contact_id=contact_id,
-                                        status='pending_received').first()
-        if not mine:
+        req_row = ContactRequest.query.filter_by(
+            sender_id=contact_id, recipient_id=user.id, status='pending').first()
+        if not req_row:
             return jsonify({'error': 'No pending request found'}), 404
 
         if action == 'accept':
-            return _accept_contact_request(user, contact_id)
+            return _accept_contact_request(user, contact_id, req_row=req_row)
 
-        # reject / decline — remove both sides of the pending request
-        theirs = Contact.query.filter_by(user_id=contact_id, contact_id=user.id).first()
-        db.session.delete(mine)
-        if theirs:
-            db.session.delete(theirs)
+        req_row.status = 'rejected'
+        req_row.updated_at = datetime.utcnow()
         db.session.commit()
         if socketio:
             socketio.emit('friend_request_rejected', {'from': user.id}, room=f'user_{contact_id}')
@@ -1185,8 +1174,7 @@ def create_app(test_config=None):
 
         # ── FIX: only accepted connections can exchange messages ──
         if DB_AVAILABLE:
-            link = Contact.query.filter_by(user_id=sender_id, contact_id=receiver_id,
-                                            status='accepted').first()
+            link = Contact.query.filter_by(user_id=sender_id, contact_id=receiver_id).first()
             if not link:
                 emit('message_failed', {'temp_id': temp_id,
                                          'error': 'You are not connected with this user yet'})
