@@ -573,6 +573,7 @@ class GhostChatRealtime {
             });
 
             this.socket.on('typing', data => {
+                console.log('⌨️ typing event received:', data);
                 if (data.user_id !== this.user.id && this.currentContact?.contact_id === data.user_id) {
                     this._showTyping(data.username);
                     const headerStatus = document.getElementById('chatHeaderStatus');
@@ -580,6 +581,7 @@ class GhostChatRealtime {
                 }
             });
             this.socket.on('stop_typing', data => {
+                console.log('⌨️ stop_typing event received:', data);
                 if (this.currentContact?.contact_id === data.user_id) {
                     this._hideTyping();
                     this._renderHeaderStatus(data.user_id);
@@ -587,13 +589,17 @@ class GhostChatRealtime {
             });
 
             this.socket.on('user_online', data => {
+                console.log('🟢 user_online event received:', data);
                 const c = this.contacts.find(x => x.contact_id === data.user_id);
                 if (c) { c.is_online = true;
                     this._renderContacts();
                     if (this.currentContact?.contact_id === data.user_id) this._renderHeaderStatus(data.user_id);
+                } else {
+                    console.warn('user_online received for a contact_id not in this.contacts:', data.user_id);
                 }
             });
             this.socket.on('user_offline', data => {
+                console.log('⚫ user_offline event received:', data);
                 const c = this.contacts.find(x => x.contact_id === data.user_id);
                 if (c) { c.is_online = false;
                     this._renderContacts();

@@ -1181,9 +1181,12 @@ def create_app(test_config=None):
                     u.is_online = True
                     u.last_seen = datetime.utcnow()
                     db.session.commit()
-                    for c in Contact.query.filter_by(user_id=user_id, is_blocked=False).all():
+                    peers = Contact.query.filter_by(user_id=user_id, is_blocked=False).all()
+                    log.info(f'[presence] {user_id} online — notifying {len(peers)} contact(s)')
+                    for c in peers:
                         socketio.emit('user_online', {'user_id': user_id}, room=f'user_{c.contact_id}')
-            except Exception: pass
+            except Exception as e:
+                log.error(f'[presence] failed to mark {user_id} online: {e}')
 
     @socketio.on('join_room')
     def handle_join_room(data):
@@ -1246,6 +1249,7 @@ def create_app(test_config=None):
     def handle_typing(data):
         room = data.get('room', '')
         if room:
+            log.info(f'[room] typing in {room} ({_room_size(room)} socket(s) in room)')
             emit('typing', {'user_id': data.get('user_id'), 'username': data.get('username')},
                  room=room, include_self=False)
 
