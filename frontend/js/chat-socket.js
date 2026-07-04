@@ -213,16 +213,16 @@ class GhostChatRealtime {
             }
 
             const time = this._formatTime(msg.created_at);
-            const content = this._esc(msg.encrypted_content || '');
+            const rawContent = msg.encrypted_content || '';
+            const escapedContent = this._esc(rawContent);
             const status = isMine ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>` : '';
-            
-            const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(content) && content.length > 10;
+            const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(rawContent) && rawContent.length > 10;
 
             html += `
             <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
                 <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
                     <div class="msg-content" id="content-${msg.id}">
-                        ${isEncrypted ? '🔒 ' : ''}${content}
+                        ${isEncrypted ? '🔒 ' : ''}${escapedContent}
                     </div>
                     ${isEncrypted ? `
                         <button class="msg-decrypt-btn" onclick="window.chat.decryptMessage('${msg.id}')">
@@ -235,9 +235,9 @@ class GhostChatRealtime {
                     </div>
                 </div>
             </div>`;
-            
+
             if (isEncrypted) {
-                this.decryptData[msg.id] = content;
+                this.decryptData[msg.id] = rawContent;
             }
         });
 
@@ -441,6 +441,19 @@ class GhostChatRealtime {
                 this._handleReceivedMessage(data);
             });
 
+            this.socket.on('message_delivered', data => {
+                if (!data || !data.temp_id) return;
+                const idx = this.messages.findIndex(m => m.id === data.temp_id || m.id === data.message_id);
+                if (idx > -1) {
+                    this.messages[idx] = {
+                        ...this.messages[idx],
+                        id: data.message_id || this.messages[idx].id,
+                        is_delivered: true,
+                    };
+                    this._renderMessages();
+                }
+            });
+
             this.socket.on('typing', data => {
                 if (data.user_id !== this.user.id && this.currentContact?.contact_id === data.user_id) {
                     this._showTyping(data.username);
@@ -485,37 +498,41 @@ class GhostChatRealtime {
     }
 
     _handleReceivedMessage(data) {
-        if (!this.currentContact) return;
-        const isCurrentChat = (
+        if (!data) return;
+
+        const isCurrentChat = this.currentContact && (
             (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
             (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
         );
 
         if (isCurrentChat) {
-            const idx = this.messages.findIndex(m => m.id === data.temp_id);
+            const idx = this.messages.findIndex(m => m.id === data.temp_id || m.id === data.id);
+            const message = {
+                id: data.id || data.temp_id,
+                sender_id: data.sender_id,
+                receiver_id: data.receiver_id || this.user.id,
+                encrypted_content: data.content || '',
+                message_type: 'chat',
+                created_at: data.created_at || new Date().toISOString(),
+                is_read: false,
+                is_delivered: true,
+            };
+
             if (idx > -1) {
-                this.messages[idx] = { ...this.messages[idx], id: data.id, is_delivered: true };
+                this.messages[idx] = { ...this.messages[idx], ...message };
             } else {
-                this.messages.push({
-                    id: data.id,
-                    sender_id: data.sender_id,
-                    receiver_id: data.receiver_id || this.user.id,
-                    encrypted_content: data.content,
-                    message_type: 'chat',
-                    created_at: data.created_at || new Date().toISOString(),
-                    is_read: false,
-                    is_delivered: true,
-                });
+                this.messages.push(message);
             }
             this._renderMessages();
             this._notifyNewMessage(data);
         }
 
-        const contact = this.contacts.find(c => c.contact_id === data.sender_id);
+        const contactId = data.sender_id === this.user.id ? data.receiver_id : data.sender_id;
+        const contact = this.contacts.find(c => c.contact_id === contactId);
         if (contact) {
             contact.last_message = {
                 content: data.content,
-                created_at: data.created_at,
+                created_at: data.created_at || new Date().toISOString(),
                 is_mine: data.sender_id === this.user.id,
             };
             if (!isCurrentChat || !document.hasFocus()) {
@@ -749,8 +766,6 @@ _renderSearchResults(users) {
     }
 
     async addContact(contactId, username, avatar) {
-        // Add directly — no confirmation needed (like WhatsApp)
-        // The backend adds both users as mutual contacts immediately
         try {
             const res = await fetch(`${this._base()}/api/contacts`, {
                 method: 'POST',
@@ -760,20 +775,16 @@ _renderSearchResults(users) {
                     'X-Requested-With': 'XMLHttpRequest',
                     'X-CSRF-Token': this._getCsrf(),
                 },
-                body: JSON.stringify({ contact_id: contactId }),
+                body: JSON.stringify({ contact_id: contactId, status: 'pending' }),
             });
             const data = await res.json();
 
             if (data.success) {
-                this._toast(`${username} added to contacts!`, 'success');
+                this._toast(data.message || `${username} request sent. Waiting for confirmation.`, 'success');
                 closeModal('newChatModal');
                 document.getElementById('newChatSearch').value = '';
                 document.getElementById('userSearchResults').innerHTML = '';
-                await this._loadContacts();
-                // Open the chat immediately after adding
-                this.openChat(contactId, username, avatar || data.avatar || '');
             } else if (data.error === 'Already in contacts') {
-                // Already a contact — just open the chat
                 closeModal('newChatModal');
                 this.openChat(contactId, username, avatar || '');
             } else {

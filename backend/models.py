@@ -120,6 +120,21 @@ class Contact(db.Model):
     __table_args__ = (db.UniqueConstraint('user_id', 'contact_id', name='unique_contact'),)
 
 
+class ContactRequest(db.Model):
+    __tablename__ = 'contact_requests'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    sender_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    recipient_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    status = db.Column(db.String(20), default='pending')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('sender_id', 'recipient_id', name='unique_contact_request'),
+    )
+
+
 class Message(db.Model):
     __tablename__ = 'messages'
     

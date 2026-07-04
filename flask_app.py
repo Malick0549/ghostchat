@@ -46,7 +46,7 @@ from email.message import EmailMessage
 
 from flask import (
     Flask, jsonify, request, session,
-    send_from_directory
+    send_from_directory, redirect
 )
 from flask_cors import CORS
 # flask_session removed — using Flask built-in signed cookie sessions
@@ -67,6 +67,7 @@ try:
         Message,
         IntegrationToken,
         Contact,
+        ContactRequest,
     )
     DB_AVAILABLE = True
 except ImportError:
@@ -177,6 +178,18 @@ def create_app(test_config=None):
     # ── Security headers + error handlers ──────────────────────────────────────
     app.after_request(add_security_headers)
     register_error_handlers(app)
+
+    @app.before_request
+    def enforce_https_redirect():
+        if not IS_PROD:
+            return None
+        if request.path.startswith('/health'):
+            return None
+        if request.path.startswith('/socket.io'):
+            return None
+        if _is_https() or request.host.startswith(('localhost', '127.0.0.1', '0.0.0.0')):
+            return None
+        return redirect(f"https://{request.host}{request.full_path}", code=301)
 
     # ── SocketIO ──────────────────────────────────────────────────────────────
     # ── FIX: SocketIO with proper async_mode handling ────────────────────────
@@ -948,13 +961,54 @@ def create_app(test_config=None):
                 db.session.commit()
                 return jsonify({'success': True, 'message': 'Contact unblocked'}), 200
             return jsonify({'error': 'Already in contacts'}), 400
-        db.session.add(Contact(user_id=user.id, contact_id=contact_id, display_name=display_name or cu.username))
-        if not Contact.query.filter_by(user_id=contact_id, contact_id=user.id).first():
-            db.session.add(Contact(user_id=contact_id, contact_id=user.id, display_name=user.username))
+        status = (data.get('status') or 'pending').lower()
+
+        if status == 'accepted':
+            existing_request = ContactRequest.query.filter_by(
+                sender_id=contact_id,
+                recipient_id=user.id,
+                status='pending'
+            ).first()
+            if not existing_request:
+                return jsonify({'error': 'No pending request found'}), 404
+            existing_request.status = 'accepted'
+            if not Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first():
+                db.session.add(Contact(user_id=user.id, contact_id=contact_id, display_name=display_name or cu.username))
+            if not Contact.query.filter_by(user_id=contact_id, contact_id=user.id).first():
+                db.session.add(Contact(user_id=contact_id, contact_id=user.id, display_name=user.username))
+            db.session.commit()
+            if socketio:
+                socketio.emit('friend_request_accepted', {'user_id': user.id, 'username': user.username}, room=f'user_{contact_id}')
+            return jsonify({'success': True, 'message': f'{cu.username} added', 'contact_id': contact_id, 'username': cu.username, 'avatar': cu.avatar}), 201
+
+        if status == 'rejected':
+            existing_request = ContactRequest.query.filter_by(
+                sender_id=contact_id,
+                recipient_id=user.id,
+                status='pending'
+            ).first()
+            if existing_request:
+                existing_request.status = 'rejected'
+                db.session.commit()
+            if socketio:
+                socketio.emit('friend_request_rejected', {'user_id': user.id, 'username': user.username}, room=f'user_{contact_id}')
+            return jsonify({'success': True, 'message': 'Request rejected'}), 200
+
+        existing_request = ContactRequest.query.filter_by(sender_id=user.id, recipient_id=contact_id).first()
+        if existing_request and existing_request.status == 'pending':
+            return jsonify({'success': True, 'message': 'Request already pending'}), 200
+        if existing_request and existing_request.status == 'accepted':
+            return jsonify({'success': True, 'message': 'Already connected'}), 200
+
+        db.session.add(ContactRequest(sender_id=user.id, recipient_id=contact_id, status='pending'))
         db.session.commit()
         if socketio:
-            socketio.emit('new_contact', {'user_id': user.id, 'username': user.username, 'avatar': user.avatar}, room=f'user_{contact_id}')
-        return jsonify({'success': True, 'message': f'{cu.username} added', 'contact_id': contact_id, 'username': cu.username, 'avatar': cu.avatar}), 201
+            socketio.emit('friend_request', {
+                'from': user.id,
+                'username': user.username,
+                'avatar': user.avatar,
+            }, room=f'user_{contact_id}')
+        return jsonify({'success': True, 'message': f'Request sent to {cu.username}. Waiting for confirmation.', 'contact_id': contact_id, 'username': cu.username, 'avatar': cu.avatar}), 201
 
     @app.route('/api/contacts/<contact_id>', methods=['DELETE','OPTIONS'])
     def remove_contact(contact_id):
