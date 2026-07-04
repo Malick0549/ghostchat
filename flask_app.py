@@ -147,6 +147,24 @@ def create_app(test_config=None):
         with app.app_context():
             db.create_all()
             log.info('Database ready')
+            # ── FIX: Contact.status is a new column — db.create_all() only creates
+            # missing TABLES, it never ALTERs existing ones. Without this, every
+            # query filtering on status (contacts list, search, add/respond) 500s
+            # on any database created before this column existed. ──
+            try:
+                from sqlalchemy import inspect, text
+                inspector = inspect(db.engine)
+                table_name = Contact.__tablename__
+                existing_cols = [c['name'] for c in inspector.get_columns(table_name)]
+                if 'status' not in existing_cols:
+                    db.session.execute(text(
+                        f"ALTER TABLE {table_name} ADD COLUMN status VARCHAR(20) "
+                        f"DEFAULT 'accepted' NOT NULL"
+                    ))
+                    db.session.commit()
+                    log.info(f"Migrated: added 'status' column to {table_name}")
+            except Exception as e:
+                log.error(f'Contact.status migration check failed: {e}')
 
     # Session(app) removed — using Flask built-in sessions
 
