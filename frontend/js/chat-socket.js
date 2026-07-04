@@ -28,6 +28,8 @@ class GhostChatRealtime {
         this.maxReconnectAttempts = 5;
         this._pendingIncoming = [];   // incoming connection requests awaiting my confirmation
         this.decryptData = {};
+        this._plainData = {};    // known plaintext per message id (originally-plain or decrypted)
+        this._msgViewState = {}; // 'plain' | 'encrypted' — manual toggle overrides the default
 
         this.init();
     }
@@ -213,32 +215,45 @@ class GhostChatRealtime {
             }
 
             const time = this._formatTime(msg.created_at);
-            const content = this._esc(msg.encrypted_content || '');
+            const rawContent = msg.encrypted_content || '';
             const status = isMine ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>` : '';
-            
-            const isEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(content) && content.length > 10;
+
+            const looksEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(rawContent) && rawContent.length > 10;
+
+            // Remember the raw ciphertext / plaintext the first time we see this message
+            if (looksEncrypted && !(msg.id in this.decryptData)) {
+                this.decryptData[msg.id] = rawContent;
+            }
+            if (!looksEncrypted && !(msg.id in this._plainData)) {
+                this._plainData[msg.id] = rawContent;
+            }
+
+            // ── FIX: view state persists across re-renders so a manual encrypt/decrypt
+            // toggle sticks, instead of decrypt being a one-way reveal with no way back,
+            // and plaintext messages having no way to be hidden/encrypted at all. ──
+            if (!(msg.id in this._msgViewState)) {
+                this._msgViewState[msg.id] = looksEncrypted ? 'encrypted' : 'plain';
+            }
+            const state = this._msgViewState[msg.id];
+            const displayContent = state === 'encrypted'
+                ? this._esc(this.decryptData[msg.id] ?? rawContent)
+                : this._esc(this._plainData[msg.id] ?? rawContent);
 
             html += `
             <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
                 <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
                     <div class="msg-content" id="content-${msg.id}">
-                        ${isEncrypted ? '🔒 ' : ''}${content}
+                        ${state === 'encrypted' ? '🔒 ' : ''}${displayContent}
                     </div>
-                    ${isEncrypted ? `
-                        <button class="msg-decrypt-btn" onclick="window.chat.decryptMessage('${msg.id}')">
-                            <i class="fas fa-lock"></i> Decrypt
-                        </button>
-                    ` : ''}
+                    <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.${state === 'encrypted' ? 'decryptMessage' : 'encryptMessageBubble'}('${msg.id}')">
+                        <i class="fas fa-${state === 'encrypted' ? 'lock' : 'lock-open'}"></i> ${state === 'encrypted' ? 'Decrypt' : 'Encrypt'}
+                    </button>
                     <div class="msg-meta">
                         <span class="msg-time">${time}</span>
                         ${status}
                     </div>
                 </div>
             </div>`;
-            
-            if (isEncrypted) {
-                this.decryptData[msg.id] = content;
-            }
         });
 
         container.innerHTML = html;
@@ -252,7 +267,7 @@ class GhostChatRealtime {
         const contentEl = document.getElementById(`content-${msgId}`);
         if (!contentEl) return;
 
-        const encryptedContent = this.decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '');
+        const encryptedContent = this.decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '').trim();
 
         try {
             const res = await fetch(`${this._base()}/api/decrypt`, {
@@ -271,15 +286,78 @@ class GhostChatRealtime {
             const data = await res.json();
             
             if (data.success) {
+                // ── FIX: decrypt used to be one-way (it removed the button entirely).
+                // Now it keeps the plaintext around and flips the toggle so the
+                // message can be re-encrypted/hidden again with one click. ──
+                this._plainData[msgId] = data.decrypted_message;
+                this._msgViewState[msgId] = 'plain';
+
                 contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(data.decrypted_message)}</span>`;
-                const btn = contentEl.parentElement.querySelector('.msg-decrypt-btn');
-                if (btn) btn.remove();
+                this._swapCryptoButton(msgId, 'plain');
                 this._toast('Message decrypted!', 'success');
             } else {
                 this._toast('Wrong password or invalid message', 'error');
             }
         } catch (_) {
             this._toast('Decryption failed', 'error');
+        }
+    }
+
+    // ── FIX: lets a message be locked back up after decrypting, or lets a
+    // message that was sent as plain text be encrypted for on-screen display.
+    // Uses the same /api/encrypt endpoint sendMessage() already relies on. ──
+    async encryptMessageBubble(msgId) {
+        const password = this.password || prompt('Enter a password to encrypt this message:');
+        if (!password) return;
+
+        const contentEl = document.getElementById(`content-${msgId}`);
+        if (!contentEl) return;
+
+        const plainText = this._plainData?.[msgId] ?? contentEl.textContent.replace('🔓 ', '').trim();
+        if (!plainText) {
+            this._toast('Nothing to encrypt', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch(`${this._base()}/api/encrypt`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+                body: JSON.stringify({ message: plainText, password: password, use_decoys: false }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                this.decryptData[msgId] = data.emoji_message;
+                this._msgViewState[msgId] = 'encrypted';
+
+                contentEl.innerHTML = `🔒 ${this._esc(data.emoji_message)}`;
+                this._swapCryptoButton(msgId, 'encrypted');
+                this._toast('Message encrypted', 'success');
+            } else {
+                this._toast(data.error || 'Encryption failed', 'error');
+            }
+        } catch (_) {
+            this._toast('Encryption failed', 'error');
+        }
+    }
+
+    _swapCryptoButton(msgId, newState) {
+        const contentEl = document.getElementById(`content-${msgId}`);
+        if (!contentEl) return;
+        const btn = contentEl.parentElement.querySelector('.msg-crypto-btn');
+        if (!btn) return;
+        if (newState === 'encrypted') {
+            btn.innerHTML = '<i class="fas fa-lock"></i> Decrypt';
+            btn.setAttribute('onclick', `window.chat.decryptMessage('${msgId}')`);
+        } else {
+            btn.innerHTML = '<i class="fas fa-lock-open"></i> Encrypt';
+            btn.setAttribute('onclick', `window.chat.encryptMessageBubble('${msgId}')`);
         }
     }
 
