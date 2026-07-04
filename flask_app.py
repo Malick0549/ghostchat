@@ -200,6 +200,18 @@ def create_app(test_config=None):
 
     # ── SocketIO ──────────────────────────────────────────────────────────────
     # ── FIX: SocketIO with proper async_mode handling ────────────────────────
+    #
+    # ── FIX: manage_session=False is required here. Flask-SocketIO defaults to
+    # forking its own copy of the session per connection (manage_session=True),
+    # which internally does `ctx.session = session_obj`. Flask 3.1 made
+    # RequestContext.session a read-only property with no setter, so that line
+    # throws AttributeError on EVERY connect, disconnect, and event — silently,
+    # inside engineio's handler wrapper, before any of our own handler code
+    # (join_user_room, typing, presence, message delivery) ever runs. This is
+    # exactly why online/offline/typing status never worked: the handlers were
+    # never actually executing. We already use Flask's own cookie-based
+    # sessions for auth, not Flask-SocketIO's forked session, so disabling its
+    # session management here is correct and loses nothing. ──
     global socketio
     try:
         # eventlet is already imported and monkey patched above
@@ -207,6 +219,7 @@ def create_app(test_config=None):
             app,
             cors_allowed_origins=allowed_origins,
             async_mode='eventlet',
+            manage_session=False,
             logger=False,
             engineio_logger=False,
         )
@@ -217,6 +230,7 @@ def create_app(test_config=None):
             app,
             cors_allowed_origins=allowed_origins,
             async_mode='threading',
+            manage_session=False,
             logger=False,
             engineio_logger=False,
         )
