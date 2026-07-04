@@ -933,6 +933,14 @@ def create_app(test_config=None):
             'is_pending': u.id in pending, 'is_incoming': u.id in incoming,
         } for u in matches]}), 200
 
+    def _room_size(room):
+        """How many active sockets are in a room right now — lets us tell
+        'nobody was listening' apart from 'the emit itself never happened'."""
+        try:
+            return len(list(socketio.server.manager.get_participants('/', room)))
+        except Exception as e:
+            return f'unknown ({e})'
+
     def _accept_contact_request(user, requester_id, req_row=None):
         """Marks the request accepted and creates the mutual Contact rows."""
         req_row = req_row or ContactRequest.query.filter_by(
@@ -952,9 +960,12 @@ def create_app(test_config=None):
         db.session.commit()
 
         if socketio:
+            room = f'user_{requester_id}'
+            log.info(f'[room] emitting friend_request_accepted to {room} '
+                     f'({_room_size(room)} socket(s) connected)')
             socketio.emit('friend_request_accepted', {
                 'from': user.id, 'username': user.username, 'avatar': user.avatar,
-            }, room=f'user_{requester_id}')
+            }, room=room)
         return jsonify({'success': True, 'message': 'Connected', 'status': 'accepted'}), 200
 
     @app.route('/api/contacts', methods=['POST','OPTIONS'])
@@ -995,9 +1006,12 @@ def create_app(test_config=None):
             db.session.commit()
 
         if socketio:
+            room = f'user_{contact_id}'
+            log.info(f'[room] emitting friend_request to {room} '
+                     f'({_room_size(room)} socket(s) connected)')
             socketio.emit('friend_request', {
                 'from': user.id, 'username': user.username, 'avatar': user.avatar,
-            }, room=f'user_{contact_id}')
+            }, room=room)
 
         return jsonify({'success': True, 'message': f'Request sent to {cu.username}',
                          'contact_id': contact_id, 'username': cu.username,
@@ -1137,6 +1151,8 @@ def create_app(test_config=None):
         user_id = data.get('user_id', '')
         if not user_id: return
         join_room(f'user_{user_id}')
+        log.info(f'[room] sid={request.sid} joined user_{user_id} '
+                 f'(room now has {_room_size(f"user_{user_id}")} socket(s))')
         emit('joined_room', {'room': f'user_{user_id}'})
         if DB_AVAILABLE:
             try:
@@ -1200,9 +1216,9 @@ def create_app(test_config=None):
                    'created_at': created_at, 'temp_id': temp_id}
 
         # ── FIX: deliver exactly once to each side via their personal room.
-        # Using the shared "private_X_Y" room too caused duplicate delivery
-        # whenever the recipient had that specific chat open, and delivered
-        # nothing when they only had a different chat (or no chat) open.
+        log.info(f'[room] delivering msg {msg_id}: user_{receiver_id} has '
+                 f'{_room_size(f"user_{receiver_id}")} socket(s), '
+                 f'user_{sender_id} has {_room_size(f"user_{sender_id}")} socket(s)')
         emit('receive_message', payload, room=f'user_{receiver_id}')
         emit('receive_message', payload, room=f'user_{sender_id}')
 
