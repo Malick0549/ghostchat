@@ -36,7 +36,6 @@ except Exception as exc:
     )
 
 import os
-import re
 import json
 import logging
 import mimetypes
@@ -71,7 +70,6 @@ try:
         IntegrationToken,
         Contact,
         ContactRequest,   # ── FIX: use the existing dedicated request table instead of a Contact.status hack ──
-        ActivityLog,
     )
     DB_AVAILABLE = True
 except ImportError:
@@ -184,37 +182,6 @@ def create_app(test_config=None):
                 db.session.commit()
             except Exception as e:
                 log.error(f'Message media-column migration check failed: {e}')
-
-            # ── FIX: is_admin/verification_code/verification_code_expires are new
-            # User columns for the admin activity log + email verification
-            # features — same db.create_all()-doesn't-ALTER reasoning as above. ──
-            try:
-                from sqlalchemy import inspect, text
-                inspector = inspect(db.engine)
-                user_table = User.__tablename__
-                existing_user_cols = [c['name'] for c in inspector.get_columns(user_table)]
-                if 'is_admin' not in existing_user_cols:
-                    db.session.execute(text(f"ALTER TABLE {user_table} ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
-                    log.info(f"Migrated: added 'is_admin' column to {user_table}")
-                if 'verification_code' not in existing_user_cols:
-                    db.session.execute(text(f"ALTER TABLE {user_table} ADD COLUMN verification_code VARCHAR(10)"))
-                    log.info(f"Migrated: added 'verification_code' column to {user_table}")
-                if 'verification_code_expires' not in existing_user_cols:
-                    db.session.execute(text(f"ALTER TABLE {user_table} ADD COLUMN verification_code_expires DATETIME"))
-                    log.info(f"Migrated: added 'verification_code_expires' column to {user_table}")
-                db.session.commit()
-
-                # ── Admin bootstrap: promote accounts matching ADMIN_EMAILS ──
-                admin_emails = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
-                if admin_emails:
-                    promoted = User.query.filter(db.func.lower(User.email).in_(admin_emails), User.is_admin == False).all()
-                    for u in promoted:
-                        u.is_admin = True
-                    if promoted:
-                        db.session.commit()
-                        log.info(f"Promoted {len(promoted)} account(s) to admin via ADMIN_EMAILS")
-            except Exception as e:
-                log.error(f'User admin-column migration check failed: {e}')
 
     # Session(app) removed — using Flask built-in sessions
 
@@ -387,26 +354,6 @@ def create_app(test_config=None):
             return None, (jsonify({'error': 'User not found'}), 401)
         return user, None
 
-    def _require_admin():
-        """Return (user, None) if authenticated AND an admin, else (None, (response, code))."""
-        user, err = _require_auth()
-        if err: return None, err
-        if not user.is_admin:
-            return None, (jsonify({'error': 'Admin access required'}), 403)
-        return user, None
-
-    def _log_activity(user_id, event_type, description=''):
-        """Best-effort audit trail entry — never blocks or breaks the caller."""
-        if not DB_AVAILABLE: return
-        try:
-            db.session.add(ActivityLog(
-                user_id=user_id, event_type=event_type, description=description,
-                ip_address=request.headers.get('X-Forwarded-For', request.remote_addr),
-            ))
-            db.session.commit()
-        except Exception as e:
-            log.error(f'Activity log write failed ({event_type}): {e}')
-
     def _rotate_csrf_cookie(resp):
         """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
@@ -510,8 +457,6 @@ def create_app(test_config=None):
 
             if not username or not email or not password:
                 return jsonify({'error': 'Username, email, and password are required'}), 400
-            if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
-                return jsonify({'error': 'Please enter a valid email address'}), 400
             if len(password) < 8:
                 return jsonify({'error': 'Password must be at least 8 characters'}), 400
             if User.query.filter_by(username=username).first():
@@ -519,112 +464,22 @@ def create_app(test_config=None):
             if User.query.filter_by(email=email).first():
                 return jsonify({'error': 'Email already registered'}), 400
 
-            # ── FIX: email verification gate — account exists but can't log in
-            # until the code sent to their email is confirmed ──
-            user = User(username=username, email=email, is_verified=False)
-            admin_emails = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
-            if email.lower() in admin_emails:
-                user.is_admin = True
+            user = User(username=username, email=email)
             user.set_password(password)
-            code_str = f'{secrets.randbelow(1000000):06d}'
-            user.verification_code = code_str
-            user.verification_code_expires = datetime.utcnow() + timedelta(minutes=15)
             db.session.add(user)
             db.session.commit()
 
-            _log_activity(user.id, 'register', f'New account: {username}')
-            log.info(f'User registered (pending verification): {username}')
+            session['user_id']       = user.id
+            session['authenticated'] = True
+            log.info(f'User registered: {username}')
 
-            sent = _send_email(
-                subject='Verify your GhostChat account',
-                recipient=email,
-                html_body=f'''
-                    <p>Welcome to GhostChat, {username}!</p>
-                    <p>Your verification code is:</p>
-                    <h2 style="letter-spacing:4px;">{code_str}</h2>
-                    <p>Enter this code to activate your account. It expires in 15 minutes.</p>
-                ''',
-                text_body=f'Your GhostChat verification code is: {code_str}\nIt expires in 15 minutes.',
-            )
-            if not sent:
-                log.info(f'Verification code for {email}: {code_str}')
-
-            return jsonify({
-                'success': True,
-                'requires_verification': True,
-                'email': email,
-                'message': 'Account created. Check your email for a verification code.',
-            }), 201
+            resp = jsonify({'success': True, 'user': user.to_dict()})
+            return _rotate_csrf_cookie(resp), 201
 
         except Exception as exc:
             db.session.rollback() if DB_AVAILABLE else None
             log.error(f'Register error: {exc}')
             return jsonify({'error': 'Registration failed. Please try again.'}), 500
-
-    @app.route('/api/auth/verify-email', methods=['POST', 'OPTIONS'])
-    def verify_email():
-        if request.method == 'OPTIONS':
-            return '', 200
-        if not DB_AVAILABLE:
-            return jsonify({'error': 'Database not available'}), 500
-
-        data  = request.get_json() or {}
-        email = (data.get('email') or '').strip()
-        code  = (data.get('code') or '').strip()
-        if not email or not code:
-            return jsonify({'error': 'Email and code are required'}), 400
-
-        user = User.query.filter_by(email=email).first()
-        if not user or not user.verification_code:
-            return jsonify({'error': 'Invalid or expired verification code'}), 400
-        if user.verification_code != code:
-            return jsonify({'error': 'Incorrect verification code'}), 400
-        if not user.verification_code_expires or datetime.utcnow() > user.verification_code_expires:
-            return jsonify({'error': 'Verification code has expired. Request a new one.'}), 400
-
-        user.is_verified = True
-        user.verification_code = None
-        user.verification_code_expires = None
-        user.last_login = datetime.utcnow()
-        db.session.commit()
-
-        session['user_id']       = user.id
-        session['authenticated'] = True
-        _log_activity(user.id, 'email_verified', f'{user.username} verified their email')
-        log.info(f'Email verified: {user.username}')
-
-        resp = jsonify({'success': True, 'user': user.to_dict()})
-        return _rotate_csrf_cookie(resp), 200
-
-    @app.route('/api/auth/resend-verification', methods=['POST', 'OPTIONS'])
-    def resend_verification():
-        if request.method == 'OPTIONS':
-            return '', 200
-        if not DB_AVAILABLE:
-            return jsonify({'error': 'Database not available'}), 500
-
-        data  = request.get_json() or {}
-        email = (data.get('email') or '').strip()
-        if not email:
-            return jsonify({'error': 'Email is required'}), 400
-
-        user = User.query.filter_by(email=email).first()
-        # Anti-enumeration — always return success regardless of whether the email exists
-        if user and not user.is_verified:
-            code_str = f'{secrets.randbelow(1000000):06d}'
-            user.verification_code = code_str
-            user.verification_code_expires = datetime.utcnow() + timedelta(minutes=15)
-            db.session.commit()
-            sent = _send_email(
-                subject='Your new GhostChat verification code',
-                recipient=email,
-                html_body=f'<p>Your new verification code is:</p><h2 style="letter-spacing:4px;">{code_str}</h2><p>Expires in 15 minutes.</p>',
-                text_body=f'Your new GhostChat verification code is: {code_str}\nExpires in 15 minutes.',
-            )
-            if not sent:
-                log.info(f'Verification code for {email}: {code_str}')
-
-        return jsonify({'success': True, 'message': 'If that email needs verification, a new code has been sent.'}), 200
 
     @app.route('/api/auth/login', methods=['POST', 'OPTIONS'])
     def login():
@@ -653,27 +508,16 @@ def create_app(test_config=None):
             # Constant-time failure — same message for wrong user and wrong password
             if not user or not user.check_password(password):
                 log.warning(f'Failed login for: {username[:30]}')
-                _log_activity(user.id if user else None, 'login_failed',
-                              f'Failed login attempt for "{username[:30]}"')
                 return jsonify({'error': 'Invalid credentials'}), 401
 
             if not user.is_active:
                 return jsonify({'error': 'Account is disabled'}), 401
-
-            # ── FIX: enforce the email-verification gate at login too ──
-            if not user.is_verified:
-                return jsonify({
-                    'error': 'Please verify your email before signing in.',
-                    'requires_verification': True,
-                    'email': user.email,
-                }), 403
 
             user.last_login = datetime.utcnow()
             db.session.commit()
 
             session['user_id']       = user.id
             session['authenticated'] = True
-            _log_activity(user.id, 'login', f'{user.username} logged in')
             log.info(f'User logged in: {user.username}')
 
             resp = jsonify({'success': True, 'user': user.to_dict()})
@@ -687,9 +531,6 @@ def create_app(test_config=None):
     def logout():
         if request.method == 'OPTIONS':
             return '', 200
-        uid = session.get('user_id')
-        if uid:
-            _log_activity(uid, 'logout', 'User logged out')
         session.clear()
         return jsonify({'success': True, 'message': 'Logged out'}), 200
 
@@ -716,8 +557,6 @@ def create_app(test_config=None):
                 return jsonify({'error': 'Email is required'}), 400
 
             user = User.query.filter_by(email=email).first()
-            sent = False   # ── FIX: was only ever assigned inside `if user:`, causing
-                           # NameError for any non-registered email ──
             if user:
                 token = user.generate_reset_token()
                 # Override model's 24h expiry to 15 min (matches UI messaging)
@@ -752,7 +591,6 @@ def create_app(test_config=None):
                     log.info(f'Password reset email sent to: {email}')
                 else:
                     log.warning(f'Password reset email failed for: {email}; link logged in server output.')
-                _log_activity(user.id, 'password_reset_requested', f'Reset requested for {email}')
 
             response = {
                 'success': True,
@@ -793,7 +631,6 @@ def create_app(test_config=None):
             db.session.commit()
 
             log.info(f'Password reset successful: {user.username}')
-            _log_activity(user.id, 'password_reset_completed', f'{user.username} completed password reset')
             return jsonify({'success': True, 'message': 'Password reset successful'}), 200
 
         except Exception as exc:
@@ -1185,11 +1022,6 @@ def create_app(test_config=None):
                                     display_name=user.username))
         db.session.commit()
 
-        _log_activity(user.id, 'contact_request_accepted',
-                      f'{user.username} accepted request from {requester.username if requester else requester_id}')
-        _log_activity(requester_id, 'contact_request_accepted',
-                      f'{requester.username if requester else requester_id} was accepted by {user.username}')
-
         if socketio:
             room = f'user_{requester_id}'
             log.info(f'[room] emitting friend_request_accepted to {room} '
@@ -1244,8 +1076,6 @@ def create_app(test_config=None):
                 'from': user.id, 'username': user.username, 'avatar': user.avatar,
             }, room=room)
 
-        _log_activity(user.id, 'contact_request_sent', f'{user.username} sent a request to {cu.username}')
-
         return jsonify({'success': True, 'message': f'Request sent to {cu.username}',
                          'contact_id': contact_id, 'username': cu.username,
                          'avatar': cu.avatar, 'status': 'pending_sent'}), 201
@@ -1283,7 +1113,6 @@ def create_app(test_config=None):
         req_row.status = 'rejected'
         req_row.updated_at = datetime.utcnow()
         db.session.commit()
-        _log_activity(user.id, 'contact_request_rejected', f'{user.username} declined a request from {contact_id}')
         if socketio:
             socketio.emit('friend_request_rejected', {'from': user.id}, room=f'user_{contact_id}')
         return jsonify({'success': True, 'message': 'Request declined'}), 200
@@ -1364,7 +1193,6 @@ def create_app(test_config=None):
                       encrypted_content=content, message_type='chat')
         db.session.add(msg)
         db.session.commit()
-        _log_activity(user.id, 'message_sent', 'text message')   # counts only — never logs content
         payload = {'id': msg.id, 'content': content, 'sender_id': user.id,
                    'sender': user.username, 'avatar': user.avatar,
                    'receiver_id': contact_id, 'created_at': msg.created_at.isoformat()}
@@ -1428,7 +1256,6 @@ def create_app(test_config=None):
         )
         db.session.add(msg)
         db.session.commit()
-        _log_activity(user.id, 'message_sent', f'{media_kind} message')   # counts only
 
         payload = {
             'id': msg.id, 'sender_id': user.id, 'sender': user.username, 'avatar': user.avatar,
@@ -1560,57 +1387,6 @@ def create_app(test_config=None):
         db.session.commit()
         return jsonify({'success': True, 'scope': 'me'}), 200
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # ADMIN — activity log viewing
-    # ═══════════════════════════════════════════════════════════════════════════
-
-    @app.route('/api/admin/activity-logs', methods=['GET'])
-    def admin_activity_logs():
-        admin, err = _require_admin()
-        if err: return err
-        if not DB_AVAILABLE:
-            return jsonify({'error': 'Storage unavailable'}), 503
-
-        limit = min(request.args.get('limit', 100, type=int), 500)
-        offset = request.args.get('offset', 0, type=int)
-        event_type = (request.args.get('event_type') or '').strip()
-
-        query = ActivityLog.query
-        if event_type:
-            query = query.filter_by(event_type=event_type)
-        total = query.count()
-        logs = query.order_by(ActivityLog.created_at.desc()).offset(offset).limit(limit).all()
-
-        return jsonify({
-            'success': True,
-            'logs': [l.to_dict() for l in logs],
-            'total': total,
-            'limit': limit,
-            'offset': offset,
-        }), 200
-
-    @app.route('/api/admin/stats', methods=['GET'])
-    def admin_stats():
-        admin, err = _require_admin()
-        if err: return err
-        if not DB_AVAILABLE:
-            return jsonify({'error': 'Storage unavailable'}), 503
-
-        from sqlalchemy import func
-        event_counts = dict(
-            db.session.query(ActivityLog.event_type, func.count(ActivityLog.id))
-            .group_by(ActivityLog.event_type).all()
-        )
-        return jsonify({
-            'success': True,
-            'total_users': User.query.count(),
-            'verified_users': User.query.filter_by(is_verified=True).count(),
-            'total_messages': Message.query.filter(
-                Message.message_type.in_(['chat', 'image', 'audio', 'video'])
-            ).count(),
-            'event_counts': event_counts,
-        }), 200
-
     @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
@@ -1696,7 +1472,6 @@ def create_app(test_config=None):
                 db.session.add(msg)
                 db.session.commit()
                 created_at = msg.created_at.isoformat()
-                _log_activity(sender_id, 'message_sent', 'text message')   # counts only
             except Exception as e:
                 log.error(f'Save chat msg failed: {e}')
                 emit('message_failed', {'temp_id': temp_id, 'error': 'Could not save message'})

@@ -197,11 +197,6 @@
         showErr('Invalid credentials. Please try again.');
         document.getElementById('loginPw').value = '';
         document.getElementById('loginPw').focus();
-      } else if (status === 403 && err?.data?.requires_verification) {
-        showOk('Please verify your email to continue…');
-        setTimeout(() => {
-          window.location.href = `verify-email.html?email=${encodeURIComponent(err.data.email || username)}`;
-        }, 700);
       } else if (status === 403) {
         await window.GhostChatAPI.fetchCsrfToken();
         document.getElementById('csrfToken').value = window.GhostChatAPI.getCsrfToken() || '';
