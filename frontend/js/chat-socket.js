@@ -271,6 +271,9 @@ class GhostChatRealtime {
                             <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.openForwardPicker('${msg.id}')" title="Forward to another contact">
                                 <i class="fas fa-share"></i> Forward
                             </button>
+                            <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.deleteMessage('${msg.id}', ${isMine})" title="Delete">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
                         </div>
                         <div class="msg-meta">
                             <span class="msg-time">${time}</span>
@@ -320,6 +323,9 @@ class GhostChatRealtime {
                         </button>` : ''}
                         <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.openForwardPicker('${msg.id}')" title="Forward to another contact">
                             <i class="fas fa-share"></i> Forward
+                        </button>
+                        <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.deleteMessage('${msg.id}', ${isMine})" title="Delete">
+                            <i class="fas fa-trash"></i> Delete
                         </button>
                     </div>
                     <div class="msg-meta">
@@ -787,6 +793,11 @@ class GhostChatRealtime {
                 }
             });
 
+            this.socket.on('message_deleted', data => {
+                this.messages = this.messages.filter(m => m.id !== data.message_id);
+                this._renderMessages();
+            });
+
             // ── FIX: these now come from the SERVER (emitted by the backend
             // when a request is sent/accepted/rejected), not from the other
             // client directly — the old client-to-client emits had no backend
@@ -943,6 +954,39 @@ class GhostChatRealtime {
             this._toast('Forward failed', 'error');
         }
         this._forwardingMsgId = null;
+    }
+
+    // ── Delete a message — "for me" hides it only in your own view;
+    // "for everyone" (sender only) erases it for both sides. ──
+    async deleteMessage(msgId, isMine) {
+        let scope = 'me';
+        if (isMine) {
+            const everyone = confirm('Delete for everyone? Click Cancel to delete just for you.');
+            scope = everyone ? 'everyone' : 'me';
+        } else if (!confirm('Delete this message for you?')) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`${this._base()}/api/chat/messages/${msgId}?scope=${scope}`, {
+                method: 'DELETE',
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+            });
+            const data = await res.json();
+            if (data.success) {
+                this.messages = this.messages.filter(m => m.id !== msgId);
+                this._renderMessages();
+                this._toast(scope === 'everyone' ? 'Deleted for everyone' : 'Deleted for you', 'success');
+            } else {
+                this._toast(data.error || 'Delete failed', 'error');
+            }
+        } catch (_) {
+            this._toast('Delete failed', 'error');
+        }
     }
 
     openPendingPanel() {
