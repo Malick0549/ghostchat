@@ -37,6 +37,7 @@ except Exception as exc:
 
 import os
 import logging
+import json
 import mimetypes
 import secrets
 import smtplib
@@ -1165,6 +1166,13 @@ def create_app(test_config=None):
         if before: query = query.filter(Message.created_at < before)
         messages = query.order_by(Message.created_at.desc()).limit(limit).all()
         messages.reverse()
+        # ── Exclude anything this user has deleted "for me" ──
+        def _not_deleted_for_me(m):
+            try:
+                return user.id not in (json.loads(m.deleted_for) if m.deleted_for else [])
+            except Exception:
+                return True
+        messages = [m for m in messages if _not_deleted_for_me(m)]
         unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False) \
             .filter(Message.message_type.in_(_chat_types)).all()
         for m in unread_msgs:
@@ -1261,7 +1269,55 @@ def create_app(test_config=None):
 
         return jsonify({'success': True, 'message': payload}), 201
 
-    @app.route('/api/media/<message_id>', methods=['GET'])
+    @app.route('/api/chat/messages/<message_id>', methods=['DELETE', 'OPTIONS'])
+    def delete_chat_message(message_id):
+        """
+        Delete a CHAT message (text, image, audio, or video) — distinct from
+        the /api/messages/<id> route above, which is for the dashboard's
+        encryption-history log entries and has different semantics (owner-only
+        hard delete, no sender/receiver concept, no 'scope').
+        ?scope=me       — hides it only for the requesting user (default)
+        ?scope=everyone — sender only; erases content/media for both sides
+        """
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        msg = Message.query.get(message_id)
+        if not msg:
+            return jsonify({'error': 'Message not found'}), 404
+        if user.id not in (msg.sender_id, msg.receiver_id):
+            return jsonify({'error': 'Forbidden'}), 403
+
+        scope = (request.args.get('scope') or 'me').strip().lower()
+
+        if scope == 'everyone':
+            if msg.sender_id != user.id:
+                return jsonify({'error': 'Only the sender can delete for everyone'}), 403
+            msg.is_deleted = True
+            msg.encrypted_content = ''
+            msg.media_data = None   # actually free the blob, not just hide it
+            msg.media_type = None
+            db.session.commit()
+            if socketio:
+                socketio.emit('message_deleted', {'message_id': message_id, 'scope': 'everyone'},
+                               room=f'user_{msg.receiver_id}')
+                socketio.emit('message_deleted', {'message_id': message_id, 'scope': 'everyone'},
+                               room=f'user_{msg.sender_id}')
+            return jsonify({'success': True, 'scope': 'everyone'}), 200
+
+        # scope == 'me' — hide it only in the requester's own view
+        try:
+            deleted_for = json.loads(msg.deleted_for) if msg.deleted_for else []
+        except Exception:
+            deleted_for = []
+        if user.id not in deleted_for:
+            deleted_for.append(user.id)
+        msg.deleted_for = json.dumps(deleted_for)
+        db.session.commit()
+        return jsonify({'success': True, 'scope': 'me'}), 200
     def get_media(message_id):
         user, err = _require_auth()
         if err: return err
