@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b12" />
+  <title>Admin Dashboard — GhostChat</title>
+  <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+  <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    .admin-shell {
+      max-width: 1200px; margin: 0 auto; padding: 32px 24px 60px;
+    }
+    .admin-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 28px; flex-wrap: wrap; gap: 12px;
+    }
+    .admin-header h1 {
+      font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .admin-header h1 i { color: var(--primary); }
+    .admin-back {
+      color: var(--t2); font-size: .8rem; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .admin-back:hover { color: var(--primary); }
+
+    .stat-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px; margin-bottom: 32px;
+    }
+    .stat-card {
+      background: var(--card, var(--bg3)); border: 1px solid var(--border);
+      border-radius: var(--r4); padding: 20px;
+    }
+    .stat-card .stat-label {
+      font-family: var(--mono); font-size: .7rem; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--t3); margin-bottom: 8px;
+    }
+    .stat-card .stat-value {
+      font-size: 1.8rem; font-weight: 700; color: var(--t1);
+    }
+    .stat-card .stat-value.accent { color: var(--primary); }
+
+    .panel {
+      background: var(--card, var(--bg3)); border: 1px solid var(--border);
+      border-radius: var(--r4); padding: 20px; margin-bottom: 24px;
+    }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
+    }
+    .panel-header h2 { font-size: 1rem; font-weight: 600; }
+
+    .event-breakdown { display: flex; flex-wrap: wrap; gap: 8px; }
+    .event-pill {
+      background: var(--bg, #0a0d14); border: 1px solid var(--border);
+      border-radius: 999px; padding: 5px 12px; font-size: .75rem;
+      color: var(--t2); cursor: pointer; transition: border-color .15s, color .15s;
+    }
+    .event-pill:hover, .event-pill.active {
+      border-color: var(--primary); color: var(--primary);
+    }
+    .event-pill .count { color: var(--t3); margin-left: 4px; }
+    .event-pill.active .count { color: var(--primary); }
+
+    table.log-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+    table.log-table th {
+      text-align: left; font-family: var(--mono); font-size: .68rem;
+      letter-spacing: .06em; text-transform: uppercase; color: var(--t3);
+      padding: 10px 12px; border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    table.log-table td {
+      padding: 10px 12px; border-bottom: 1px solid var(--border);
+      color: var(--t1); vertical-align: top;
+    }
+    table.log-table tr:last-child td { border-bottom: none; }
+    table.log-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .event-badge {
+      display: inline-block; padding: 2px 9px; border-radius: 999px;
+      font-size: .7rem; font-weight: 600; white-space: nowrap;
+    }
+    .event-badge.login, .event-badge.email_verified, .event-badge.contact_request_accepted { background: rgba(0,255,136,.12); color: var(--green); }
+    .event-badge.login_failed, .event-badge.contact_request_rejected { background: rgba(255,59,92,.12); color: var(--red); }
+    .event-badge.register { background: rgba(0,212,255,.12); color: var(--primary); }
+    .event-badge.logout { background: rgba(255,255,255,.08); color: var(--t2); }
+    .event-badge.password_reset_requested, .event-badge.password_reset_completed { background: rgba(255,184,0,.12); color: var(--amber); }
+    .event-badge.message_sent { background: rgba(255,255,255,.06); color: var(--t2); }
+    .event-badge.contact_request_sent { background: rgba(0,212,255,.10); color: var(--primary); }
+
+    .pagination {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 16px; font-size: .8rem; color: var(--t3); flex-wrap: wrap; gap: 10px;
+    }
+    .pagination-controls { display: flex; gap: 8px; }
+
+    .admin-empty, .admin-loading {
+      text-align: center; padding: 40px 20px; color: var(--t3); font-size: .875rem;
+    }
+    .admin-denied {
+      max-width: 480px; margin: 80px auto; text-align: center; padding: 40px;
+    }
+  </style>
+</head>
+<body data-theme="dark">
+
+<div class="cyber-bg" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<div id="deniedView" class="admin-denied" style="display:none;">
+  <i class="fas fa-lock" style="font-size:2rem;color:var(--red);margin-bottom:16px;display:block;"></i>
+  <h2 style="margin-bottom:10px;">Admin access required</h2>
+  <p style="color:var(--t2);margin-bottom:20px;">This account doesn't have admin privileges.</p>
+  <a href="dashboard.html" class="btn btn-primary">Back to Dashboard</a>
+</div>
+
+<div id="adminView" class="admin-shell" style="display:none;">
+  <div class="admin-header">
+    <h1><i class="fas fa-shield-halved"></i> Admin Dashboard</h1>
+    <a href="dashboard.html" class="admin-back"><i class="fas fa-arrow-left"></i> Back to Dashboard</a>
+  </div>
+
+  <div class="stat-grid" id="statGrid">
+    <div class="admin-loading">Loading stats…</div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h2><i class="fas fa-chart-simple" style="color:var(--primary);"></i> Event breakdown</h2>
+      <button class="btn btn-ghost btn-sm" id="refreshBtn"><i class="fas fa-rotate"></i> Refresh</button>
+    </div>
+    <div class="event-breakdown" id="eventBreakdown"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h2><i class="fas fa-list-ul" style="color:var(--primary);"></i> Activity Log</h2>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="log-table" id="logTable">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>User</th>
+            <th>Event</th>
+            <th>Description</th>
+            <th>IP Address</th>
+          </tr>
+        </thead>
+        <tbody id="logTableBody">
+          <tr><td colspan="5" class="admin-loading">Loading activity…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span id="pageInfo">—</span>
+      <div class="pagination-controls">
+        <button class="btn btn-ghost btn-sm" id="prevPageBtn"><i class="fas fa-chevron-left"></i> Prev</button>
+        <button class="btn btn-ghost btn-sm" id="nextPageBtn">Next <i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const PAGE_SIZE = 50;
+  let offset = 0;
+  let total = 0;
+  let activeEventType = '';
+
+  const EVENT_LABELS = {
+    login: 'Login', login_failed: 'Login failed', logout: 'Logout',
+    register: 'Registered', email_verified: 'Email verified',
+    password_reset_requested: 'Reset requested', password_reset_completed: 'Reset completed',
+    contact_request_sent: 'Request sent', contact_request_accepted: 'Request accepted',
+    contact_request_rejected: 'Request declined', message_sent: 'Message sent',
+  };
+
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = String(str ?? '');
+    return d.innerHTML;
+  }
+
+  async function init() {
+    try {
+      const profile = await window.GhostChatAPI.getProfile();
+      if (!profile?.user?.is_admin) {
+        document.getElementById('deniedView').style.display = 'block';
+        return;
+      }
+    } catch (_) {
+      document.getElementById('deniedView').style.display = 'block';
+      return;
+    }
+    document.getElementById('adminView').style.display = 'block';
+    await Promise.all([loadStats(), loadLogs()]);
+  }
+
+  async function loadStats() {
+    try {
+      const data = await window.GhostChatAPI._get('/api/admin/stats');
+      renderStats(data);
+    } catch (err) {
+      document.getElementById('statGrid').innerHTML =
+        `<div class="admin-empty">Failed to load stats: ${esc(err.message || 'unknown error')}</div>`;
+    }
+  }
+
+  function renderStats(data) {
+    const cards = [
+      { label: 'Total users', value: data.total_users ?? 0, accent: true },
+      { label: 'Verified users', value: data.verified_users ?? 0 },
+      { label: 'Total messages', value: data.total_messages ?? 0 },
+      { label: 'Event types tracked', value: Object.keys(data.event_counts || {}).length },
+    ];
+    document.getElementById('statGrid').innerHTML = cards.map(c => `
+      <div class="stat-card">
+        <div class="stat-label">${esc(c.label)}</div>
+        <div class="stat-value${c.accent ? ' accent' : ''}">${c.value}</div>
+      </div>`).join('');
+
+    const counts = data.event_counts || {};
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const pillsHtml = [`<button class="event-pill${activeEventType === '' ? ' active' : ''}" data-type="">All events<span class="count">${Object.values(counts).reduce((a, b) => a + b, 0)}</span></button>`]
+      .concat(entries.map(([type, count]) => `
+        <button class="event-pill${activeEventType === type ? ' active' : ''}" data-type="${esc(type)}">
+          ${esc(EVENT_LABELS[type] || type)}<span class="count">${count}</span>
+        </button>`));
+    document.getElementById('eventBreakdown').innerHTML = pillsHtml.join('');
+
+    document.querySelectorAll('.event-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeEventType = btn.dataset.type || '';
+        offset = 0;
+        loadLogs();
+        document.querySelectorAll('.event-pill').forEach(b => b.classList.toggle('active', b === btn));
+      });
+    });
+  }
+
+  async function loadLogs() {
+    const tbody = document.getElementById('logTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" class="admin-loading">Loading activity…</td></tr>';
+    try {
+      const qs = new URLSearchParams({ limit: PAGE_SIZE, offset });
+      if (activeEventType) qs.set('event_type', activeEventType);
+      const data = await window.GhostChatAPI._get(`/api/admin/activity-logs?${qs.toString()}`);
+      total = data.total || 0;
+      renderLogs(data.logs || []);
+      renderPagination();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" class="admin-empty">Failed to load activity: ${esc(err.message || 'unknown error')}</td></tr>`;
+    }
+  }
+
+  function renderLogs(logs) {
+    const tbody = document.getElementById('logTableBody');
+    if (!logs.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="admin-empty">No activity recorded yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = logs.map(l => `
+      <tr>
+        <td style="white-space:nowrap;">${fmtTime(l.created_at)}</td>
+        <td>${esc(l.username || '—')}</td>
+        <td><span class="event-badge ${esc(l.event_type)}">${esc(EVENT_LABELS[l.event_type] || l.event_type)}</span></td>
+        <td>${esc(l.description || '')}</td>
+        <td style="font-family:var(--mono);font-size:.75rem;color:var(--t3);">${esc(l.ip_address || '—')}</td>
+      </tr>`).join('');
+  }
+
+  function renderPagination() {
+    const shown = total === 0 ? 0 : offset + 1;
+    const shownEnd = Math.min(offset + PAGE_SIZE, total);
+    document.getElementById('pageInfo').textContent = `Showing ${shown}–${shownEnd} of ${total}`;
+    document.getElementById('prevPageBtn').disabled = offset === 0;
+    document.getElementById('nextPageBtn').disabled = offset + PAGE_SIZE >= total;
+  }
+
+  document.getElementById('prevPageBtn').addEventListener('click', () => {
+    offset = Math.max(0, offset - PAGE_SIZE);
+    loadLogs();
+  });
+  document.getElementById('nextPageBtn').addEventListener('click', () => {
+    if (offset + PAGE_SIZE < total) { offset += PAGE_SIZE; loadLogs(); }
+  });
+  document.getElementById('refreshBtn').addEventListener('click', () => {
+    offset = 0;
+    loadStats();
+    loadLogs();
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
