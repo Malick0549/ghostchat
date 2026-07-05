@@ -941,21 +941,21 @@ def create_app(test_config=None):
         user, err = _require_auth()
         if err: return err
         contacts = Contact.query.filter_by(user_id=user.id, is_blocked=False).all()
+        _chat_types = ['chat', 'image', 'audio', 'video']   # ── FIX: same 'chat'-only bug as message history ──
         result = []
         for c in contacts:
             cu = User.query.get(c.contact_id)
             if not cu: continue
             last_msg = Message.query.filter(
-                Message.is_deleted == False, Message.message_type == 'chat',
+                Message.is_deleted == False, Message.message_type.in_(_chat_types),
                 db.or_(
                     db.and_(Message.sender_id==user.id, Message.receiver_id==c.contact_id),
                     db.and_(Message.sender_id==c.contact_id, Message.receiver_id==user.id),
                 )
             ).order_by(Message.created_at.desc()).first()
             unread = Message.query.filter_by(
-                sender_id=c.contact_id, receiver_id=user.id,
-                is_read=False, message_type='chat'
-            ).count()
+                sender_id=c.contact_id, receiver_id=user.id, is_read=False
+            ).filter(Message.message_type.in_(_chat_types)).count()
             result.append({
                 'id': c.id, 'contact_id': cu.id, 'username': cu.username,
                 'display_name': c.display_name or cu.username,
@@ -964,7 +964,10 @@ def create_app(test_config=None):
                 'last_seen': cu.last_seen.isoformat() if cu.last_seen else None,
                 'is_favorite': c.is_favorite, 'unread_count': unread,
                 'last_message': {
-                    'content': last_msg.encrypted_content,
+                    'content': (
+                        {'image': '📷 Photo', 'audio': '🎤 Voice note', 'video': '🎥 Video'}.get(last_msg.message_type)
+                        or last_msg.encrypted_content
+                    ),
                     'created_at': last_msg.created_at.isoformat(),
                     'is_mine': last_msg.sender_id == user.id,
                 } if last_msg else None,
@@ -1146,8 +1149,14 @@ def create_app(test_config=None):
         if err: return err
         limit  = request.args.get('limit', 50, type=int)
         before = request.args.get('before', None)
+        # ── FIX: this was hardcoded to message_type == 'chat', which silently
+        # excluded every image/audio/video message from history — they were
+        # never actually lost, just filtered out the moment you left and
+        # reopened the chat (a fresh fetch from this route is what backs
+        # _loadMessages()). ──
+        _chat_types = ['chat', 'image', 'audio', 'video']
         query  = Message.query.filter(
-            Message.is_deleted == False, Message.message_type == 'chat',
+            Message.is_deleted == False, Message.message_type.in_(_chat_types),
             db.or_(
                 db.and_(Message.sender_id==user.id, Message.receiver_id==contact_id),
                 db.and_(Message.sender_id==contact_id, Message.receiver_id==user.id),
@@ -1156,7 +1165,8 @@ def create_app(test_config=None):
         if before: query = query.filter(Message.created_at < before)
         messages = query.order_by(Message.created_at.desc()).limit(limit).all()
         messages.reverse()
-        unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False, message_type='chat').all()
+        unread_msgs = Message.query.filter_by(sender_id=contact_id, receiver_id=user.id, is_read=False) \
+            .filter(Message.message_type.in_(_chat_types)).all()
         for m in unread_msgs:
             m.is_read = True
             m.read_at = datetime.utcnow()
