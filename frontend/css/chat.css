@@ -390,7 +390,7 @@
   padding: 10px; z-index: 50;
 }
 .attach-options {
-  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
 }
 .attach-option {
   display: flex; flex-direction: column; align-items: center; gap: 6px;

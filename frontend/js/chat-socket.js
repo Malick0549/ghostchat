@@ -264,6 +264,14 @@ class GhostChatRealtime {
                     <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
                         ${mediaHtml}
                         ${caption}
+                        <div class="msg-crypto-actions">
+                            <a class="msg-decrypt-btn msg-crypto-btn" href="${url}?download=1" download="${this._esc(msg.file_name || msg.message_type)}" title="Download">
+                                <i class="fas fa-download"></i> Download
+                            </a>
+                            <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.openForwardPicker('${msg.id}')" title="Forward to another contact">
+                                <i class="fas fa-share"></i> Forward
+                            </button>
+                        </div>
                         <div class="msg-meta">
                             <span class="msg-time">${time}</span>
                             ${status}
@@ -310,6 +318,9 @@ class GhostChatRealtime {
                         <button class="msg-decrypt-btn msg-crypto-btn" id="crypto-copy-${msg.id}" onclick="window.chat.copyRawPacket('${msg.id}')" title="Copy the exact encrypted packet — safe to paste into the Dashboard decrypt tool">
                             <i class="fas fa-copy"></i> Copy
                         </button>` : ''}
+                        <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.openForwardPicker('${msg.id}')" title="Forward to another contact">
+                            <i class="fas fa-share"></i> Forward
+                        </button>
                     </div>
                     <div class="msg-meta">
                         <span class="msg-time">${time}</span>
@@ -877,6 +888,63 @@ class GhostChatRealtime {
         badge.textContent = n > 99 ? '99+' : n;
     }
 
+    // ── Forward a message (text or media) to another contact ──
+    openForwardPicker(msgId) {
+        this._forwardingMsgId = msgId;
+        const container = document.getElementById('userSearchResults');
+        const searchInput = document.getElementById('newChatSearch');
+        if (!container) return;
+        if (searchInput) searchInput.style.display = 'none';
+
+        const contacts = this.contacts || [];
+        container.innerHTML = contacts.length
+            ? contacts.map(c => `
+                <div class="search-result-item">
+                    <div class="result-avatar">
+                        ${c.avatar && c.avatar !== '/assets/images/default-avatar.png'
+                            ? `<img src="${c.avatar}" alt="${(c.display_name || c.username)[0]}" onerror="this.outerHTML='<span>${(c.display_name || c.username)[0].toUpperCase()}</span>';" />`
+                            : `<span>${(c.display_name || c.username)[0].toUpperCase()}</span>`}
+                    </div>
+                    <div class="result-info">
+                        <div class="result-name">${this._esc(c.display_name || c.username)}</div>
+                    </div>
+                    <button class="btn-add-contact" onclick="window.chat.forwardMessage('${c.contact_id}', '${this._esc(c.display_name || c.username)}')">
+                        <i class="fas fa-share"></i> Forward here
+                    </button>
+                </div>`).join('')
+            : '<div class="no-results" style="padding:20px;text-align:center;color:var(--t3);">No contacts to forward to yet</div>';
+
+        openModal('newChatModal');
+    }
+
+    async forwardMessage(toContactId, username) {
+        const msgId = this._forwardingMsgId;
+        if (!msgId) return;
+        try {
+            const res = await fetch(`${this._base()}/api/messages/${msgId}/forward`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+                body: JSON.stringify({ contact_id: toContactId }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                this._toast(`Forwarded to ${username}`, 'success');
+                closeModal('newChatModal');
+                if (this.currentContact?.contact_id === toContactId) await this._loadMessages(toContactId);
+            } else {
+                this._toast(data.error || 'Forward failed', 'error');
+            }
+        } catch (_) {
+            this._toast('Forward failed', 'error');
+        }
+        this._forwardingMsgId = null;
+    }
+
     openPendingPanel() {
         const container = document.getElementById('userSearchResults');
         const searchInput = document.getElementById('newChatSearch');
@@ -1130,6 +1198,15 @@ _renderSearchResults(users) {
         document.getElementById('attachVideoBtn')?.addEventListener('click', () => {
             document.getElementById('attachMenu').style.display = 'none';
             document.getElementById('videoFileInput')?.click();
+        });
+        document.getElementById('attachSongBtn')?.addEventListener('click', () => {
+            document.getElementById('attachMenu').style.display = 'none';
+            document.getElementById('songFileInput')?.click();
+        });
+        document.getElementById('songFileInput')?.addEventListener('change', e => {
+            const file = e.target.files?.[0];
+            if (file) this._uploadMedia(file, 'audio');
+            e.target.value = '';
         });
         document.getElementById('imageFileInput')?.addEventListener('change', e => {
             const file = e.target.files?.[0];

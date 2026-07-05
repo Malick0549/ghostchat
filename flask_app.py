@@ -1277,9 +1277,60 @@ def create_app(test_config=None):
 
         resp = Response(msg.media_data, mimetype=msg.media_type or 'application/octet-stream')
         safe_name = (msg.file_name or 'file').replace('"', '')
-        resp.headers['Content-Disposition'] = f'inline; filename="{safe_name}"'
+        disposition = 'attachment' if request.args.get('download') else 'inline'
+        resp.headers['Content-Disposition'] = f'{disposition}; filename="{safe_name}"'
         resp.headers['Cache-Control'] = 'private, max-age=86400'
         return resp
+
+    @app.route('/api/messages/<message_id>/forward', methods=['POST', 'OPTIONS'])
+    def forward_message(message_id):
+        """Forward a text or media message to another accepted contact."""
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        to_contact_id = ((request.get_json() or {}).get('contact_id') or '').strip()
+        if not to_contact_id:
+            return jsonify({'error': 'contact_id required'}), 400
+
+        original = Message.query.get(message_id)
+        if not original:
+            return jsonify({'error': 'Message not found'}), 404
+        # Can only forward a message you actually sent or received
+        if user.id not in (original.sender_id, original.receiver_id):
+            return jsonify({'error': 'Forbidden'}), 403
+
+        link = Contact.query.filter_by(user_id=user.id, contact_id=to_contact_id).first()
+        if not link:
+            return jsonify({'error': 'You are not connected with this recipient'}), 403
+
+        forwarded = Message(
+            user_id=user.id, sender_id=user.id, receiver_id=to_contact_id,
+            encrypted_content=original.encrypted_content,
+            message_type=original.message_type,
+            media_data=original.media_data, media_type=original.media_type,
+            file_name=original.file_name, file_size=original.file_size,
+            is_delivered=True,
+        )
+        db.session.add(forwarded)
+        db.session.commit()
+
+        payload = {
+            'id': forwarded.id, 'sender_id': user.id, 'sender': user.username, 'avatar': user.avatar,
+            'receiver_id': to_contact_id, 'created_at': forwarded.created_at.isoformat(),
+            'message_type': forwarded.message_type, 'content': forwarded.encrypted_content,
+            'media_url': f'/api/media/{forwarded.id}' if forwarded.media_data else None,
+            'file_name': forwarded.file_name, 'file_size': forwarded.file_size,
+        }
+        if socketio:
+            socketio.emit('receive_message', payload, room=f'user_{to_contact_id}')
+            socketio.emit('receive_message', payload, room=f'user_{user.id}')
+
+        return jsonify({'success': True, 'message': payload}), 201
+
+    @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
         emit('connected', {'status': 'connected', 'sid': request.sid})
