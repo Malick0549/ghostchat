@@ -316,8 +316,16 @@
       const data = await window.GhostChatAPI.register(payload);
 
       if (data.success) {
-        showOk('Account created! Redirecting to dashboard…');
-        setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
+        if (data.requires_verification) {
+          showOk('Account created! Check your email for a verification code…');
+          setTimeout(() => {
+            window.location.href = `verify-email.html?email=${encodeURIComponent(data.email || em)}`;
+          }, 900);
+        } else {
+          // Fallback for any deployment without the verification gate enabled
+          showOk('Account created! Redirecting to dashboard…');
+          setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
+        }
       } else {
         showErr(data.error || data.message || 'Registration failed. Please try again.');
       }

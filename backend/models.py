@@ -36,6 +36,11 @@ class User(db.Model):
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     is_online = db.Column(db.Boolean, default=False)
     is_verified = db.Column(db.Boolean, default=False)
+    is_admin = db.Column(db.Boolean, default=False)
+
+    # Email verification fields (registration gate)
+    verification_code = db.Column(db.String(10), nullable=True)
+    verification_code_expires = db.Column(db.DateTime, nullable=True)
     
     # Relationships - FIXED: Specify foreign_keys to avoid ambiguity
     messages = db.relationship('Message', foreign_keys='Message.user_id', backref='user', lazy=True)
@@ -77,7 +82,8 @@ class User(db.Model):
             'about': self.about,
             'last_seen': self.last_seen.isoformat() if self.last_seen else None,
             'is_online': self.is_online,
-            'is_verified': self.is_verified
+            'is_verified': self.is_verified,
+            'is_admin': self.is_admin
         }
     
     def __repr__(self):
@@ -183,6 +189,32 @@ class Message(db.Model):
             'media_url': self.media_url,
             'file_name': self.file_name,
             'file_size': self.file_size
+        }
+
+
+class ActivityLog(db.Model):
+    """Audit trail for admin visibility — logins, registrations, connection
+    requests, password resets, and message activity (counts only, never
+    content, since chat messages are end-to-end style encrypted)."""
+    __tablename__ = 'activity_logs'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    event_type = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.String(500), nullable=True)
+    ip_address = db.Column(db.String(45), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        u = User.query.get(self.user_id) if self.user_id else None
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'username': u.username if u else None,
+            'event_type': self.event_type,
+            'description': self.description,
+            'ip_address': self.ip_address,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
