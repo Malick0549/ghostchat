@@ -137,6 +137,17 @@ class GhostChatAPI {
         return d;
     }
 
+    async verifyEmail(email, code) {
+        const d = await this._post('/api/auth/verify-email', { email, code });
+        if (d.user) localStorage.setItem('ghostchat_user', JSON.stringify(d.user));
+        this._csrfToken = this._getCsrfFromCookie() || this._csrfToken;
+        return d;
+    }
+
+    resendVerification(email) {
+        return this._post('/api/auth/resend-verification', { email });
+    }
+
     async logout() {
         try { await this._post('/api/auth/logout', {}); } catch (_) {}
         sessionStorage.clear();
