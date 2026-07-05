@@ -245,8 +245,35 @@ class GhostChatRealtime {
             }
 
             const time = this._formatTime(msg.created_at);
-            const rawContent = msg.encrypted_content || '';
             const status = isMine ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>` : '';
+
+            // ── Media messages (image/audio/video) render as their own bubble type ──
+            if (['image', 'audio', 'video'].includes(msg.message_type)) {
+                const url = msg.media_url || (msg.id ? `/api/media/${msg.id}` : '');
+                const caption = msg.encrypted_content ? `<div class="msg-content">${this._esc(msg.encrypted_content)}</div>` : '';
+                let mediaHtml = '';
+                if (msg.message_type === 'image') {
+                    mediaHtml = `<img class="msg-media-image" src="${url}" alt="Shared image" onclick="window.open('${url}', '_blank')">`;
+                } else if (msg.message_type === 'audio') {
+                    mediaHtml = `<audio class="msg-media-audio" controls src="${url}"></audio>`;
+                } else {
+                    mediaHtml = `<video class="msg-media-video" controls src="${url}"></video>`;
+                }
+                html += `
+                <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
+                    <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
+                        ${mediaHtml}
+                        ${caption}
+                        <div class="msg-meta">
+                            <span class="msg-time">${time}</span>
+                            ${status}
+                        </div>
+                    </div>
+                </div>`;
+                return;
+            }
+
+            const rawContent = msg.encrypted_content || '';
 
             const looksEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(rawContent) && rawContent.length > 10;
 
@@ -275,9 +302,15 @@ class GhostChatRealtime {
                     <div class="msg-content" id="content-${msg.id}">
                         ${state === 'encrypted' ? '🔒 ' : ''}${displayContent}
                     </div>
-                    <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.${state === 'encrypted' ? 'decryptMessage' : 'encryptMessageBubble'}('${msg.id}')">
-                        <i class="fas fa-${state === 'encrypted' ? 'lock' : 'lock-open'}"></i> ${state === 'encrypted' ? 'Decrypt' : 'Encrypt'}
-                    </button>
+                    <div class="msg-crypto-actions" id="crypto-actions-${msg.id}">
+                        <button class="msg-decrypt-btn msg-crypto-btn" id="crypto-toggle-${msg.id}" onclick="window.chat.${state === 'encrypted' ? 'decryptMessage' : 'encryptMessageBubble'}('${msg.id}')">
+                            <i class="fas fa-${state === 'encrypted' ? 'lock' : 'lock-open'}"></i> ${state === 'encrypted' ? 'Decrypt' : 'Encrypt'}
+                        </button>
+                        ${state === 'encrypted' ? `
+                        <button class="msg-decrypt-btn msg-crypto-btn" id="crypto-copy-${msg.id}" onclick="window.chat.copyRawPacket('${msg.id}')" title="Copy the exact encrypted packet — safe to paste into the Dashboard decrypt tool">
+                            <i class="fas fa-copy"></i> Copy
+                        </button>` : ''}
+                    </div>
                     <div class="msg-meta">
                         <span class="msg-time">${time}</span>
                         ${status}
@@ -378,17 +411,48 @@ class GhostChatRealtime {
     }
 
     _swapCryptoButton(msgId, newState) {
-        const contentEl = document.getElementById(`content-${msgId}`);
-        if (!contentEl) return;
-        const btn = contentEl.parentElement.querySelector('.msg-crypto-btn');
-        if (!btn) return;
+        const toggleBtn = document.getElementById(`crypto-toggle-${msgId}`);
+        const actions = document.getElementById(`crypto-actions-${msgId}`);
+        if (!toggleBtn || !actions) return;
+
         if (newState === 'encrypted') {
-            btn.innerHTML = '<i class="fas fa-lock"></i> Decrypt';
-            btn.setAttribute('onclick', `window.chat.decryptMessage('${msgId}')`);
+            toggleBtn.innerHTML = '<i class="fas fa-lock"></i> Decrypt';
+            toggleBtn.setAttribute('onclick', `window.chat.decryptMessage('${msgId}')`);
+            if (!document.getElementById(`crypto-copy-${msgId}`)) {
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'msg-decrypt-btn msg-crypto-btn';
+                copyBtn.id = `crypto-copy-${msgId}`;
+                copyBtn.title = 'Copy the exact encrypted packet — safe to paste into the Dashboard decrypt tool';
+                copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy';
+                copyBtn.onclick = () => this.copyRawPacket(msgId);
+                actions.appendChild(copyBtn);
+            }
         } else {
-            btn.innerHTML = '<i class="fas fa-lock-open"></i> Encrypt';
-            btn.setAttribute('onclick', `window.chat.encryptMessageBubble('${msgId}')`);
+            toggleBtn.innerHTML = '<i class="fas fa-lock-open"></i> Encrypt';
+            toggleBtn.setAttribute('onclick', `window.chat.encryptMessageBubble('${msgId}')`);
+            document.getElementById(`crypto-copy-${msgId}`)?.remove();
         }
+    }
+
+    // ── FIX: copies the exact raw packet (no UI decoration like the 🔒 display
+    // prefix) so it can be safely pasted into the Dashboard's decrypt tool —
+    // manually selecting the bubble text was grabbing that prefix too, which
+    // EmojiMapper can't parse and made decryption fail every time. ──
+    copyRawPacket(msgId) {
+        const packet = this.decryptData?.[msgId];
+        if (!packet) {
+            this._toast('Nothing to copy', 'error');
+            return;
+        }
+        if (window.secureCopy) {
+            window.secureCopy(packet, 0);   // 0 = don't auto-clear, this needs to survive a page navigation to the dashboard
+        } else {
+            navigator.clipboard.writeText(packet)
+                .then(() => this._toast('Encrypted packet copied', 'success'))
+                .catch(() => this._toast('Copy failed', 'error'));
+            return;
+        }
+        this._toast('Encrypted packet copied — paste it into Dashboard → Decrypt', 'success');
     }
 
     async sendMessage() {
@@ -498,6 +562,111 @@ class GhostChatRealtime {
         }
 
         this._stopTyping();
+    }
+
+    // ── Media sharing: images, video (file picker), voice notes (recorded) ──
+
+    _mediaLimits() {
+        return { image: 8 * 1024 * 1024, audio: 15 * 1024 * 1024, video: 40 * 1024 * 1024 };
+    }
+
+    async _uploadMedia(file, mediaType) {
+        if (!this.currentContact) {
+            this._toast('Open a chat first', 'error');
+            return;
+        }
+        const limit = this._mediaLimits()[mediaType];
+        if (file.size > limit) {
+            this._toast(`${mediaType} must be under ${Math.round(limit / (1024 * 1024))}MB`, 'error');
+            return;
+        }
+
+        this._toast(`Sending ${mediaType}…`, 'info');
+
+        const form = new FormData();
+        form.append('file', file, file.name || `${mediaType}_${Date.now()}`);
+        form.append('media_type', mediaType);
+
+        try {
+            const res = await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/media`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+                body: form,
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                this._toast(data.error || `Failed to send ${mediaType}`, 'error');
+                return;
+            }
+            // The socket 'receive_message' event (emitted server-side to both
+            // personal rooms) handles rendering — including for our own tab —
+            // so nothing else to do here on success.
+            this._toast(`${mediaType[0].toUpperCase()}${mediaType.slice(1)} sent`, 'success');
+        } catch (err) {
+            console.error('Media upload failed:', err);
+            this._toast(`Failed to send ${mediaType}`, 'error');
+        }
+    }
+
+    async _startVoiceRecording() {
+        if (!this.currentContact) {
+            this._toast('Open a chat first', 'error');
+            return;
+        }
+        if (!navigator.mediaDevices?.getUserMedia) {
+            this._toast('Voice recording is not supported in this browser', 'error');
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+            this._recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+            this._recordedChunks = [];
+            this._recorder.ondataavailable = e => { if (e.data.size > 0) this._recordedChunks.push(e.data); };
+            this._recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); };
+            this._recorder.start();
+
+            document.getElementById('chatInputBar').style.display = 'none';
+            document.getElementById('recordingBar').style.display = 'flex';
+            this._recordingSeconds = 0;
+            const timeEl = document.getElementById('recordingTime');
+            this._recordingTimer = setInterval(() => {
+                this._recordingSeconds++;
+                const m = Math.floor(this._recordingSeconds / 60);
+                const s = String(this._recordingSeconds % 60).padStart(2, '0');
+                if (timeEl) timeEl.textContent = `${m}:${s}`;
+            }, 1000);
+        } catch (err) {
+            console.error('Microphone access failed:', err);
+            this._toast('Microphone access denied', 'error');
+        }
+    }
+
+    _stopVoiceRecording(shouldSend) {
+        clearInterval(this._recordingTimer);
+        document.getElementById('recordingBar').style.display = 'none';
+        document.getElementById('chatInputBar').style.display = 'flex';
+
+        if (!this._recorder) return;
+        const recorder = this._recorder;
+        const mimeType = recorder.mimeType || 'audio/webm';
+
+        recorder.onstop = () => {
+            recorder.stream.getTracks().forEach(t => t.stop());
+            if (shouldSend && this._recordedChunks.length) {
+                const blob = new Blob(this._recordedChunks, { type: mimeType });
+                const ext = mimeType.includes('webm') ? 'webm' : 'ogg';
+                const file = new File([blob], `voice_${Date.now()}.${ext}`, { type: mimeType });
+                this._uploadMedia(file, 'audio');
+            }
+            this._recorder = null;
+            this._recordedChunks = [];
+        };
+        recorder.stop();
     }
 
     _connectSocket() {
@@ -652,7 +821,10 @@ class GhostChatRealtime {
                     sender_id: data.sender_id,
                     receiver_id: data.receiver_id || this.user.id,
                     encrypted_content: data.content,
-                    message_type: 'chat',
+                    message_type: data.message_type || 'chat',
+                    media_url: data.media_url || null,
+                    file_name: data.file_name || null,
+                    file_size: data.file_size || null,
                     created_at: data.created_at || new Date().toISOString(),
                     is_read: false,
                     is_delivered: true,
@@ -666,8 +838,9 @@ class GhostChatRealtime {
         if (data.sender_id !== this.user.id) {
             const contact = this.contacts.find(c => c.contact_id === data.sender_id);
             if (contact) {
+                const mediaLabels = { image: '📷 Photo', audio: '🎤 Voice note', video: '🎥 Video' };
                 contact.last_message = {
-                    content: data.content,
+                    content: mediaLabels[data.message_type] || data.content,
                     created_at: data.created_at,
                     is_mine: false,
                 };
@@ -936,6 +1109,45 @@ _renderSearchResults(users) {
                 input.style.height = Math.min(input.scrollHeight, 150) + 'px';
             }
         });
+
+        // ── Media sharing: attach menu, file pickers, voice recording ──
+        document.getElementById('attachBtn')?.addEventListener('click', e => {
+            e.stopPropagation();
+            const menu = document.getElementById('attachMenu');
+            if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+        document.addEventListener('click', e => {
+            const menu = document.getElementById('attachMenu');
+            if (menu && menu.style.display !== 'none' && !menu.contains(e.target) && e.target.id !== 'attachBtn') {
+                menu.style.display = 'none';
+            }
+        });
+
+        document.getElementById('attachImageBtn')?.addEventListener('click', () => {
+            document.getElementById('attachMenu').style.display = 'none';
+            document.getElementById('imageFileInput')?.click();
+        });
+        document.getElementById('attachVideoBtn')?.addEventListener('click', () => {
+            document.getElementById('attachMenu').style.display = 'none';
+            document.getElementById('videoFileInput')?.click();
+        });
+        document.getElementById('imageFileInput')?.addEventListener('change', e => {
+            const file = e.target.files?.[0];
+            if (file) this._uploadMedia(file, 'image');
+            e.target.value = '';
+        });
+        document.getElementById('videoFileInput')?.addEventListener('change', e => {
+            const file = e.target.files?.[0];
+            if (file) this._uploadMedia(file, 'video');
+            e.target.value = '';
+        });
+
+        document.getElementById('attachAudioBtn')?.addEventListener('click', () => {
+            document.getElementById('attachMenu').style.display = 'none';
+            this._startVoiceRecording();
+        });
+        document.getElementById('stopRecordingBtn')?.addEventListener('click', () => this._stopVoiceRecording(true));
+        document.getElementById('cancelRecordingBtn')?.addEventListener('click', () => this._stopVoiceRecording(false));
 
         const addBtn = document.getElementById('addContactBtn');
         if (addBtn) {

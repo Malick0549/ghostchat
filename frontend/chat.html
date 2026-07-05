@@ -219,8 +219,46 @@
         <span class="typing-text" id="typingText">typing…</span>
       </div>
 
+      <!-- Attach menu -->
+      <div class="attach-menu" id="attachMenu" style="display:none;">
+        <div class="attach-options">
+          <button class="attach-option" id="attachImageBtn">
+            <i class="fas fa-image"></i>
+            <span>Photo</span>
+          </button>
+          <button class="attach-option" id="attachVideoBtn">
+            <i class="fas fa-video"></i>
+            <span>Video</span>
+          </button>
+          <button class="attach-option" id="attachAudioBtn">
+            <i class="fas fa-microphone"></i>
+            <span>Voice note</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Hidden file pickers -->
+      <input type="file" id="imageFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
+      <input type="file" id="videoFileInput" accept="video/mp4,video/webm,video/quicktime" style="display:none;">
+
+      <!-- Voice recording bar (shown while recording) -->
+      <div class="recording-bar" id="recordingBar" style="display:none;">
+        <span class="recording-dot"></span>
+        <span id="recordingTime">0:00</span>
+        <span style="flex:1;">Recording voice note…</span>
+        <button class="icon-btn" id="cancelRecordingBtn" title="Cancel">
+          <i class="fas fa-trash"></i>
+        </button>
+        <button class="send-btn" id="stopRecordingBtn" title="Send voice note">
+          <i class="fas fa-paper-plane"></i>
+        </button>
+      </div>
+
       <!-- Message input bar -->
-      <div class="chat-input-bar">
+      <div class="chat-input-bar" id="chatInputBar">
+        <button class="input-btn" id="attachBtn" title="Attach photo, video, or voice note" aria-label="Attach media">
+          <i class="fas fa-paperclip"></i>
+        </button>
         <div class="chat-input-wrap">
           <textarea id="chatInput"
                     placeholder="Type a message… (Enter to send, Shift+Enter for newline)"

@@ -161,6 +161,8 @@ class Message(db.Model):
     media_url = db.Column(db.String(500), nullable=True)
     file_name = db.Column(db.String(200), nullable=True)
     file_size = db.Column(db.Integer, nullable=True)
+    media_data = db.Column(db.LargeBinary, nullable=True)
+    media_type = db.Column(db.String(100), nullable=True)
     
     def to_dict(self):
         return {

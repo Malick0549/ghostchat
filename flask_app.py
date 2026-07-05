@@ -37,6 +37,7 @@ except Exception as exc:
 
 import os
 import logging
+import mimetypes
 import secrets
 import smtplib
 import ssl
@@ -46,7 +47,7 @@ from email.message import EmailMessage
 
 from flask import (
     Flask, jsonify, request, session,
-    send_from_directory
+    send_from_directory, Response
 )
 from flask_cors import CORS
 # flask_session removed — using Flask built-in signed cookie sessions
@@ -140,6 +141,12 @@ def create_app(test_config=None):
     )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+    # ── FIX: without this, an oversized upload (video, especially) can tie up
+    # the single eventlet worker reading the whole body before our own size
+    # checks in send_media_message ever get a chance to run. 45MB gives headroom
+    # over the largest allowed media type (video, capped at 40MB) plus form overhead.
+    app.config['MAX_CONTENT_LENGTH'] = 45 * 1024 * 1024
+
     # ── Upload folder ──────────────────────────────────────────────────────────
     upload_folder = os.path.join(basedir, '..', 'frontend', 'assets', 'uploads')
     os.makedirs(upload_folder, exist_ok=True)
@@ -155,6 +162,25 @@ def create_app(test_config=None):
         with app.app_context():
             db.create_all()
             log.info('Database ready')
+            # ── FIX: media_data/media_type are new columns for image/audio/video
+            # sharing — same reasoning as the earlier Contact.status migration:
+            # db.create_all() only creates missing TABLES, never ALTERs existing
+            # ones, so this adds the columns to any database created before
+            # this feature existed. ──
+            try:
+                from sqlalchemy import inspect, text
+                inspector = inspect(db.engine)
+                msg_table = Message.__tablename__
+                existing_cols = [c['name'] for c in inspector.get_columns(msg_table)]
+                if 'media_data' not in existing_cols:
+                    db.session.execute(text(f"ALTER TABLE {msg_table} ADD COLUMN media_data BLOB"))
+                    log.info(f"Migrated: added 'media_data' column to {msg_table}")
+                if 'media_type' not in existing_cols:
+                    db.session.execute(text(f"ALTER TABLE {msg_table} ADD COLUMN media_type VARCHAR(100)"))
+                    log.info(f"Migrated: added 'media_type' column to {msg_table}")
+                db.session.commit()
+            except Exception as e:
+                log.error(f'Message media-column migration check failed: {e}')
 
     # Session(app) removed — using Flask built-in sessions
 
@@ -1158,7 +1184,92 @@ def create_app(test_config=None):
             socketio.emit('receive_message', payload, room=f'user_{user.id}')
         return jsonify({'success': True, 'message': msg.to_dict()}), 201
 
-    @socketio.on('connect')
+    # ── Media messages (images, voice notes, video) — stored as DB blobs ────
+    _ALLOWED_MEDIA_MIMES = {
+        'image': {'image/jpeg', 'image/png', 'image/gif', 'image/webp'},
+        'audio': {'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a'},
+        'video': {'video/mp4', 'video/webm', 'video/quicktime'},
+    }
+    _MAX_MEDIA_BYTES = {
+        'image': 8 * 1024 * 1024,    # 8 MB
+        'audio': 15 * 1024 * 1024,   # 15 MB
+        'video': 40 * 1024 * 1024,   # 40 MB
+    }
+
+    @app.route('/api/chat/<contact_id>/media', methods=['POST', 'OPTIONS'])
+    def send_media_message(contact_id):
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        # Only accepted connections can share media, same rule as text messages
+        link = Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first()
+        if not link:
+            return jsonify({'error': 'You are not connected with this user'}), 403
+
+        media_kind = (request.form.get('media_type') or '').strip().lower()
+        caption    = (request.form.get('caption') or '').strip()
+        if media_kind not in _ALLOWED_MEDIA_MIMES:
+            return jsonify({'error': "media_type must be 'image', 'audio', or 'video'"}), 400
+
+        file = request.files.get('file')
+        if not file or not file.filename:
+            return jsonify({'error': 'No file provided'}), 400
+
+        mime = (file.mimetype or mimetypes.guess_type(file.filename)[0] or '').lower()
+        if mime not in _ALLOWED_MEDIA_MIMES[media_kind]:
+            return jsonify({'error': f'Unsupported {media_kind} format: {mime or "unknown"}'}), 400
+
+        data = file.read()
+        if not data:
+            return jsonify({'error': 'Empty file'}), 400
+        limit = _MAX_MEDIA_BYTES[media_kind]
+        if len(data) > limit:
+            return jsonify({'error': f'{media_kind.capitalize()} must be under {limit // (1024*1024)}MB'}), 400
+
+        msg = Message(
+            user_id=user.id, sender_id=user.id, receiver_id=contact_id,
+            encrypted_content=caption, message_type=media_kind,
+            media_data=data, media_type=mime,
+            file_name=(file.filename or media_kind)[:200], file_size=len(data),
+            is_delivered=True,
+        )
+        db.session.add(msg)
+        db.session.commit()
+
+        payload = {
+            'id': msg.id, 'sender_id': user.id, 'sender': user.username, 'avatar': user.avatar,
+            'receiver_id': contact_id, 'created_at': msg.created_at.isoformat(),
+            'message_type': media_kind, 'content': caption,
+            'media_url': f'/api/media/{msg.id}', 'file_name': msg.file_name, 'file_size': msg.file_size,
+        }
+        if socketio:
+            socketio.emit('receive_message', payload, room=f'user_{contact_id}')
+            socketio.emit('receive_message', payload, room=f'user_{user.id}')
+
+        return jsonify({'success': True, 'message': payload}), 201
+
+    @app.route('/api/media/<message_id>', methods=['GET'])
+    def get_media(message_id):
+        user, err = _require_auth()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        msg = Message.query.get(message_id)
+        if not msg or not msg.media_data:
+            return jsonify({'error': 'Not found'}), 404
+        # ── Only the sender or the receiver may fetch this media ──
+        if user.id not in (msg.sender_id, msg.receiver_id):
+            return jsonify({'error': 'Forbidden'}), 403
+
+        resp = Response(msg.media_data, mimetype=msg.media_type or 'application/octet-stream')
+        safe_name = (msg.file_name or 'file').replace('"', '')
+        resp.headers['Content-Disposition'] = f'inline; filename="{safe_name}"'
+        resp.headers['Cache-Control'] = 'private, max-age=86400'
+        return resp
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
         emit('connected', {'status': 'connected', 'sid': request.sid})
