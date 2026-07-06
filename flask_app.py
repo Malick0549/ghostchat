@@ -216,6 +216,38 @@ def create_app(test_config=None):
             except Exception as e:
                 log.error(f'User admin-column migration check failed: {e}')
 
+            # ── FIX: last_ip/last_location/last_device (User), location/device
+            # (ActivityLog), and deleted_at/deleted_by (Message) are all new
+            # columns for the admin dashboard's location/device tracking and
+            # the reversible-delete feature. ──
+            try:
+                from sqlalchemy import inspect, text
+                inspector = inspect(db.engine)
+
+                user_cols = [c['name'] for c in inspector.get_columns(User.__tablename__)]
+                for col, ddl in [
+                    ('last_ip', 'VARCHAR(45)'), ('last_location', 'VARCHAR(200)'), ('last_device', 'VARCHAR(200)')
+                ]:
+                    if col not in user_cols:
+                        db.session.execute(text(f"ALTER TABLE {User.__tablename__} ADD COLUMN {col} {ddl}"))
+                        log.info(f"Migrated: added '{col}' column to {User.__tablename__}")
+
+                log_cols = [c['name'] for c in inspector.get_columns(ActivityLog.__tablename__)]
+                for col, ddl in [('location', 'VARCHAR(200)'), ('device', 'VARCHAR(200)')]:
+                    if col not in log_cols:
+                        db.session.execute(text(f"ALTER TABLE {ActivityLog.__tablename__} ADD COLUMN {col} {ddl}"))
+                        log.info(f"Migrated: added '{col}' column to {ActivityLog.__tablename__}")
+
+                msg_cols2 = [c['name'] for c in inspector.get_columns(Message.__tablename__)]
+                for col, ddl in [('deleted_at', 'DATETIME'), ('deleted_by', 'VARCHAR(36)')]:
+                    if col not in msg_cols2:
+                        db.session.execute(text(f"ALTER TABLE {Message.__tablename__} ADD COLUMN {col} {ddl}"))
+                        log.info(f"Migrated: added '{col}' column to {Message.__tablename__}")
+
+                db.session.commit()
+            except Exception as e:
+                log.error(f'Location/device/undo-delete migration check failed: {e}')
+
     # Session(app) removed — using Flask built-in sessions
 
     # ── CORS ───────────────────────────────────────────────────────────────────
@@ -395,13 +427,65 @@ def create_app(test_config=None):
             return None, (jsonify({'error': 'Admin access required'}), 403)
         return user, None
 
+    _geoip_cache = {}   # ip -> location string, avoids re-querying the same IP repeatedly
+
+    def _geolocate_ip(ip: str) -> str:
+        """Best-effort city/country lookup via a free HTTP API. Never raises —
+        returns 'Unknown' on any failure (rate limit, network issue, private IP)."""
+        if not ip or ip in ('127.0.0.1', 'localhost', '::1'):
+            return 'Local'
+        if ip in _geoip_cache:
+            return _geoip_cache[ip]
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f'https://ipapi.co/{ip}/json/', timeout=4) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            city = data.get('city') or ''
+            country = data.get('country_name') or ''
+            location = ', '.join(p for p in (city, country) if p) or 'Unknown'
+        except Exception:
+            location = 'Unknown'
+        _geoip_cache[ip] = location
+        return location
+
+    def _parse_device(user_agent: str) -> str:
+        """Lightweight, dependency-free User-Agent parse into a readable
+        'Browser on OS' string — good enough for admin visibility, not meant
+        to be exhaustive."""
+        if not user_agent:
+            return 'Unknown device'
+        ua = user_agent
+
+        if 'iPhone' in ua: os_name = 'iPhone'
+        elif 'iPad' in ua: os_name = 'iPad'
+        elif 'Android' in ua: os_name = 'Android'
+        elif 'Windows' in ua: os_name = 'Windows'
+        elif 'Mac OS X' in ua: os_name = 'macOS'
+        elif 'Linux' in ua: os_name = 'Linux'
+        else: os_name = 'Unknown OS'
+
+        if 'Edg/' in ua: browser = 'Edge'
+        elif 'OPR/' in ua or 'Opera' in ua: browser = 'Opera'
+        elif 'Chrome/' in ua and 'Chromium' not in ua: browser = 'Chrome'
+        elif 'Firefox/' in ua: browser = 'Firefox'
+        elif 'Safari/' in ua and 'Chrome/' not in ua: browser = 'Safari'
+        else: browser = 'Unknown browser'
+
+        return f'{browser} on {os_name}'
+
+    def _client_ip() -> str:
+        return request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+
     def _log_activity(user_id, event_type, description=''):
         """Best-effort audit trail entry — never blocks or breaks the caller."""
         if not DB_AVAILABLE: return
         try:
+            ip = _client_ip()
             db.session.add(ActivityLog(
                 user_id=user_id, event_type=event_type, description=description,
-                ip_address=request.headers.get('X-Forwarded-For', request.remote_addr),
+                ip_address=ip,
+                location=_geolocate_ip(ip),
+                device=_parse_device(request.headers.get('User-Agent', '')),
             ))
             db.session.commit()
         except Exception as e:
@@ -746,7 +830,11 @@ def create_app(test_config=None):
                     'email': user.email,
                 }), 403
 
+            ip = _client_ip()
             user.last_login = datetime.utcnow()
+            user.last_ip = ip
+            user.last_location = _geolocate_ip(ip)
+            user.last_device = _parse_device(request.headers.get('User-Agent', ''))
             db.session.commit()
 
             session['user_id']       = user.id
@@ -1427,7 +1515,9 @@ def create_app(test_config=None):
         for m in unread_msgs:
             m.is_read = True
             m.read_at = datetime.utcnow()
-        if unread_msgs: db.session.commit()
+        if unread_msgs:
+            db.session.commit()
+            _log_activity(user.id, 'message_received', f'{len(unread_msgs)} message(s) received/read')
         return jsonify({'success': True, 'messages': [m.to_dict() for m in messages]}), 200
 
     @app.route('/api/chat/<contact_id>/messages', methods=['POST','OPTIONS'])
@@ -1615,17 +1705,24 @@ def create_app(test_config=None):
         if scope == 'everyone':
             if msg.sender_id != user.id:
                 return jsonify({'error': 'Only the sender can delete for everyone'}), 403
+            # ── FIX: this used to wipe encrypted_content/media_data immediately,
+            # which is exactly why there was no way to cancel — there was
+            # nothing left to restore. Now it's a soft delete: hidden from
+            # both sides right away (existing queries already filter on
+            # is_deleted), but the actual content stays intact for a grace
+            # window so the sender can undo it. ──
             msg.is_deleted = True
-            msg.encrypted_content = ''
-            msg.media_data = None   # actually free the blob, not just hide it
-            msg.media_type = None
+            msg.deleted_at = datetime.utcnow()
+            msg.deleted_by = user.id
             db.session.commit()
+            _log_activity(user.id, 'message_deleted',
+                           f'{user.username} deleted a {msg.message_type} message for everyone')
             if socketio:
                 socketio.emit('message_deleted', {'message_id': message_id, 'scope': 'everyone'},
                                room=f'user_{msg.receiver_id}')
                 socketio.emit('message_deleted', {'message_id': message_id, 'scope': 'everyone'},
                                room=f'user_{msg.sender_id}')
-            return jsonify({'success': True, 'scope': 'everyone'}), 200
+            return jsonify({'success': True, 'scope': 'everyone', 'undo_window_seconds': 60}), 200
 
         # scope == 'me' — hide it only in the requester's own view
         try:
@@ -1636,7 +1733,62 @@ def create_app(test_config=None):
             deleted_for.append(user.id)
         msg.deleted_for = json.dumps(deleted_for)
         db.session.commit()
+        who = 'sender' if user.id == msg.sender_id else 'receiver'
+        _log_activity(user.id, 'message_deleted',
+                       f'{user.username} ({who}) deleted a {msg.message_type} message for themselves')
         return jsonify({'success': True, 'scope': 'me'}), 200
+
+    @app.route('/api/chat/messages/<message_id>/undo-delete', methods=['POST', 'OPTIONS'])
+    def undo_delete_message(message_id):
+        """
+        Reverses a delete. 'Delete for everyone' can only be undone by the
+        original sender, and only within a 60-second grace window. 'Delete for
+        me' has no time limit since it only ever affected your own view.
+        """
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        msg = Message.query.get(message_id)
+        if not msg:
+            return jsonify({'error': 'Message not found'}), 404
+        if user.id not in (msg.sender_id, msg.receiver_id):
+            return jsonify({'error': 'Forbidden'}), 403
+
+        # Case 1: this was a 'delete for everyone' — only the deleter can undo,
+        # and only inside the grace window
+        if msg.is_deleted:
+            if msg.deleted_by != user.id:
+                return jsonify({'error': 'Only the person who deleted it can undo this'}), 403
+            if not msg.deleted_at or (datetime.utcnow() - msg.deleted_at).total_seconds() > 60:
+                return jsonify({'error': 'The undo window has expired'}), 400
+            msg.is_deleted = False
+            msg.deleted_at = None
+            msg.deleted_by = None
+            db.session.commit()
+            _log_activity(user.id, 'message_restored', f'{user.username} undid a delete-for-everyone')
+            if socketio:
+                socketio.emit('message_restored', {'message_id': message_id},
+                               room=f'user_{msg.receiver_id}')
+                socketio.emit('message_restored', {'message_id': message_id},
+                               room=f'user_{msg.sender_id}')
+            return jsonify({'success': True}), 200
+
+        # Case 2: this was a 'delete for me' — no time limit, just removes you
+        # from the hidden-for list
+        try:
+            deleted_for = json.loads(msg.deleted_for) if msg.deleted_for else []
+        except Exception:
+            deleted_for = []
+        if user.id in deleted_for:
+            deleted_for.remove(user.id)
+            msg.deleted_for = json.dumps(deleted_for)
+            db.session.commit()
+            return jsonify({'success': True}), 200
+
+        return jsonify({'error': 'Nothing to undo'}), 400
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ADMIN — activity log viewing
@@ -1687,6 +1839,26 @@ def create_app(test_config=None):
                 Message.message_type.in_(['chat', 'image', 'audio', 'video'])
             ).count(),
             'event_counts': event_counts,
+        }), 200
+
+    @app.route('/api/admin/users', methods=['GET'])
+    def admin_users():
+        admin, err = _require_admin()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        limit = min(request.args.get('limit', 100, type=int), 500)
+        offset = request.args.get('offset', 0, type=int)
+        total = User.query.count()
+        users = User.query.order_by(User.created_at.desc()).offset(offset).limit(limit).all()
+
+        return jsonify({
+            'success': True,
+            'users': [u.to_admin_dict() for u in users],
+            'total': total,
+            'limit': limit,
+            'offset': offset,
         }), 200
 
     @socketio.on('connect')

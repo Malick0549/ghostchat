@@ -41,6 +41,11 @@ class User(db.Model):
     # Email verification fields (registration gate)
     verification_code = db.Column(db.String(10), nullable=True)
     verification_code_expires = db.Column(db.DateTime, nullable=True)
+
+    # Last-known location/device (updated at login) — admin visibility only
+    last_ip = db.Column(db.String(45), nullable=True)
+    last_location = db.Column(db.String(200), nullable=True)
+    last_device = db.Column(db.String(200), nullable=True)
     
     # Relationships - FIXED: Specify foreign_keys to avoid ambiguity
     messages = db.relationship('Message', foreign_keys='Message.user_id', backref='user', lazy=True)
@@ -85,6 +90,16 @@ class User(db.Model):
             'is_verified': self.is_verified,
             'is_admin': self.is_admin
         }
+
+    def to_admin_dict(self):
+        """Extended dict for the admin dashboard only — includes location/device."""
+        d = self.to_dict()
+        d.update({
+            'last_ip': self.last_ip,
+            'last_location': self.last_location,
+            'last_device': self.last_device,
+        })
+        return d
     
     def __repr__(self):
         return f'<User {self.username}>'
@@ -162,6 +177,8 @@ class Message(db.Model):
     is_starred = db.Column(db.Boolean, default=False)
     is_deleted = db.Column(db.Boolean, default=False)
     deleted_for = db.Column(db.Text, nullable=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_by = db.Column(db.String(36), nullable=True)
     reply_to_id = db.Column(db.String(36), nullable=True)
     reactions = db.Column(db.Text, default='{}')
     media_url = db.Column(db.String(500), nullable=True)
@@ -203,6 +220,8 @@ class ActivityLog(db.Model):
     event_type = db.Column(db.String(50), nullable=False)
     description = db.Column(db.String(500), nullable=True)
     ip_address = db.Column(db.String(45), nullable=True)
+    location = db.Column(db.String(200), nullable=True)
+    device = db.Column(db.String(200), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -214,6 +233,8 @@ class ActivityLog(db.Model):
             'event_type': self.event_type,
             'description': self.description,
             'ip_address': self.ip_address,
+            'location': self.location,
+            'device': self.device,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

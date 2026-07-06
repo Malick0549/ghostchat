@@ -798,6 +798,10 @@ class GhostChatRealtime {
                 this._renderMessages();
             });
 
+            this.socket.on('message_restored', () => {
+                if (this.currentContact) this._loadMessages(this.currentContact.contact_id);
+            });
+
             // ── FIX: these now come from the SERVER (emitted by the backend
             // when a request is sent/accepted/rejected), not from the other
             // client directly — the old client-to-client emits had no backend
@@ -980,12 +984,62 @@ class GhostChatRealtime {
             if (data.success) {
                 this.messages = this.messages.filter(m => m.id !== msgId);
                 this._renderMessages();
-                this._toast(scope === 'everyone' ? 'Deleted for everyone' : 'Deleted for you', 'success');
+                const label = scope === 'everyone' ? 'Deleted for everyone' : 'Deleted for you';
+                this._showUndoToast(label, () => this._undoDeleteMessage(msgId));
             } else {
                 this._toast(data.error || 'Delete failed', 'error');
             }
         } catch (_) {
             this._toast('Delete failed', 'error');
+        }
+    }
+
+    // ── Small custom toast with an actual Undo button — the shared UI.showToast
+    // helper is plain text/no-action, so this is a lightweight one-off for
+    // exactly this case. Auto-dismisses after 5s if not clicked. ──
+    _showUndoToast(message, onUndo) {
+        document.getElementById('undoToast')?.remove();
+
+        const el = document.createElement('div');
+        el.id = 'undoToast';
+        el.style.cssText = `
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--bg3, #14181f); border: 1px solid var(--border, #2a2f3a);
+            border-radius: 10px; padding: 12px 18px; display: flex; align-items: center;
+            gap: 16px; z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+            color: var(--t1, #fff); font-size: .875rem;
+        `;
+        el.innerHTML = `<span>${this._esc(message)}</span>
+            <button style="background:none;border:none;color:var(--primary,#00d4ff);font-weight:600;cursor:pointer;font-size:.875rem;padding:0;">Undo</button>`;
+        document.body.appendChild(el);
+
+        const timer = setTimeout(() => el.remove(), 5000);
+        el.querySelector('button').addEventListener('click', () => {
+            clearTimeout(timer);
+            el.remove();
+            onUndo();
+        });
+    }
+
+    async _undoDeleteMessage(msgId) {
+        try {
+            const res = await fetch(`${this._base()}/api/chat/messages/${msgId}/undo-delete`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+            });
+            const data = await res.json();
+            if (data.success) {
+                this._toast('Delete undone', 'success');
+                if (this.currentContact) await this._loadMessages(this.currentContact.contact_id);
+            } else {
+                this._toast(data.error || 'Could not undo — the window may have expired', 'error');
+            }
+        } catch (_) {
+            this._toast('Could not undo', 'error');
         }
     }
 

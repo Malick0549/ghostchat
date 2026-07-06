@@ -90,6 +90,12 @@
     .event-badge.logout { background: rgba(255,255,255,.08); color: var(--t2); }
     .event-badge.password_reset_requested, .event-badge.password_reset_completed { background: rgba(255,184,0,.12); color: var(--amber); }
     .event-badge.message_sent { background: rgba(255,255,255,.06); color: var(--t2); }
+    .event-badge.message_deleted { background: rgba(255,59,92,.10); color: var(--red); }
+    .event-badge.message_received { background: rgba(0,255,136,.08); color: var(--green); }
+    .event-badge.message_restored { background: rgba(0,212,255,.10); color: var(--primary); }
+    .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+    .status-dot.online { background: var(--green); }
+    .status-dot.offline { background: var(--t3); }
     .event-badge.contact_request_sent { background: rgba(0,212,255,.10); color: var(--primary); }
 
     .pagination {
@@ -139,6 +145,31 @@
 
   <div class="panel">
     <div class="panel-header">
+      <h2><i class="fas fa-users" style="color:var(--primary);"></i> Users</h2>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="log-table" id="usersTable">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Verified</th>
+            <th>Last Login</th>
+            <th>Last IP</th>
+            <th>Location</th>
+            <th>Device</th>
+          </tr>
+        </thead>
+        <tbody id="usersTableBody">
+          <tr><td colspan="8" class="admin-loading">Loading users…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
       <h2><i class="fas fa-list-ul" style="color:var(--primary);"></i> Activity Log</h2>
     </div>
     <div style="overflow-x:auto;">
@@ -150,10 +181,12 @@
             <th>Event</th>
             <th>Description</th>
             <th>IP Address</th>
+            <th>Location</th>
+            <th>Device</th>
           </tr>
         </thead>
         <tbody id="logTableBody">
-          <tr><td colspan="5" class="admin-loading">Loading activity…</td></tr>
+          <tr><td colspan="7" class="admin-loading">Loading activity…</td></tr>
         </tbody>
       </table>
     </div>
@@ -181,6 +214,8 @@
   const EVENT_LABELS = {
     login: 'Login', login_failed: 'Login failed', logout: 'Logout',
     register: 'Registered', email_verified: 'Email verified',
+    message_deleted: 'Message deleted', message_received: 'Message received',
+    message_restored: 'Delete undone',
     password_reset_requested: 'Reset requested', password_reset_completed: 'Reset completed',
     contact_request_sent: 'Request sent', contact_request_accepted: 'Request accepted',
     contact_request_rejected: 'Request declined', message_sent: 'Message sent',
@@ -210,7 +245,36 @@
       return;
     }
     document.getElementById('adminView').style.display = 'block';
-    await Promise.all([loadStats(), loadLogs()]);
+    await Promise.all([loadStats(), loadLogs(), loadUsers()]);
+  }
+
+  async function loadUsers() {
+    const tbody = document.getElementById('usersTableBody');
+    try {
+      const data = await window.GhostChatAPI._get('/api/admin/users?limit=200');
+      renderUsers(data.users || []);
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">Failed to load users: ${esc(err.message || 'unknown error')}</td></tr>`;
+    }
+  }
+
+  function renderUsers(users) {
+    const tbody = document.getElementById('usersTableBody');
+    if (!users.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="admin-empty">No users yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td>${esc(u.username)}${u.is_admin ? ' <i class="fas fa-shield-halved" style="color:var(--primary);" title="Admin"></i>' : ''}</td>
+        <td>${esc(u.email)}</td>
+        <td><span class="status-dot ${u.is_online ? 'online' : 'offline'}"></span>${u.is_online ? 'Online' : 'Offline'}</td>
+        <td>${u.is_verified ? '<i class="fas fa-check" style="color:var(--green);"></i>' : '<i class="fas fa-xmark" style="color:var(--red);"></i>'}</td>
+        <td style="white-space:nowrap;">${fmtTime(u.last_login)}</td>
+        <td style="font-family:var(--mono);font-size:.75rem;color:var(--t3);">${esc(u.last_ip || '—')}</td>
+        <td style="white-space:nowrap;">${esc(u.last_location || '—')}</td>
+        <td style="white-space:nowrap;font-size:.75rem;color:var(--t2);">${esc(u.last_device || '—')}</td>
+      </tr>`).join('');
   }
 
   async function loadStats() {
@@ -273,7 +337,7 @@
   function renderLogs(logs) {
     const tbody = document.getElementById('logTableBody');
     if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="admin-empty">No activity recorded yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="admin-empty">No activity recorded yet</td></tr>';
       return;
     }
     tbody.innerHTML = logs.map(l => `
@@ -283,6 +347,8 @@
         <td><span class="event-badge ${esc(l.event_type)}">${esc(EVENT_LABELS[l.event_type] || l.event_type)}</span></td>
         <td>${esc(l.description || '')}</td>
         <td style="font-family:var(--mono);font-size:.75rem;color:var(--t3);">${esc(l.ip_address || '—')}</td>
+        <td style="white-space:nowrap;">${esc(l.location || '—')}</td>
+        <td style="white-space:nowrap;font-size:.75rem;color:var(--t2);">${esc(l.device || '—')}</td>
       </tr>`).join('');
   }
 
@@ -305,6 +371,7 @@
     offset = 0;
     loadStats();
     loadLogs();
+    loadUsers();
   });
 
   init();
