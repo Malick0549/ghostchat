@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b12" />
+  <title>Verify Email — GhostChat</title>
+  <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+  <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body data-theme="dark">
+
+<div class="cyber-bg" aria-hidden="true"></div>
+<div class="grid-overlay" aria-hidden="true"></div>
+<div class="gradient-orb orb-1" aria-hidden="true"></div>
+<div class="gradient-orb orb-2" aria-hidden="true"></div>
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<div class="forgot-page">
+  <div class="forgot-card">
+
+    <a href="login.html" class="back-link">
+      <i class="fas fa-arrow-left"></i> Back to Sign In
+    </a>
+
+    <div class="forgot-icon"><i class="fas fa-envelope-circle-check"></i></div>
+    <h1 style="font-size:1.7rem;font-weight:700;letter-spacing:-.03em;margin-bottom:8px;">
+      Verify Your Email
+    </h1>
+    <p style="font-size:.875rem;color:var(--t2);margin-bottom:8px;" id="sentToLine">
+      Enter the 6-digit code we sent to your email.
+    </p>
+    <p style="font-size:.8rem;color:var(--t3);margin-bottom:28px;">
+      The code expires in 15 minutes.
+    </p>
+
+    <div class="alert alert-error" id="alertErr" role="alert">
+      <i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span>
+    </div>
+
+    <form id="verifyForm" novalidate autocomplete="off">
+      <input type="hidden" id="verifyEmail" />
+      <div class="form-group">
+        <label class="form-label" for="verifyCode">Verification code</label>
+        <div class="input-wrap">
+          <i class="fas fa-key icon"></i>
+          <input type="text" id="verifyCode" class="form-input"
+            placeholder="000000" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+            autocomplete="one-time-code" required autofocus tabindex="1"
+            style="letter-spacing:6px;font-size:1.1rem;text-align:center;" />
+        </div>
+      </div>
+      <button type="submit" class="btn-submit" id="btnVerify" tabindex="2">
+        <i class="fas fa-shield-check"></i><span>VERIFY &amp; CONTINUE</span>
+      </button>
+    </form>
+
+    <p style="text-align:center;margin-top:20px;font-size:.8125rem;color:var(--t3);">
+      Didn't get a code?
+      <a href="#" id="resendLink" style="color:var(--primary);">Resend code</a>
+    </p>
+  </div>
+</div>
+
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const email = new URLSearchParams(window.location.search).get('email') || '';
+  document.getElementById('verifyEmail').value = email;
+  if (email) {
+    document.getElementById('sentToLine').textContent = `Enter the 6-digit code we sent to ${email}`;
+  } else {
+    // No email in the URL — send them back to register rather than show a dead-end form
+    window.location.href = 'register.html';
+  }
+
+  function showErr(msg) {
+    document.getElementById('errMsg').textContent = msg;
+    document.getElementById('alertErr').classList.add('show');
+  }
+  function hideErr() {
+    document.getElementById('alertErr').classList.remove('show');
+  }
+
+  const codeInput = document.getElementById('verifyCode');
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, 6);
+    hideErr();
+  });
+  codeInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('verifyForm').requestSubmit(); }
+  });
+
+  document.getElementById('verifyForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    hideErr();
+
+    const code = codeInput.value.trim();
+    if (code.length !== 6) {
+      showErr('Please enter the 6-digit code.');
+      codeInput.focus();
+      return;
+    }
+
+    const btn = document.getElementById('btnVerify');
+    btn.classList.add('btn-loading');
+    btn.disabled = true;
+
+    try {
+      const data = await window.GhostChatAPI.verifyEmail(email, code);
+      if (data.success) {
+        UI.showToast('Email verified! Redirecting…', 'success');
+        setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
+      } else {
+        showErr(data.error || 'Verification failed. Please try again.');
+      }
+    } catch (err) {
+      showErr(err?.data?.error || err?.message || 'Verification failed. The code may have expired.');
+    } finally {
+      btn.classList.remove('btn-loading');
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('resendLink').addEventListener('click', async function (e) {
+    e.preventDefault();
+    try {
+      await window.GhostChatAPI.resendVerification(email);
+      UI.showToast('A new code has been sent to your email', 'success');
+    } catch (_) {
+      UI.showToast('A new code has been sent to your email', 'success'); // anti-enumeration — same message either way
+    }
+  });
+})();
+</script>
+</body>
+</html>
