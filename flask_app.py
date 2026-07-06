@@ -445,6 +445,47 @@ def create_app(test_config=None):
             except Exception:
                 pass
 
+        # ── SendGrid — free tier supports Single Sender Verification (verify
+        # just one email address you own, no domain needed) and then sends to
+        # ANY recipient. This is the recommended path if you don't have a
+        # domain, since Resend's default onboarding@resend.dev sender can only
+        # send to your own Resend account email. ──
+        sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
+        if sendgrid_api_key:
+            mail_from = os.environ.get('MAIL_FROM')
+            if not mail_from:
+                log.error('SENDGRID_API_KEY is set but MAIL_FROM is missing — '
+                          'MAIL_FROM must be the exact address you verified in SendGrid.')
+            else:
+                try:
+                    import urllib.request
+                    body = json.dumps({
+                        'personalizations': [{'to': [{'email': recipient}]}],
+                        'from': {'email': mail_from},
+                        'subject': subject,
+                        'content': [
+                            {'type': 'text/plain', 'value': text_body},
+                            {'type': 'text/html', 'value': html_body},
+                        ],
+                    }).encode('utf-8')
+                    req = urllib.request.Request(
+                        'https://api.sendgrid.com/v3/mail/send',
+                        data=body,
+                        method='POST',
+                        headers={
+                            'Authorization': f'Bearer {sendgrid_api_key}',
+                            'Content-Type': 'application/json',
+                        },
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        if resp.status == 202:   # SendGrid returns 202 Accepted on success, not 200
+                            log.info('Email sent via SendGrid to %s', recipient)
+                            return True
+                        log.error('SendGrid API returned status %s for %s', resp.status, recipient)
+                except Exception as exc:
+                    log.error('Failed to send email via SendGrid to %s: %s', recipient, exc)
+                # fall through to Resend / SMTP / debug-log path below if SendGrid failed
+
         # ── FIX: Railway (and several other platforms) block outbound SMTP
         # entirely (ports 25/465/587) at the network level — this is a
         # platform policy, not a code bug, confirmed by Railway's own support:
