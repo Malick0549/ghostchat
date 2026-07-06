@@ -434,14 +434,6 @@ def create_app(test_config=None):
         return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
 
     def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
-        smtp_host = os.environ.get('SMTP_HOST')
-        smtp_port = int(os.environ.get('SMTP_PORT', '587'))
-        smtp_user = os.environ.get('SMTP_USER')
-        smtp_password = os.environ.get('SMTP_PASSWORD')
-        smtp_use_ssl = os.environ.get('SMTP_USE_SSL', '0').lower() in ('1', 'true', 'yes')
-        smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
-        mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
-
         log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
         os.makedirs(log_dir, exist_ok=True)
         fallback_path = os.path.join(log_dir, 'reset_links.log')
@@ -453,8 +445,53 @@ def create_app(test_config=None):
             except Exception:
                 pass
 
+        # ── FIX: Railway (and several other platforms) block outbound SMTP
+        # entirely (ports 25/465/587) at the network level — this is a
+        # platform policy, not a code bug, confirmed by Railway's own support:
+        # "Outbound SMTP is blocked. We recommend using email providers that
+        # have HTTPS APIs such as resend." Try Resend's HTTP API first, since
+        # regular HTTPS isn't blocked; SMTP below remains as a fallback for
+        # hosts that don't block it. ──
+        resend_api_key = os.environ.get('RESEND_API_KEY')
+        if resend_api_key:
+            mail_from = os.environ.get('MAIL_FROM', 'onboarding@resend.dev')
+            try:
+                import urllib.request
+                body = json.dumps({
+                    'from': mail_from,
+                    'to': [recipient],
+                    'subject': subject,
+                    'html': html_body,
+                    'text': text_body,
+                }).encode('utf-8')
+                req = urllib.request.Request(
+                    'https://api.resend.com/emails',
+                    data=body,
+                    method='POST',
+                    headers={
+                        'Authorization': f'Bearer {resend_api_key}',
+                        'Content-Type': 'application/json',
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if 200 <= resp.status < 300:
+                        log.info('Email sent via Resend to %s', recipient)
+                        return True
+                    log.error('Resend API returned status %s for %s', resp.status, recipient)
+            except Exception as exc:
+                log.error('Failed to send email via Resend to %s: %s', recipient, exc)
+            # fall through to SMTP / debug-log path below if Resend failed
+
+        smtp_host = os.environ.get('SMTP_HOST')
+        smtp_port = int(os.environ.get('SMTP_PORT', '587'))
+        smtp_user = os.environ.get('SMTP_USER')
+        smtp_password = os.environ.get('SMTP_PASSWORD')
+        smtp_use_ssl = os.environ.get('SMTP_USE_SSL', '0').lower() in ('1', 'true', 'yes')
+        smtp_use_tls = os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes')
+        mail_from = os.environ.get('MAIL_FROM', f'no-reply@{request.host.split(":")[0]}')
+
         if not smtp_host or not smtp_user or not smtp_password:
-            log.warning('SMTP settings missing; password reset email not sent.')
+            log.warning('No RESEND_API_KEY and no SMTP settings; email not sent.')
             log.info('Password reset link: %s', text_body)
             write_debug_link()
             return False
