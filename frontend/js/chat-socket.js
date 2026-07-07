@@ -245,7 +245,13 @@ class GhostChatRealtime {
             }
 
             const time = this._formatTime(msg.created_at);
-            const status = isMine ? `<span class="msg-status">${msg.is_read ? '✓✓' : msg.is_delivered ? '✓✓' : '✓'}</span>` : '';
+            const status = isMine ? (
+                msg.is_read
+                    ? '<span class="msg-status read">✓✓</span>'
+                    : msg.is_delivered
+                        ? '<span class="msg-status delivered">✓✓</span>'
+                        : '<span class="msg-status sent">✓</span>'
+            ) : '';
 
             // ── Media messages (image/audio/video) render as their own bubble type ──
             if (['image', 'audio', 'video'].includes(msg.message_type)) {
@@ -857,7 +863,13 @@ class GhostChatRealtime {
                 });
             }
             this._renderMessages();
-            if (data.sender_id !== this.user.id) this._notifyNewMessage(data);
+            if (data.sender_id !== this.user.id) {
+                this._notifyNewMessage(data);
+                // ── FIX: without this, messages received while the chat is
+                // already open never get marked read/logged server-side —
+                // get_chat_messages() only does that on a fresh chat open. ──
+                this.socket?.emit('mark_read', { contact_id: data.sender_id });
+            }
         }
 
         // Sidebar preview/unread — runs regardless of which chat is open
@@ -962,14 +974,12 @@ class GhostChatRealtime {
 
     // ── Delete a message — "for me" hides it only in your own view;
     // "for everyone" (sender only) erases it for both sides. ──
+    // ── FIX: the old confirm() dialog only had OK/Cancel, so "Cancel" was
+    // silently treated as "delete for me" — there was no way to actually
+    // back out of deleting at all. This shows a real 3-option picker. ──
     async deleteMessage(msgId, isMine) {
-        let scope = 'me';
-        if (isMine) {
-            const everyone = confirm('Delete for everyone? Click Cancel to delete just for you.');
-            scope = everyone ? 'everyone' : 'me';
-        } else if (!confirm('Delete this message for you?')) {
-            return;
-        }
+        const scope = await this._showDeleteChoice(isMine);
+        if (!scope) return;   // true Cancel — nothing happens
 
         try {
             const res = await fetch(`${this._base()}/api/chat/messages/${msgId}?scope=${scope}`, {
@@ -992,6 +1002,58 @@ class GhostChatRealtime {
         } catch (_) {
             this._toast('Delete failed', 'error');
         }
+    }
+
+    // ── Small custom overlay with real Delete-for-everyone / Delete-for-me /
+    // Cancel options — resolves to a scope string ('everyone'|'me') or null
+    // if the user backs out via Cancel or clicking outside. ──
+    _showDeleteChoice(isMine) {
+        return new Promise(resolve => {
+            document.getElementById('deleteChoiceOverlay')?.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'deleteChoiceOverlay';
+            overlay.style.cssText = `
+                position: fixed; inset: 0; background: rgba(0,0,0,.55);
+                display: flex; align-items: center; justify-content: center; z-index: 10000;
+            `;
+
+            const panel = document.createElement('div');
+            panel.style.cssText = `
+                background: var(--bg3, #14181f); border: 1px solid var(--border, #2a2f3a);
+                border-radius: 12px; padding: 20px; width: min(320px, 90vw);
+                box-shadow: 0 12px 32px rgba(0,0,0,.5);
+            `;
+
+            const btnStyle = `
+                display: block; width: 100%; text-align: left; padding: 12px 14px;
+                margin-bottom: 8px; border-radius: 8px; border: 1px solid var(--border, #2a2f3a);
+                background: var(--bg2, #0f1319); color: var(--t1, #fff); cursor: pointer;
+                font-size: .875rem;
+            `;
+
+            panel.innerHTML = `
+                <div style="font-weight:600;margin-bottom:14px;">Delete message?</div>
+                ${isMine ? `<button id="delChoiceEveryone" style="${btnStyle}color:var(--red,#ff3b5c);">
+                    <i class="fas fa-trash"></i> Delete for everyone
+                </button>` : ''}
+                <button id="delChoiceMe" style="${btnStyle}">
+                    <i class="fas fa-user"></i> Delete for me
+                </button>
+                <button id="delChoiceCancel" style="${btnStyle}margin-bottom:0;color:var(--t2,#aaa);">
+                    Cancel
+                </button>
+            `;
+
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
+
+            const finish = scope => { overlay.remove(); resolve(scope); };
+            document.getElementById('delChoiceEveryone')?.addEventListener('click', () => finish('everyone'));
+            document.getElementById('delChoiceMe').addEventListener('click', () => finish('me'));
+            document.getElementById('delChoiceCancel').addEventListener('click', () => finish(null));
+            overlay.addEventListener('click', e => { if (e.target === overlay) finish(null); });
+        });
     }
 
     // ── Small custom toast with an actual Undo button — the shared UI.showToast

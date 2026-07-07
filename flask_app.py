@@ -1517,7 +1517,9 @@ def create_app(test_config=None):
             m.read_at = datetime.utcnow()
         if unread_msgs:
             db.session.commit()
-            _log_activity(user.id, 'message_received', f'{len(unread_msgs)} message(s) received/read')
+            sender = User.query.get(contact_id)
+            sender_name = sender.username if sender else contact_id
+            _log_activity(user.id, 'message_received', f'{len(unread_msgs)} message(s) received from {sender_name}')
         return jsonify({'success': True, 'messages': [m.to_dict() for m in messages]}), 200
 
     @app.route('/api/chat/<contact_id>/messages', methods=['POST','OPTIONS'])
@@ -1911,6 +1913,33 @@ def create_app(test_config=None):
         if room:
             join_room(room)
             emit('joined_room', {'room': room})
+
+    @socketio.on('mark_read')
+    def handle_mark_read(data):
+        """
+        Called by the client when a live message arrives in a chat that's
+        already open — get_chat_messages() only marks-as-read/logs on a fresh
+        chat open, so without this, messages received while already viewing
+        the conversation never got logged as 'message_received' at all.
+        """
+        if not DB_AVAILABLE: return
+        contact_id = data.get('contact_id', '')
+        user_id = sid_to_user.get(request.sid)
+        if not contact_id or not user_id: return
+        try:
+            unread = Message.query.filter_by(sender_id=contact_id, receiver_id=user_id, is_read=False) \
+                .filter(Message.message_type.in_(['chat', 'image', 'audio', 'video'])).all()
+            for m in unread:
+                m.is_read = True
+                m.read_at = datetime.utcnow()
+            if unread:
+                db.session.commit()
+                sender = User.query.get(contact_id)
+                sender_name = sender.username if sender else contact_id
+                _log_activity(user_id, 'message_received',
+                               f'{len(unread)} message(s) received from {sender_name} (live)')
+        except Exception as e:
+            log.error(f'mark_read failed: {e}')
 
     @socketio.on('leave_room')
     def handle_leave_room(data):

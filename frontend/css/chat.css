@@ -318,7 +318,8 @@
   gap: 4px; margin-top: 4px;
 }
 .msg-time   { font-family: var(--mono); font-size: .65rem; color: var(--t3); }
-.msg-status { font-size: .72rem; color: var(--primary); }
+.msg-status { font-size: .72rem; color: var(--t3); }
+.msg-status.read { color: var(--primary); }
 
 /* Decrypt button */
 .msg-decrypt-btn {
