@@ -19,6 +19,12 @@ Pillow>=10.0.0
 
 # ── Rate limiting (brute-force / abuse protection) ────────────────
 flask-limiter>=3.5.0
+# FIX: Railway has a real Redis service provisioned for this project
+# (REDIS_URL is set), and rate_limit.py correctly uses it when present —
+# but flask-limiter's Redis storage backend needs this client library,
+# which was never added, causing a boot-time crash the moment REDIS_URL
+# is set: "'redis' prerequisite not available."
+redis>=5.0.0
 
 # ── WebSocket / Realtime ─────────────────────────────────────────
 # FIX: python-engineio was previously unpinned, so pip installed whatever the
