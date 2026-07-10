@@ -2,11 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <meta name="theme-color" content="#080b12" />
   <title>Dashboard — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
+  <!-- FIX: mobile-responsive.css exists in the repo but was never linked
+       anywhere — the dashboard (the largest surface of the app) had zero
+       benefit from it. Now included. -->
+  <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
 <body data-theme="dark">
@@ -143,10 +147,18 @@
       <div class="input-wrap"><i class="fas fa-envelope icon"></i><input type="email" id="profileEmail" class="form-input" placeholder="user@ghostchat.local" /></div>
     </div>
     <div class="form-group">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);">
-        <div><div style="font-size:.875rem;">Two-Factor Authentication</div><div class="text-ghost text-sm">Extra layer of security on login</div></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-size:.875rem;">Two-Factor Authentication</div>
+          <div class="text-ghost text-sm">Adds a 6-digit email code to every sign-in, on top of your password</div>
+        </div>
         <label class="toggle-sw" for="twoFactorToggle"><input type="checkbox" id="twoFactorToggle" /><div class="toggle-track"></div><div class="toggle-thumb"></div></label>
       </div>
+      <p style="font-size:.75rem;color:var(--t3);margin-top:8px;line-height:1.5;">
+        <i class="fas fa-circle-info"></i>
+        When enabled, you'll receive a verification code by email each time you sign in.
+        Click <strong>Save Changes</strong> below for this to take effect on your next login.
+      </p>
     </div>
     <button id="saveProfileBtn" class="btn btn-primary" style="margin-top:8px;"><i class="fas fa-save"></i> Save Changes</button>
   </div>
@@ -388,7 +400,6 @@
       document.getElementById('ddEmail').textContent = u.email||'—';
       if(u.avatar){
         const el=document.getElementById('avatarInitials');
-        // Build absolute URL so it works on Render.com with relative paths
         const avatarSrc = u.avatar.startsWith('http')
           ? u.avatar
           : `${window.location.origin}${u.avatar.startsWith('/') ? '' : '/'}${u.avatar}`;
@@ -403,7 +414,6 @@
 
   /* ── Page routing ────────────────────────────────────────────── */
   function navigate(page){
-    // If chat page, redirect to chat.html
     if (page === 'chat') {
       window.location.href = 'chat.html';
       return;
@@ -414,14 +424,12 @@
     if(!tpl){ container.innerHTML='<div class="empty-state"><i class="fas fa-ghost"></i><p>Page not found.</p></div>'; return; }
     container.innerHTML = tpl.innerHTML;
 
-    // Update nav items
     document.querySelectorAll('.sidebar-nav .nav-item').forEach(b=>{
       const active = b.dataset.page===page;
       b.classList.toggle('active',active);
       if(active) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current');
     });
 
-    // Init module
     const map={
       encrypt:    ()=>window.EncryptionModule?.init(),
       decrypt:    ()=>window.DecryptionModule?.init(),
@@ -432,12 +440,10 @@
     };
     map[page]?.();
 
-    // Re-wire theme option chips (injected by settings template)
     document.querySelectorAll('.theme-option[data-theme]').forEach(btn=>{
       btn.addEventListener('click',()=>window.themeManager?.set(btn.dataset.theme));
     });
 
-    // Re-sync active theme chip
     if(window.themeManager){
       const cur=window.themeManager.get();
       document.querySelectorAll('.theme-option').forEach(b=>b.classList.toggle('active',b.dataset.theme===cur));
@@ -446,7 +452,6 @@
     closeSidebar();
   }
 
-  /* ── Sidebar events ──────────────────────────────────────────── */
   document.querySelectorAll('.sidebar-nav .nav-item[data-page]').forEach(btn=>{
     btn.addEventListener('click',()=>navigate(btn.dataset.page));
   });
@@ -454,7 +459,6 @@
     btn.addEventListener('click',()=>navigate(btn.dataset.pageNav));
   });
 
-  /* ── Mobile sidebar ──────────────────────────────────────────── */
   const ham     = document.getElementById('hamburger');
   const sidebar = document.getElementById('sidebar');
   const overlay = document.getElementById('sidebarOverlay');
@@ -475,14 +479,12 @@
   ham.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); ham.click(); } });
   overlay.addEventListener('click',closeSidebar);
 
-  /* ── Profile dropdown ────────────────────────────────────────── */
   const avatarBtn  = document.getElementById('avatarToggle');
   const dropdown   = document.getElementById('profileDropdown');
   avatarBtn.addEventListener('click',e=>{ e.stopPropagation(); const open=dropdown.classList.toggle('open'); avatarBtn.setAttribute('aria-expanded',open); });
   avatarBtn.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); avatarBtn.click(); } });
   document.addEventListener('click',()=>{ dropdown.classList.remove('open'); avatarBtn.setAttribute('aria-expanded','false'); });
 
-  /* ── Logout ──────────────────────────────────────────────────── */
   async function doLogout(){
     await API.logout();
     localStorage.removeItem('ghostchat_user');
@@ -491,24 +493,9 @@
   document.getElementById('logoutBtn')?.addEventListener('click',doLogout);
   document.getElementById('ddLogout')?.addEventListener('click',doLogout);
 
-  /* ── Global search ───────────────────────────────────────────── */
   document.getElementById('globalSearch')?.addEventListener('input',function(){
     if(this.value.trim().length>1){ navigate('history'); }
   });
-
-  /* ── Keyboard shortcuts ──────────────────────────────────────── */
-  // Dashboard navigation shortcuts (only when not typing in an input/textarea)
-  //
-  //   Alt + E  →  Encrypt page
-  //   Alt + D  →  Decrypt page
-  //   Alt + H  →  History page
-  //   Alt + I  →  Integrations page
-  //   Alt + P  →  Profile page
-  //   Alt + S  →  Settings page
-  //   Alt + L  →  Logout
-  //   /        →  Focus global search bar
-  //   Escape   →  Close sidebar / dropdown / clear search
-  //   ?        →  Show keyboard shortcuts help toast
 
   document.addEventListener('keydown', e => {
     const inField = e.target.tagName === 'INPUT'
@@ -516,7 +503,6 @@
                  || e.target.tagName === 'SELECT'
                  || e.target.isContentEditable;
 
-    // Escape — close sidebar, dropdown, or blur search
     if (e.key === 'Escape') {
       closeSidebar();
       dropdown.classList.remove('open');
@@ -526,7 +512,6 @@
       return;
     }
 
-    // / — focus search bar (unless already in a field)
     if (e.key === '/' && !inField) {
       e.preventDefault();
       const search = document.getElementById('globalSearch');
@@ -534,7 +519,6 @@
       return;
     }
 
-    // ? — show shortcuts help
     if (e.key === '?' && !inField) {
       e.preventDefault();
       UI.showToast(
@@ -549,7 +533,6 @@
 
     if (inField) return;
 
-    // Alt + key navigation
     if (e.altKey) {
       const map = {
         e: 'encrypt', d: 'decrypt', h: 'history',
@@ -558,12 +541,9 @@
       const page = map[e.key.toLowerCase()];
       if (page) { e.preventDefault(); navigate(page); return; }
 
-      // Alt + L → logout
       if (e.key.toLowerCase() === 'l') { e.preventDefault(); doLogout(); return; }
     }
 
-    // Dashboard-page specific shortcuts (no modifier needed when not in a field)
-    // Enter on encrypt page → focus plaintext if empty, else submit
     if (e.key === 'Enter') {
       const encBtn = document.getElementById('encryptBtn');
       const decBtn = document.getElementById('decryptBtn');
@@ -581,13 +561,10 @@
     }
   });
 
-  // Tab order enhancement for encrypt page inputs
-  // (plaintext → password → button, Enter advances between them)
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
     const active = document.activeElement;
 
-    // Encrypt page: plaintext → password → submit
     if (active?.id === 'plaintext') {
       e.preventDefault();
       document.getElementById('encryptPassword')?.focus();
@@ -596,7 +573,6 @@
       document.getElementById('encryptBtn')?.click();
     }
 
-    // Decrypt page: ciphertext → password → submit
     if (active?.id === 'ciphertext') {
       e.preventDefault();
       document.getElementById('decryptPassword')?.focus();
@@ -611,7 +587,6 @@
   navigate('encrypt');
   API.ensureSession().catch(()=>{});
 
-  // Show a one-time hint about keyboard shortcuts
   if (!localStorage.getItem('gc_shortcuts_shown')) {
     setTimeout(() => {
       UI.showToast('Tip: Press ? to see keyboard shortcuts', 'info', 4000);

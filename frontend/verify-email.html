@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <meta name="theme-color" content="#080b12" />
   <title>Verify Email — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
 <body data-theme="dark">
@@ -74,7 +75,6 @@
   if (email) {
     document.getElementById('sentToLine').textContent = `Enter the 6-digit code we sent to ${email}`;
   } else {
-    // No email in the URL — send them back to register rather than show a dead-end form
     window.location.href = 'register.html';
   }
 
@@ -119,7 +119,13 @@
         showErr(data.error || 'Verification failed. Please try again.');
       }
     } catch (err) {
-      showErr(err?.data?.error || err?.message || 'Verification failed. The code may have expired.');
+      if (err?.status === 429) {
+        showErr('Too many attempts. Please wait before trying again.');
+      } else if (err.isNetworkError) {
+        showErr('Cannot reach the server. Check your connection.');
+      } else {
+        showErr(err?.data?.error || err?.message || 'Verification failed. The code may have expired.');
+      }
     } finally {
       btn.classList.remove('btn-loading');
       btn.disabled = false;
@@ -131,8 +137,12 @@
     try {
       await window.GhostChatAPI.resendVerification(email);
       UI.showToast('A new code has been sent to your email', 'success');
-    } catch (_) {
-      UI.showToast('A new code has been sent to your email', 'success'); // anti-enumeration — same message either way
+    } catch (err) {
+      if (err?.status === 429) {
+        UI.showToast('Please wait before requesting another code', 'error');
+      } else {
+        UI.showToast('A new code has been sent to your email', 'success'); // anti-enumeration — same message either way
+      }
     }
   });
 })();

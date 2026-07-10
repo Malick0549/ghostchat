@@ -1,6 +1,13 @@
 /**
- * GHOSTCHAT  ·  UI & Theme Module  v3.1
- * Handles toasts, clipboard, session status, and dark/light theme switching.
+ * GHOSTCHAT  ·  UI & Theme Module  v3.2
+ * Handles toasts, clipboard, session status, sound feedback, and dark/light theme switching.
+ *
+ * FIX: playSound() existed but was never called anywhere in the app, so the
+ * "Sound effects" setting in Settings did nothing. It's now invoked from
+ * dashboard.js and chat-socket.js at the actual moments a notification fires
+ * (encrypt success, decrypt success, new chat message) — see those files.
+ * playSound() itself already correctly reads ghostchat_settings.soundEffects,
+ * so no change was needed here beyond making sure something calls it.
  */
 
 /* ── UI helpers ─────────────────────────────────────────────────── */
@@ -49,7 +56,7 @@ window.UI = {
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.frequency.value = type === 'success' ? 880 : 440;
+      osc.frequency.value = type === 'success' ? 880 : type === 'error' ? 220 : 440;
       gain.gain.value = 0.08;
       osc.start();
       setTimeout(() => { osc.stop(); ctx.close(); }, 200);
@@ -57,15 +64,10 @@ window.UI = {
   },
 
   showNotification(title, body) {
-    // new Notification() is not supported on mobile browsers —
-    // they require a ServiceWorker. We use a toast instead, which
-    // works everywhere, and only attempt the native notification on
-    // desktop browsers where it is safe to do so.
     this.showToast(body || title, 'info');
 
     try {
       if (!('Notification' in window)) return;
-      // Only attempt native notification on non-mobile environments
       const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
       if (isMobile) return;
       const show = () => {
@@ -94,7 +96,6 @@ window.UI = {
         }
       })
       .catch(() => {
-        // Fallback for older browsers
         const ta = document.createElement('textarea');
         ta.value = text;
         ta.style.cssText = 'position:fixed;opacity:0;';
@@ -116,7 +117,6 @@ class ThemeManager {
     };
     this.order   = ['dark', 'light'];
     this.current = localStorage.getItem('ghostchat_theme') || 'dark';
-    // Clamp any unrecognised stored theme to dark
     if (!this.themes[this.current]) this.current = 'dark';
     this._apply(this.current);
   }
@@ -137,7 +137,6 @@ class ThemeManager {
     document.body.setAttribute('data-theme', name);
     localStorage.setItem('ghostchat_theme', name);
 
-    // Meta theme-color for mobile browsers
     let meta = document.querySelector('meta[name="theme-color"]');
     if (!meta) {
       meta = document.createElement('meta');
@@ -151,12 +150,10 @@ class ThemeManager {
   }
 
   _syncUI(name) {
-    // Sync toggle button icons
     document.querySelectorAll(
       '#themeToggle i, #themeToggleLanding i, .theme-toggle-btn i'
     ).forEach(el => { el.className = `fas ${this.themes[name].icon}`; });
 
-    // Sync sidebar theme option chips
     document.querySelectorAll('.theme-option[data-theme]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.theme === name);
     });
@@ -176,18 +173,11 @@ class ThemeManager {
 document.addEventListener('DOMContentLoaded', function () {
   window.themeManager = new ThemeManager();
 
-  // Wire all toggle buttons
   document.querySelectorAll('#themeToggle, #themeToggleLanding, .theme-toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => window.themeManager.toggle());
   });
 
-  // Wire sidebar theme chips
   document.querySelectorAll('.theme-option[data-theme]').forEach(btn => {
     btn.addEventListener('click', () => window.themeManager.set(btn.dataset.theme));
   });
-
-  // Notification permission is requested lazily (only when a notification
-  // is actually needed) to avoid crashing on mobile browsers where
-  // new Notification() requires a ServiceWorker.
-  // Do NOT call Notification.requestPermission() here on page load.
 });

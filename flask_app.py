@@ -7,10 +7,12 @@ Run locally:
     cd backend
     python flask_app.py
 
-Deployed on Render:
-    - Set env var FLASK_SECRET to a long random string
-    - Set env var RENDER=true  (Render sets this automatically)
-    - The app auto-detects HTTPS and sets cookies correctly
+Deployed on Railway:
+    - Set env var FLASK_SECRET to a long random string (REQUIRED in production —
+      see the startup check below; the app will refuse to boot without it).
+    - Set env var RAILWAY=true (Railway sets this automatically)
+    - Optionally set REDIS_URL for rate-limit storage shared across workers.
+    - The app auto-detects HTTPS and sets cookies correctly.
 """
 
 # ── FIX: eventlet monkey patch MUST be first ─────────────────────────────────
@@ -59,6 +61,12 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from backend.api import crypto_bp, session_bp
 from backend.api.errors import register_error_handlers
 from backend.api.middleware import add_security_headers
+from backend.api.rate_limit import (
+    limiter, LOGIN_LIMIT, REGISTER_LIMIT, VERIFY_EMAIL_LIMIT,
+    RESEND_VERIFY_LIMIT, FORGOT_PASSWORD_LIMIT, RESET_PASSWORD_LIMIT,
+    DECRYPT_LIMIT, ENCRYPT_LIMIT, TWO_FA_VERIFY_LIMIT, ADMIN_MUTATION_LIMIT,
+)
+from backend.api.two_factor import issue_otp, verify_otp, otp_email_body
 
 # ── Database models ────────────────────────────────────────────────────────────
 try:
@@ -90,22 +98,14 @@ def _is_https():
         request.is_secure
         or request.headers.get('X-Forwarded-Proto') == 'https'
         or bool(os.environ.get('RENDER'))
-        or bool(os.environ.get('RAILWAY'))  # ── FIX: Added Railway detection ──
+        or bool(os.environ.get('RAILWAY'))
     )
 
 
 def create_app(test_config=None):
-    # ── FIX: tracks which user a given socket sid belongs to, set at join time.
-    # handle_disconnect previously used flask.session to figure out who
-    # disconnected, which is unreliable inside SocketIO event handlers — this
-    # is why online/offline status was inconsistent. ──
     global sid_to_user
     sid_to_user = {}
 
-
-    # ── Flask app ──────────────────────────────────────────────────────────────
-    # Use absolute path so Flask finds frontend/ correctly regardless
-    # of working directory in Docker or whether this module lives at root.
     _basedir = os.path.abspath(os.path.dirname(__file__))
     _frontend = os.path.abspath(os.path.join(_basedir, 'frontend'))
 
@@ -118,16 +118,41 @@ def create_app(test_config=None):
     # ── Detect environment ─────────────────────────────────────────────────────
     IS_PROD = bool(
         os.environ.get('RENDER')
+        or os.environ.get('RAILWAY')
         or os.environ.get('FLASK_ENV') == 'production'
     )
 
+    # ── FIX: SECRET_KEY correctness/security fix ─────────────────────────────
+    # Previously this defaulted to secrets.token_hex(32) generated fresh at
+    # import time. On a multi-worker gunicorn deployment (Railway's default),
+    # every worker process gets a DIFFERENT random key, so a signed session
+    # cookie minted by worker A is rejected as invalid by worker B — causing
+    # random, intermittent "logged out" behavior with no error. It also means
+    # every redeploy silently invalidates every active session. In production
+    # we now require FLASK_SECRET to be set explicitly and refuse to boot
+    # without it, rather than silently degrading. In development, a random
+    # key each run is fine (and expected) since there's only one process.
+    _secret_key = os.environ.get('FLASK_SECRET')
+    if not _secret_key:
+        if IS_PROD:
+            raise RuntimeError(
+                'FATAL: FLASK_SECRET environment variable is not set. '
+                'A missing SECRET_KEY in production causes silent session '
+                'invalidation across workers/restarts and is a security risk. '
+                'Set FLASK_SECRET to a long random string (e.g. '
+                '`python -c "import secrets; print(secrets.token_hex(32))"`) '
+                'in your Railway environment variables and redeploy.'
+            )
+        _secret_key = secrets.token_hex(32)
+        log.warning('FLASK_SECRET not set — using an ephemeral development key. '
+                     'Sessions will not survive a restart. Do not run production like this.')
+
     # ── Core config ────────────────────────────────────────────────────────────
     app.config.update(
-        SECRET_KEY                  = os.environ.get('FLASK_SECRET', secrets.token_hex(32)),
+        SECRET_KEY                  = _secret_key,
         DEBUG                       = not IS_PROD and os.environ.get('FLASK_DEBUG', '0') == '1',
         JSON_SORT_KEYS              = False,
         TESTING                     = False,
-        # Flask built-in signed cookie sessions (no flask-session needed)
         SESSION_PERMANENT           = False,
         PERMANENT_SESSION_LIFETIME  = timedelta(hours=24),
         SESSION_COOKIE_NAME         = 'ghostchat_sess',
@@ -143,20 +168,17 @@ def create_app(test_config=None):
         or f'sqlite:///{os.path.join(basedir, "ghostchat.db")}'
     )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-    # ── FIX: without this, an oversized upload (video, especially) can tie up
-    # the single eventlet worker reading the whole body before our own size
-    # checks in send_media_message ever get a chance to run. 45MB gives headroom
-    # over the largest allowed media type (video, capped at 40MB) plus form overhead.
     app.config['MAX_CONTENT_LENGTH'] = 45 * 1024 * 1024
 
-    # ── Upload folder ──────────────────────────────────────────────────────────
     upload_folder = os.path.join(basedir, '..', 'frontend', 'assets', 'uploads')
     os.makedirs(upload_folder, exist_ok=True)
     app.config['UPLOAD_FOLDER'] = upload_folder
 
     if test_config:
         app.config.update(test_config)
+
+    # ── Rate limiter ───────────────────────────────────────────────────────────
+    limiter.init_app(app)
 
     # ── Extensions ─────────────────────────────────────────────────────────────
     if DB_AVAILABLE:
@@ -165,46 +187,42 @@ def create_app(test_config=None):
         with app.app_context():
             db.create_all()
             log.info('Database ready')
-            # ── FIX: media_data/media_type are new columns for image/audio/video
-            # sharing — same reasoning as the earlier Contact.status migration:
-            # db.create_all() only creates missing TABLES, never ALTERs existing
-            # ones, so this adds the columns to any database created before
-            # this feature existed. ──
-            try:
-                from sqlalchemy import inspect, text
-                inspector = inspect(db.engine)
-                msg_table = Message.__tablename__
-                existing_cols = [c['name'] for c in inspector.get_columns(msg_table)]
-                if 'media_data' not in existing_cols:
-                    db.session.execute(text(f"ALTER TABLE {msg_table} ADD COLUMN media_data BLOB"))
-                    log.info(f"Migrated: added 'media_data' column to {msg_table}")
-                if 'media_type' not in existing_cols:
-                    db.session.execute(text(f"ALTER TABLE {msg_table} ADD COLUMN media_type VARCHAR(100)"))
-                    log.info(f"Migrated: added 'media_type' column to {msg_table}")
-                db.session.commit()
-            except Exception as e:
-                log.error(f'Message media-column migration check failed: {e}')
 
-            # ── FIX: is_admin/verification_code/verification_code_expires are new
-            # User columns for the admin activity log + email verification
-            # features — same db.create_all()-doesn't-ALTER reasoning as above. ──
-            try:
-                from sqlalchemy import inspect, text
-                inspector = inspect(db.engine)
-                user_table = User.__tablename__
-                existing_user_cols = [c['name'] for c in inspector.get_columns(user_table)]
-                if 'is_admin' not in existing_user_cols:
-                    db.session.execute(text(f"ALTER TABLE {user_table} ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
-                    log.info(f"Migrated: added 'is_admin' column to {user_table}")
-                if 'verification_code' not in existing_user_cols:
-                    db.session.execute(text(f"ALTER TABLE {user_table} ADD COLUMN verification_code VARCHAR(10)"))
-                    log.info(f"Migrated: added 'verification_code' column to {user_table}")
-                if 'verification_code_expires' not in existing_user_cols:
-                    db.session.execute(text(f"ALTER TABLE {user_table} ADD COLUMN verification_code_expires DATETIME"))
-                    log.info(f"Migrated: added 'verification_code_expires' column to {user_table}")
-                db.session.commit()
+            def _migrate_columns(model, cols: dict):
+                """cols: {column_name: sql_type_ddl}. Adds any missing columns."""
+                try:
+                    from sqlalchemy import inspect, text
+                    inspector = inspect(db.engine)
+                    table = model.__tablename__
+                    existing = [c['name'] for c in inspector.get_columns(table)]
+                    for col, ddl in cols.items():
+                        if col not in existing:
+                            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+                            log.info(f"Migrated: added '{col}' column to {table}")
+                    db.session.commit()
+                except Exception as e:
+                    log.error(f'Migration check failed for {model.__tablename__}: {e}')
+                    db.session.rollback()
 
-                # ── Admin bootstrap: promote accounts matching ADMIN_EMAILS ──
+            _migrate_columns(Message, {'media_data': 'BLOB', 'media_type': 'VARCHAR(100)'})
+            _migrate_columns(User, {
+                'is_admin': 'BOOLEAN DEFAULT 0',
+                'verification_code': 'VARCHAR(10)',
+                'verification_code_expires': 'DATETIME',
+            })
+            _migrate_columns(User, {
+                'last_ip': 'VARCHAR(45)', 'last_location': 'VARCHAR(200)', 'last_device': 'VARCHAR(200)',
+            })
+            _migrate_columns(ActivityLog, {'location': 'VARCHAR(200)', 'device': 'VARCHAR(200)'})
+            _migrate_columns(Message, {'deleted_at': 'DATETIME', 'deleted_by': 'VARCHAR(36)'})
+            # ── 2FA columns ──
+            _migrate_columns(User, {
+                'two_factor_code': 'VARCHAR(10)',
+                'two_factor_code_expires': 'DATETIME',
+                'two_factor_attempts': 'INTEGER DEFAULT 0',
+            })
+
+            try:
                 admin_emails = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
                 if admin_emails:
                     promoted = User.query.filter(db.func.lower(User.email).in_(admin_emails), User.is_admin == False).all()
@@ -214,59 +232,21 @@ def create_app(test_config=None):
                         db.session.commit()
                         log.info(f"Promoted {len(promoted)} account(s) to admin via ADMIN_EMAILS")
             except Exception as e:
-                log.error(f'User admin-column migration check failed: {e}')
-
-            # ── FIX: last_ip/last_location/last_device (User), location/device
-            # (ActivityLog), and deleted_at/deleted_by (Message) are all new
-            # columns for the admin dashboard's location/device tracking and
-            # the reversible-delete feature. ──
-            try:
-                from sqlalchemy import inspect, text
-                inspector = inspect(db.engine)
-
-                user_cols = [c['name'] for c in inspector.get_columns(User.__tablename__)]
-                for col, ddl in [
-                    ('last_ip', 'VARCHAR(45)'), ('last_location', 'VARCHAR(200)'), ('last_device', 'VARCHAR(200)')
-                ]:
-                    if col not in user_cols:
-                        db.session.execute(text(f"ALTER TABLE {User.__tablename__} ADD COLUMN {col} {ddl}"))
-                        log.info(f"Migrated: added '{col}' column to {User.__tablename__}")
-
-                log_cols = [c['name'] for c in inspector.get_columns(ActivityLog.__tablename__)]
-                for col, ddl in [('location', 'VARCHAR(200)'), ('device', 'VARCHAR(200)')]:
-                    if col not in log_cols:
-                        db.session.execute(text(f"ALTER TABLE {ActivityLog.__tablename__} ADD COLUMN {col} {ddl}"))
-                        log.info(f"Migrated: added '{col}' column to {ActivityLog.__tablename__}")
-
-                msg_cols2 = [c['name'] for c in inspector.get_columns(Message.__tablename__)]
-                for col, ddl in [('deleted_at', 'DATETIME'), ('deleted_by', 'VARCHAR(36)')]:
-                    if col not in msg_cols2:
-                        db.session.execute(text(f"ALTER TABLE {Message.__tablename__} ADD COLUMN {col} {ddl}"))
-                        log.info(f"Migrated: added '{col}' column to {Message.__tablename__}")
-
-                db.session.commit()
-            except Exception as e:
-                log.error(f'Location/device/undo-delete migration check failed: {e}')
-
-    # Session(app) removed — using Flask built-in sessions
+                log.error(f'Admin bootstrap failed: {e}')
+                db.session.rollback()
 
     # ── CORS ───────────────────────────────────────────────────────────────────
     allowed_origins = [
         'http://localhost:5000',
         'http://127.0.0.1:5000',
         'https://ghostchat-5slo.onrender.com',
-        'https://ghostchat-production-6c0b.up.railway.app',  # ── FIX: explicit current Railway domain ──
+        'https://ghostchat-production-6c0b.up.railway.app',
         'null',
     ]
-    # Also pick up any dynamically-configured Render URL (kept for compatibility)
     render_url = os.environ.get('RENDER_EXTERNAL_URL', '').rstrip('/')
     if render_url and render_url not in allowed_origins:
         allowed_origins.append(render_url)
 
-    # ── FIX: this only ever checked for a Render URL, a leftover from before
-    # the migration to Railway — it never picked up the actual Railway domain.
-    # Railway sets RAILWAY_PUBLIC_DOMAIN automatically to the live public host,
-    # so this keeps CORS/SocketIO working even if the domain changes later. ──
     railway_domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN', '').strip()
     if railway_domain:
         railway_url = f'https://{railway_domain}'.rstrip('/')
@@ -283,30 +263,24 @@ def create_app(test_config=None):
     log.info(f'Allowed origins: {allowed_origins}')
 
     # ── Blueprints ─────────────────────────────────────────────────────────────
-    app.register_blueprint(crypto_bp)    # /encrypt, /decrypt  (session-key API)
-    app.register_blueprint(session_bp)   # /new-session, /session-info, etc.
+    app.register_blueprint(crypto_bp)
+    app.register_blueprint(session_bp)
 
     # ── Security headers + error handlers ──────────────────────────────────────
     app.after_request(add_security_headers)
     register_error_handlers(app)
 
+    @app.errorhandler(429)
+    def rate_limit_exceeded(e):
+        return jsonify({
+            'error': 'Too Many Requests',
+            'message': 'Too many attempts. Please wait before trying again.',
+            'code': 429,
+        }), 429
+
     # ── SocketIO ──────────────────────────────────────────────────────────────
-    # ── FIX: SocketIO with proper async_mode handling ────────────────────────
-    #
-    # ── FIX: manage_session=False is required here. Flask-SocketIO defaults to
-    # forking its own copy of the session per connection (manage_session=True),
-    # which internally does `ctx.session = session_obj`. Flask 3.1 made
-    # RequestContext.session a read-only property with no setter, so that line
-    # throws AttributeError on EVERY connect, disconnect, and event — silently,
-    # inside engineio's handler wrapper, before any of our own handler code
-    # (join_user_room, typing, presence, message delivery) ever runs. This is
-    # exactly why online/offline/typing status never worked: the handlers were
-    # never actually executing. We already use Flask's own cookie-based
-    # sessions for auth, not Flask-SocketIO's forked session, so disabling its
-    # session management here is correct and loses nothing. ──
     global socketio
     try:
-        # eventlet is already imported and monkey patched above
         socketio = SocketIO(
             app,
             cors_allowed_origins=allowed_origins,
@@ -331,15 +305,6 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
     # CSRF — Double-Submit Cookie Pattern
     # ═══════════════════════════════════════════════════════════════════════════
-    #
-    # 1. GET /api/csrf-token  → server generates token, sets as READABLE cookie
-    #                           AND returns in JSON.
-    # 2. Frontend stores token in memory, sends as X-CSRF-Token header.
-    # 3. Server compares header to cookie (constant-time).
-    #    Attacker on another origin cannot read the cookie → cannot forge header.
-    # 4. Stateless: no server-side session lookup for CSRF, eliminating the
-    #    race condition between OPTIONS preflight and the first POST.
-    # ═══════════════════════════════════════════════════════════════════════════
 
     CSRF_COOKIE = 'gc_csrf'
 
@@ -350,26 +315,21 @@ def create_app(test_config=None):
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_hex(32)
         resp = jsonify({'csrf_token': token})
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
         is_railway = bool(os.environ.get('RAILWAY'))
         secure_cookie = https or is_railway
-        
+
         resp.set_cookie(
             CSRF_COOKIE,
             token,
-            httponly=False,                         # JS must read it
+            httponly=False,
             samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            secure=secure_cookie,
             max_age=3600,
             path='/',
         )
         return resp, 200
 
     def _check_csrf():
-        """
-        Validate CSRF for mutating requests.
-        Returns (None, None) on pass, (response, code) on failure.
-        """
         if request.method in ('GET', 'OPTIONS', 'HEAD'):
             return None, None
         if request.path in ('/api/csrf-token', '/health'):
@@ -413,6 +373,11 @@ def create_app(test_config=None):
         uid = session.get('user_id')
         if not uid:
             return None, (jsonify({'error': 'Not authenticated'}), 401)
+        # ── 2FA gate: a session that has passed password check but not yet
+        # the second factor is only allowed to hit the 2FA verify/resend
+        # routes — everything else must be blocked until fully authenticated. ──
+        if session.get('pending_2fa'):
+            return None, (jsonify({'error': 'Two-factor verification required', 'requires_2fa': True}), 401)
         user = User.query.get(uid)
         if not user:
             session.clear()
@@ -420,18 +385,15 @@ def create_app(test_config=None):
         return user, None
 
     def _require_admin():
-        """Return (user, None) if authenticated AND an admin, else (None, (response, code))."""
         user, err = _require_auth()
         if err: return None, err
         if not user.is_admin:
             return None, (jsonify({'error': 'Admin access required'}), 403)
         return user, None
 
-    _geoip_cache = {}   # ip -> location string, avoids re-querying the same IP repeatedly
+    _geoip_cache = {}
 
     def _geolocate_ip(ip: str) -> str:
-        """Best-effort city/country lookup via a free HTTP API. Never raises —
-        returns 'Unknown' on any failure (rate limit, network issue, private IP)."""
         if not ip or ip in ('127.0.0.1', 'localhost', '::1'):
             return 'Local'
         if ip in _geoip_cache:
@@ -449,9 +411,6 @@ def create_app(test_config=None):
         return location
 
     def _parse_device(user_agent: str) -> str:
-        """Lightweight, dependency-free User-Agent parse into a readable
-        'Browser on OS' string — good enough for admin visibility, not meant
-        to be exhaustive."""
         if not user_agent:
             return 'Unknown device'
         ua = user_agent
@@ -477,7 +436,6 @@ def create_app(test_config=None):
         return request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
 
     def _log_activity(user_id, event_type, description=''):
-        """Best-effort audit trail entry — never blocks or breaks the caller."""
         if not DB_AVAILABLE: return
         try:
             ip = _client_ip()
@@ -490,20 +448,19 @@ def create_app(test_config=None):
             db.session.commit()
         except Exception as e:
             log.error(f'Activity log write failed ({event_type}): {e}')
+            db.session.rollback()
 
     def _rotate_csrf_cookie(resp):
-        """Issue a fresh CSRF token cookie after login/register."""
         token = secrets.token_hex(32)
         https = _is_https()
-        # ── FIX: Force secure for Railway ────────────────────────────────────
         is_railway = bool(os.environ.get('RAILWAY'))
         secure_cookie = https or is_railway
-        
+
         resp.set_cookie(
             CSRF_COOKIE, token,
             httponly=False,
             samesite='None' if secure_cookie else 'Lax',
-            secure=secure_cookie,  # ── Changed from 'https' to 'secure_cookie' ──
+            secure=secure_cookie,
             max_age=3600, path='/',
         )
         return resp
@@ -529,17 +486,11 @@ def create_app(test_config=None):
             except Exception:
                 pass
 
-        # ── SendGrid — free tier supports Single Sender Verification (verify
-        # just one email address you own, no domain needed) and then sends to
-        # ANY recipient. This is the recommended path if you don't have a
-        # domain, since Resend's default onboarding@resend.dev sender can only
-        # send to your own Resend account email. ──
         sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
         if sendgrid_api_key:
             mail_from = os.environ.get('MAIL_FROM')
             if not mail_from:
-                log.error('SENDGRID_API_KEY is set but MAIL_FROM is missing — '
-                          'MAIL_FROM must be the exact address you verified in SendGrid.')
+                log.error('SENDGRID_API_KEY is set but MAIL_FROM is missing.')
             else:
                 try:
                     import urllib.request
@@ -554,49 +505,30 @@ def create_app(test_config=None):
                     }).encode('utf-8')
                     req = urllib.request.Request(
                         'https://api.sendgrid.com/v3/mail/send',
-                        data=body,
-                        method='POST',
-                        headers={
-                            'Authorization': f'Bearer {sendgrid_api_key}',
-                            'Content-Type': 'application/json',
-                        },
+                        data=body, method='POST',
+                        headers={'Authorization': f'Bearer {sendgrid_api_key}', 'Content-Type': 'application/json'},
                     )
                     with urllib.request.urlopen(req, timeout=10) as resp:
-                        if resp.status == 202:   # SendGrid returns 202 Accepted on success, not 200
+                        if resp.status == 202:
                             log.info('Email sent via SendGrid to %s', recipient)
                             return True
                         log.error('SendGrid API returned status %s for %s', resp.status, recipient)
                 except Exception as exc:
                     log.error('Failed to send email via SendGrid to %s: %s', recipient, exc)
-                # fall through to Resend / SMTP / debug-log path below if SendGrid failed
 
-        # ── FIX: Railway (and several other platforms) block outbound SMTP
-        # entirely (ports 25/465/587) at the network level — this is a
-        # platform policy, not a code bug, confirmed by Railway's own support:
-        # "Outbound SMTP is blocked. We recommend using email providers that
-        # have HTTPS APIs such as resend." Try Resend's HTTP API first, since
-        # regular HTTPS isn't blocked; SMTP below remains as a fallback for
-        # hosts that don't block it. ──
         resend_api_key = os.environ.get('RESEND_API_KEY')
         if resend_api_key:
             mail_from = os.environ.get('MAIL_FROM', 'onboarding@resend.dev')
             try:
                 import urllib.request
                 body = json.dumps({
-                    'from': mail_from,
-                    'to': [recipient],
-                    'subject': subject,
-                    'html': html_body,
-                    'text': text_body,
+                    'from': mail_from, 'to': [recipient], 'subject': subject,
+                    'html': html_body, 'text': text_body,
                 }).encode('utf-8')
                 req = urllib.request.Request(
                     'https://api.resend.com/emails',
-                    data=body,
-                    method='POST',
-                    headers={
-                        'Authorization': f'Bearer {resend_api_key}',
-                        'Content-Type': 'application/json',
-                    },
+                    data=body, method='POST',
+                    headers={'Authorization': f'Bearer {resend_api_key}', 'Content-Type': 'application/json'},
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     if 200 <= resp.status < 300:
@@ -605,7 +537,6 @@ def create_app(test_config=None):
                     log.error('Resend API returned status %s for %s', resp.status, recipient)
             except Exception as exc:
                 log.error('Failed to send email via Resend to %s: %s', recipient, exc)
-            # fall through to SMTP / debug-log path below if Resend failed
 
         smtp_host = os.environ.get('SMTP_HOST')
         smtp_port = int(os.environ.get('SMTP_PORT', '587'))
@@ -617,7 +548,7 @@ def create_app(test_config=None):
 
         if not smtp_host or not smtp_user or not smtp_password:
             log.warning('No RESEND_API_KEY and no SMTP settings; email not sent.')
-            log.info('Password reset link: %s', text_body)
+            log.info('Email body (fallback log): %s', text_body)
             write_debug_link()
             return False
 
@@ -643,8 +574,8 @@ def create_app(test_config=None):
                     smtp.send_message(msg)
             return True
         except Exception as exc:
-            log.error('Failed to send password reset email to %s: %s', recipient, exc)
-            log.info('Password reset link: %s', text_body)
+            log.error('Failed to send email to %s: %s', recipient, exc)
+            log.info('Email body (fallback log): %s', text_body)
             write_debug_link()
             return False
 
@@ -653,6 +584,7 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route('/api/auth/register', methods=['POST', 'OPTIONS'])
+    @limiter.limit(REGISTER_LIMIT)
     def register():
         if request.method == 'OPTIONS':
             return '', 200
@@ -681,8 +613,6 @@ def create_app(test_config=None):
             if User.query.filter_by(email=email).first():
                 return jsonify({'error': 'Email already registered'}), 400
 
-            # ── FIX: email verification gate — account exists but can't log in
-            # until the code sent to their email is confirmed ──
             user = User(username=username, email=email, is_verified=False)
             admin_emails = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
             if email.lower() in admin_emails:
@@ -724,6 +654,7 @@ def create_app(test_config=None):
             return jsonify({'error': 'Registration failed. Please try again.'}), 500
 
     @app.route('/api/auth/verify-email', methods=['POST', 'OPTIONS'])
+    @limiter.limit(VERIFY_EMAIL_LIMIT)
     def verify_email():
         if request.method == 'OPTIONS':
             return '', 200
@@ -739,7 +670,7 @@ def create_app(test_config=None):
         user = User.query.filter_by(email=email).first()
         if not user or not user.verification_code:
             return jsonify({'error': 'Invalid or expired verification code'}), 400
-        if user.verification_code != code:
+        if not secrets.compare_digest(user.verification_code, code):
             return jsonify({'error': 'Incorrect verification code'}), 400
         if not user.verification_code_expires or datetime.utcnow() > user.verification_code_expires:
             return jsonify({'error': 'Verification code has expired. Request a new one.'}), 400
@@ -759,6 +690,7 @@ def create_app(test_config=None):
         return _rotate_csrf_cookie(resp), 200
 
     @app.route('/api/auth/resend-verification', methods=['POST', 'OPTIONS'])
+    @limiter.limit(RESEND_VERIFY_LIMIT)
     def resend_verification():
         if request.method == 'OPTIONS':
             return '', 200
@@ -771,7 +703,6 @@ def create_app(test_config=None):
             return jsonify({'error': 'Email is required'}), 400
 
         user = User.query.filter_by(email=email).first()
-        # Anti-enumeration — always return success regardless of whether the email exists
         if user and not user.is_verified:
             code_str = f'{secrets.randbelow(1000000):06d}'
             user.verification_code = code_str
@@ -789,6 +720,7 @@ def create_app(test_config=None):
         return jsonify({'success': True, 'message': 'If that email needs verification, a new code has been sent.'}), 200
 
     @app.route('/api/auth/login', methods=['POST', 'OPTIONS'])
+    @limiter.limit(LOGIN_LIMIT)
     def login():
         if request.method == 'OPTIONS':
             return '', 200
@@ -806,13 +738,11 @@ def create_app(test_config=None):
             if not username or not password:
                 return jsonify({'error': 'Username and password are required'}), 400
 
-            # Accept username OR email
             user = (
                 User.query.filter_by(username=username).first()
                 or User.query.filter_by(email=username).first()
             )
 
-            # Constant-time failure — same message for wrong user and wrong password
             if not user or not user.check_password(password):
                 log.warning(f'Failed login for: {username[:30]}')
                 _log_activity(user.id if user else None, 'login_failed',
@@ -822,13 +752,37 @@ def create_app(test_config=None):
             if not user.is_active:
                 return jsonify({'error': 'Account is disabled'}), 401
 
-            # ── FIX: enforce the email-verification gate at login too ──
             if not user.is_verified:
                 return jsonify({
                     'error': 'Please verify your email before signing in.',
                     'requires_verification': True,
                     'email': user.email,
                 }), 403
+
+            # ── 2FA gate ──
+            # Password check passed. If 2FA is enabled, do NOT fully log the
+            # user in yet — issue an OTP, mark the session as pending-2FA
+            # (which _require_auth blocks on), and tell the client to prompt
+            # for the code. Only /api/auth/2fa/verify can lift pending_2fa.
+            if user.two_factor_enabled:
+                code_str = issue_otp(user, db)
+                db.session.commit()
+                session.clear()
+                session['pending_2fa_user_id'] = user.id
+                session['pending_2fa'] = True
+
+                html, text = otp_email_body(user.username, code_str)
+                sent = _send_email(subject='Your GhostChat sign-in code', recipient=user.email,
+                                    html_body=html, text_body=text)
+                if not sent:
+                    log.info(f'2FA code for {user.email}: {code_str}')
+
+                resp = jsonify({
+                    'success': True,
+                    'requires_2fa': True,
+                    'message': 'Enter the verification code sent to your email.',
+                })
+                return _rotate_csrf_cookie(resp), 200
 
             ip = _client_ip()
             user.last_login = datetime.utcnow()
@@ -848,6 +802,76 @@ def create_app(test_config=None):
         except Exception as exc:
             log.error(f'Login error: {exc}')
             return jsonify({'error': 'Login failed. Please try again.'}), 500
+
+    @app.route('/api/auth/2fa/verify', methods=['POST', 'OPTIONS'])
+    @limiter.limit(TWO_FA_VERIFY_LIMIT)
+    def verify_2fa():
+        if request.method == 'OPTIONS':
+            return '', 200
+        err, code = _check_csrf()
+        if err:
+            return err, code
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Database not available'}), 500
+
+        uid = session.get('pending_2fa_user_id')
+        if not uid or not session.get('pending_2fa'):
+            return jsonify({'error': 'No pending two-factor verification'}), 400
+
+        user = User.query.get(uid)
+        if not user:
+            session.clear()
+            return jsonify({'error': 'User not found'}), 401
+
+        submitted = ((request.get_json() or {}).get('code') or '').strip()
+        ok, msg = verify_otp(user, submitted)
+        db.session.commit()
+
+        if not ok:
+            return jsonify({'error': msg}), 400
+
+        ip = _client_ip()
+        user.last_login = datetime.utcnow()
+        user.last_ip = ip
+        user.last_location = _geolocate_ip(ip)
+        user.last_device = _parse_device(request.headers.get('User-Agent', ''))
+        db.session.commit()
+
+        session.clear()
+        session['user_id'] = user.id
+        session['authenticated'] = True
+        _log_activity(user.id, 'login', f'{user.username} logged in (2FA verified)')
+        log.info(f'2FA verified, user logged in: {user.username}')
+
+        resp = jsonify({'success': True, 'user': user.to_dict()})
+        return _rotate_csrf_cookie(resp), 200
+
+    @app.route('/api/auth/2fa/resend', methods=['POST', 'OPTIONS'])
+    @limiter.limit(RESEND_VERIFY_LIMIT)
+    def resend_2fa():
+        if request.method == 'OPTIONS':
+            return '', 200
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Database not available'}), 500
+
+        uid = session.get('pending_2fa_user_id')
+        if not uid or not session.get('pending_2fa'):
+            return jsonify({'error': 'No pending two-factor verification'}), 400
+
+        user = User.query.get(uid)
+        if not user:
+            session.clear()
+            return jsonify({'error': 'User not found'}), 401
+
+        code_str = issue_otp(user, db)
+        db.session.commit()
+        html, text = otp_email_body(user.username, code_str)
+        sent = _send_email(subject='Your GhostChat sign-in code', recipient=user.email,
+                            html_body=html, text_body=text)
+        if not sent:
+            log.info(f'2FA code for {user.email}: {code_str}')
+
+        return jsonify({'success': True, 'message': 'A new code has been sent.'}), 200
 
     @app.route('/api/auth/logout', methods=['POST', 'OPTIONS'])
     def logout():
@@ -869,6 +893,7 @@ def create_app(test_config=None):
         return jsonify({'user': user.to_dict()}), 200
 
     @app.route('/api/auth/forgot-password', methods=['POST', 'OPTIONS'])
+    @limiter.limit(FORGOT_PASSWORD_LIMIT)
     def forgot_password():
         if request.method == 'OPTIONS':
             return '', 200
@@ -882,11 +907,9 @@ def create_app(test_config=None):
                 return jsonify({'error': 'Email is required'}), 400
 
             user = User.query.filter_by(email=email).first()
-            sent = False   # ── FIX: was only ever assigned inside `if user:`, causing
-                           # NameError for any non-registered email ──
+            sent = False
             if user:
                 token = user.generate_reset_token()
-                # Override model's 24h expiry to 15 min (matches UI messaging)
                 user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
                 db.session.commit()
 
@@ -908,12 +931,8 @@ def create_app(test_config=None):
                     f"<p>— GhostChat Security Team</p>"
                 )
 
-                sent = _send_email(
-                    subject='GhostChat Password Reset',
-                    recipient=user.email,
-                    html_body=html,
-                    text_body=plaintext,
-                )
+                sent = _send_email(subject='GhostChat Password Reset', recipient=user.email,
+                                    html_body=html, text_body=plaintext)
                 if sent:
                     log.info(f'Password reset email sent to: {email}')
                 else:
@@ -933,6 +952,7 @@ def create_app(test_config=None):
             return jsonify({'error': 'Request failed. Please try again.'}), 500
 
     @app.route('/api/auth/reset-password', methods=['POST', 'OPTIONS'])
+    @limiter.limit(RESET_PASSWORD_LIMIT)
     def reset_password():
         if request.method == 'OPTIONS':
             return '', 200
@@ -1001,6 +1021,9 @@ def create_app(test_config=None):
                 return jsonify({'error': 'Email already registered'}), 400
             user.email = new_email
 
+        # ── 2FA toggle — turning it ON here doesn't require re-verification
+        # (the user is already authenticated in this session); turning it OFF
+        # is also allowed here. The next LOGIN is what actually enforces it. ──
         if 'two_factor_enabled' in data:
             user.two_factor_enabled = bool(data['two_factor_enabled'])
 
@@ -1028,7 +1051,7 @@ def create_app(test_config=None):
 
         user.set_password(new_password)
         db.session.commit()
-        session.clear()   # Force re-login after password change
+        session.clear()
         return jsonify({
             'success': True,
             'message': 'Password changed. Please sign in again.',
@@ -1054,13 +1077,25 @@ def create_app(test_config=None):
         if ext not in allowed:
             return jsonify({'error': f'Invalid file type. Use: {", ".join(allowed).upper()}'}), 400
 
+        # ── FIX: extension whitelist alone is not enough — a .png that is
+        # actually an HTML/SVG polyglot can still be served back with a
+        # browser-sniffed content type in some misconfigured setups. Verify
+        # actual image content via Pillow's header parse, not just the
+        # filename, before accepting the upload. ──
         file.seek(0, 2)
         size = file.tell()
         file.seek(0)
         if size > 2 * 1024 * 1024:
             return jsonify({'error': 'File too large — maximum 2 MB'}), 400
 
-        # Remove old avatar file
+        try:
+            from PIL import Image
+            img = Image.open(file)
+            img.verify()
+            file.seek(0)
+        except Exception:
+            return jsonify({'error': 'File is not a valid image'}), 400
+
         if user.avatar and '/assets/uploads/' in (user.avatar or ''):
             old = os.path.join(app.config['UPLOAD_FOLDER'], os.path.basename(user.avatar))
             try:
@@ -1088,6 +1123,7 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route('/api/encrypt', methods=['POST', 'OPTIONS'])
+    @limiter.limit(ENCRYPT_LIMIT)
     def encrypt_message():
         if request.method == 'OPTIONS':
             return '', 200
@@ -1101,6 +1137,8 @@ def create_app(test_config=None):
                 return jsonify({'success': False, 'error': 'Message is required'}), 400
             if not password:
                 return jsonify({'success': False, 'error': 'Password is required'}), 400
+            if len(message) > 20000:
+                return jsonify({'success': False, 'error': 'Message too long (max 20,000 characters)'}), 400
 
             from backend.ghostchat import GhostChat, GhostChatError
             ghost  = GhostChat(password)
@@ -1119,6 +1157,7 @@ def create_app(test_config=None):
             return jsonify({'success': False, 'error': str(exc)}), 500
 
     @app.route('/api/decrypt', methods=['POST', 'OPTIONS'])
+    @limiter.limit(DECRYPT_LIMIT)
     def decrypt_message():
         if request.method == 'OPTIONS':
             return '', 200
@@ -1220,6 +1259,26 @@ def create_app(test_config=None):
         db.session.commit()
         return jsonify({'success': True}), 200
 
+    @app.route('/api/messages/clear', methods=['POST', 'OPTIONS'])
+    def clear_encryption_history():
+        """Bulk-clear the dashboard's local encryption/decryption history log
+        (distinct from chat messages) — owner-only hard delete."""
+        if request.method == 'OPTIONS':
+            return '', 200
+        if not DB_AVAILABLE:
+            return jsonify({'success': True, 'deleted': 0}), 200
+
+        user, err = _require_auth()
+        if err:
+            return err
+
+        count = Message.query.filter_by(user_id=user.id).filter(
+            Message.message_type.in_(['encryption', 'decryption'])
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        _log_activity(user.id, 'message_deleted', f'{user.username} cleared {count} history entries')
+        return jsonify({'success': True, 'deleted': count}), 200
+
     # ═══════════════════════════════════════════════════════════════════════════
     # HEALTH + FRONTEND
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1231,13 +1290,8 @@ def create_app(test_config=None):
             'service':     'GhostChat API',
             'environment': 'production' if IS_PROD else 'development',
             'database':    'connected' if DB_AVAILABLE else 'disabled',
-            'version':     '3.0.0',
+            'version':     '3.1.0',
         }), 200
-
-    # Serve frontend — use app.send_static_file() instead of send_from_directory
-    # send_from_directory uses sendfile() syscall which eventlet doesn't patch,
-    # causing IncompleteRead errors on large files. send_static_file() goes
-    # through Flask's WSGI response which eventlet handles correctly.
 
     @app.route('/')
     def index():
@@ -1258,8 +1312,6 @@ def create_app(test_config=None):
         return jsonify({'error': 'Not Found'}), 404
 
     log.info(f'GhostChat ready  [{"production" if IS_PROD else "development"}]')
-    
-    # ── WebSocket Events ──────────────────────────────────────────────────────
 
     # ══════════════════════════════════════
     # CONTACT ROUTES
@@ -1271,7 +1323,7 @@ def create_app(test_config=None):
         user, err = _require_auth()
         if err: return err
         contacts = Contact.query.filter_by(user_id=user.id, is_blocked=False).all()
-        _chat_types = ['chat', 'image', 'audio', 'video']   # ── FIX: same 'chat'-only bug as message history ──
+        _chat_types = ['chat', 'image', 'audio', 'video']
         result = []
         for c in contacts:
             cu = User.query.get(c.contact_id)
@@ -1326,15 +1378,12 @@ def create_app(test_config=None):
         } for u in matches]}), 200
 
     def _room_size(room):
-        """How many active sockets are in a room right now — lets us tell
-        'nobody was listening' apart from 'the emit itself never happened'."""
         try:
             return len(list(socketio.server.manager.get_participants('/', room)))
         except Exception as e:
             return f'unknown ({e})'
 
     def _accept_contact_request(user, requester_id, req_row=None):
-        """Marks the request accepted and creates the mutual Contact rows."""
         req_row = req_row or ContactRequest.query.filter_by(
             sender_id=requester_id, recipient_id=user.id, status='pending').first()
         if not req_row:
@@ -1367,11 +1416,6 @@ def create_app(test_config=None):
 
     @app.route('/api/contacts', methods=['POST','OPTIONS'])
     def add_contact():
-        """
-        Sends a connection request — does NOT create a usable contact yet.
-        The invited user must confirm via POST /api/contacts/<id>/respond
-        before either side can message the other.
-        """
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
@@ -1385,7 +1429,6 @@ def create_app(test_config=None):
         if Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first():
             return jsonify({'error': 'Already in contacts'}), 400
 
-        # They already sent you a request — this call accepts it instead of duplicating it
         incoming = ContactRequest.query.filter_by(
             sender_id=contact_id, recipient_id=user.id, status='pending').first()
         if incoming:
@@ -1395,7 +1438,7 @@ def create_app(test_config=None):
         if existing:
             if existing.status == 'pending':
                 return jsonify({'error': 'Request already sent'}), 400
-            existing.status = 'pending'   # re-request after a prior rejection
+            existing.status = 'pending'
             existing.updated_at = datetime.utcnow()
             db.session.commit()
         else:
@@ -1418,7 +1461,6 @@ def create_app(test_config=None):
 
     @app.route('/api/contacts/requests', methods=['GET','OPTIONS'])
     def list_contact_requests():
-        """Incoming connection requests awaiting this user's confirmation."""
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
@@ -1432,7 +1474,6 @@ def create_app(test_config=None):
 
     @app.route('/api/contacts/<contact_id>/respond', methods=['POST','OPTIONS'])
     def respond_contact_request(contact_id):
-        """Accept or reject an incoming connection request."""
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
@@ -1487,11 +1528,6 @@ def create_app(test_config=None):
         if err: return err
         limit  = request.args.get('limit', 50, type=int)
         before = request.args.get('before', None)
-        # ── FIX: this was hardcoded to message_type == 'chat', which silently
-        # excluded every image/audio/video message from history — they were
-        # never actually lost, just filtered out the moment you left and
-        # reopened the chat (a fresh fetch from this route is what backs
-        # _loadMessages()). ──
         _chat_types = ['chat', 'image', 'audio', 'video']
         query  = Message.query.filter(
             Message.is_deleted == False, Message.message_type.in_(_chat_types),
@@ -1503,7 +1539,6 @@ def create_app(test_config=None):
         if before: query = query.filter(Message.created_at < before)
         messages = query.order_by(Message.created_at.desc()).limit(limit).all()
         messages.reverse()
-        # ── Exclude anything this user has deleted "for me" ──
         def _not_deleted_for_me(m):
             try:
                 return user.id not in (json.loads(m.deleted_for) if m.deleted_for else [])
@@ -1530,16 +1565,17 @@ def create_app(test_config=None):
         data    = request.get_json() or {}
         content = (data.get('content') or '').strip()
         if not content: return jsonify({'error': 'content required'}), 400
+        if len(content) > 20000:
+            return jsonify({'error': 'Message too long'}), 400
         msg = Message(user_id=user.id, sender_id=user.id, receiver_id=contact_id,
                       encrypted_content=content, message_type='chat')
         db.session.add(msg)
         db.session.commit()
-        _log_activity(user.id, 'message_sent', 'text message')   # counts only — never logs content
+        _log_activity(user.id, 'message_sent', 'text message')
         payload = {'id': msg.id, 'content': content, 'sender_id': user.id,
                    'sender': user.username, 'avatar': user.avatar,
                    'receiver_id': contact_id, 'created_at': msg.created_at.isoformat()}
         if socketio:
-            # ── FIX: personal rooms only — matches the socket handler, no duplicates ──
             socketio.emit('receive_message', payload, room=f'user_{contact_id}')
             socketio.emit('receive_message', payload, room=f'user_{user.id}')
         return jsonify({'success': True, 'message': msg.to_dict()}), 201
@@ -1551,9 +1587,9 @@ def create_app(test_config=None):
         'video': {'video/mp4', 'video/webm', 'video/quicktime'},
     }
     _MAX_MEDIA_BYTES = {
-        'image': 8 * 1024 * 1024,    # 8 MB
-        'audio': 15 * 1024 * 1024,   # 15 MB
-        'video': 40 * 1024 * 1024,   # 40 MB
+        'image': 8 * 1024 * 1024,
+        'audio': 15 * 1024 * 1024,
+        'video': 40 * 1024 * 1024,
     }
 
     @app.route('/api/chat/<contact_id>/media', methods=['POST', 'OPTIONS'])
@@ -1564,7 +1600,6 @@ def create_app(test_config=None):
         if not DB_AVAILABLE:
             return jsonify({'error': 'Storage unavailable'}), 503
 
-        # Only accepted connections can share media, same rule as text messages
         link = Contact.query.filter_by(user_id=user.id, contact_id=contact_id).first()
         if not link:
             return jsonify({'error': 'You are not connected with this user'}), 403
@@ -1589,6 +1624,16 @@ def create_app(test_config=None):
         if len(data) > limit:
             return jsonify({'error': f'{media_kind.capitalize()} must be under {limit // (1024*1024)}MB'}), 400
 
+        # ── Verify image content actually matches its claimed type ──
+        if media_kind == 'image':
+            try:
+                from PIL import Image
+                import io
+                img = Image.open(io.BytesIO(data))
+                img.verify()
+            except Exception:
+                return jsonify({'error': 'File is not a valid image'}), 400
+
         msg = Message(
             user_id=user.id, sender_id=user.id, receiver_id=contact_id,
             encrypted_content=caption, message_type=media_kind,
@@ -1598,7 +1643,7 @@ def create_app(test_config=None):
         )
         db.session.add(msg)
         db.session.commit()
-        _log_activity(user.id, 'message_sent', f'{media_kind} message')   # counts only
+        _log_activity(user.id, 'message_sent', f'{media_kind} message')
 
         payload = {
             'id': msg.id, 'sender_id': user.id, 'sender': user.username, 'avatar': user.avatar,
@@ -1622,7 +1667,6 @@ def create_app(test_config=None):
         msg = Message.query.get(message_id)
         if not msg or not msg.media_data:
             return jsonify({'error': 'Not found'}), 404
-        # ── Only the sender or the receiver may fetch this media ──
         if user.id not in (msg.sender_id, msg.receiver_id):
             return jsonify({'error': 'Forbidden'}), 403
 
@@ -1635,7 +1679,6 @@ def create_app(test_config=None):
 
     @app.route('/api/messages/<message_id>/forward', methods=['POST', 'OPTIONS'])
     def forward_message(message_id):
-        """Forward a text or media message to another accepted contact."""
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
@@ -1649,7 +1692,6 @@ def create_app(test_config=None):
         original = Message.query.get(message_id)
         if not original:
             return jsonify({'error': 'Message not found'}), 404
-        # Can only forward a message you actually sent or received
         if user.id not in (original.sender_id, original.receiver_id):
             return jsonify({'error': 'Forbidden'}), 403
 
@@ -1683,13 +1725,6 @@ def create_app(test_config=None):
 
     @app.route('/api/chat/messages/<message_id>', methods=['DELETE', 'OPTIONS'])
     def delete_chat_message(message_id):
-        """
-        Delete a CHAT message (text, image, audio, or video) — distinct from
-        /api/messages/<id> above, which is for the dashboard's encryption-history
-        log entries (owner-only hard delete, no sender/receiver concept).
-        ?scope=me       — hides it only for the requesting user (default)
-        ?scope=everyone — sender only; erases content/media for both sides
-        """
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
@@ -1707,12 +1742,6 @@ def create_app(test_config=None):
         if scope == 'everyone':
             if msg.sender_id != user.id:
                 return jsonify({'error': 'Only the sender can delete for everyone'}), 403
-            # ── FIX: this used to wipe encrypted_content/media_data immediately,
-            # which is exactly why there was no way to cancel — there was
-            # nothing left to restore. Now it's a soft delete: hidden from
-            # both sides right away (existing queries already filter on
-            # is_deleted), but the actual content stays intact for a grace
-            # window so the sender can undo it. ──
             msg.is_deleted = True
             msg.deleted_at = datetime.utcnow()
             msg.deleted_by = user.id
@@ -1726,7 +1755,6 @@ def create_app(test_config=None):
                                room=f'user_{msg.sender_id}')
             return jsonify({'success': True, 'scope': 'everyone', 'undo_window_seconds': 60}), 200
 
-        # scope == 'me' — hide it only in the requester's own view
         try:
             deleted_for = json.loads(msg.deleted_for) if msg.deleted_for else []
         except Exception:
@@ -1740,13 +1768,46 @@ def create_app(test_config=None):
                        f'{user.username} ({who}) deleted a {msg.message_type} message for themselves')
         return jsonify({'success': True, 'scope': 'me'}), 200
 
+    @app.route('/api/chat/<contact_id>/clear', methods=['POST', 'OPTIONS'])
+    def clear_chat_thread(contact_id):
+        """
+        Bulk 'delete for me' across an entire conversation thread — powers the
+        chat UI's Clear Chat button. Does NOT touch the other participant's
+        copy of the messages (WhatsApp-style delete-for-me), and does NOT
+        delete media_data from storage since the other side may still need it.
+        """
+        if request.method == 'OPTIONS': return '', 200
+        user, err = _require_auth()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'success': True, 'cleared': 0}), 200
+
+        _chat_types = ['chat', 'image', 'audio', 'video']
+        messages = Message.query.filter(
+            Message.is_deleted == False, Message.message_type.in_(_chat_types),
+            db.or_(
+                db.and_(Message.sender_id == user.id, Message.receiver_id == contact_id),
+                db.and_(Message.sender_id == contact_id, Message.receiver_id == user.id),
+            )
+        ).all()
+
+        cleared = 0
+        for m in messages:
+            try:
+                deleted_for = json.loads(m.deleted_for) if m.deleted_for else []
+            except Exception:
+                deleted_for = []
+            if user.id not in deleted_for:
+                deleted_for.append(user.id)
+                m.deleted_for = json.dumps(deleted_for)
+                cleared += 1
+        db.session.commit()
+
+        _log_activity(user.id, 'message_deleted', f'{user.username} cleared a chat thread ({cleared} message(s), for themselves only)')
+        return jsonify({'success': True, 'cleared': cleared}), 200
+
     @app.route('/api/chat/messages/<message_id>/undo-delete', methods=['POST', 'OPTIONS'])
     def undo_delete_message(message_id):
-        """
-        Reverses a delete. 'Delete for everyone' can only be undone by the
-        original sender, and only within a 60-second grace window. 'Delete for
-        me' has no time limit since it only ever affected your own view.
-        """
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
@@ -1759,8 +1820,6 @@ def create_app(test_config=None):
         if user.id not in (msg.sender_id, msg.receiver_id):
             return jsonify({'error': 'Forbidden'}), 403
 
-        # Case 1: this was a 'delete for everyone' — only the deleter can undo,
-        # and only inside the grace window
         if msg.is_deleted:
             if msg.deleted_by != user.id:
                 return jsonify({'error': 'Only the person who deleted it can undo this'}), 403
@@ -1778,8 +1837,6 @@ def create_app(test_config=None):
                                room=f'user_{msg.sender_id}')
             return jsonify({'success': True}), 200
 
-        # Case 2: this was a 'delete for me' — no time limit, just removes you
-        # from the hidden-for list
         try:
             deleted_for = json.loads(msg.deleted_for) if msg.deleted_for else []
         except Exception:
@@ -1793,7 +1850,7 @@ def create_app(test_config=None):
         return jsonify({'error': 'Nothing to undo'}), 400
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # ADMIN — activity log viewing
+    # ADMIN — activity log viewing + management
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route('/api/admin/activity-logs', methods=['GET'])
@@ -1820,6 +1877,30 @@ def create_app(test_config=None):
             'limit': limit,
             'offset': offset,
         }), 200
+
+    @app.route('/api/admin/activity-logs/clear', methods=['POST', 'OPTIONS'])
+    @limiter.limit(ADMIN_MUTATION_LIMIT)
+    def admin_clear_activity_logs():
+        """
+        Irreversibly purges the activity log table. Admin-only, rate-limited,
+        and itself NOT logged as an activity event afterward (there would be
+        nothing left to log it into meaningfully) — instead it's written to
+        the server's own application log for out-of-band audit.
+        """
+        if request.method == 'OPTIONS': return '', 200
+        admin, err = _require_admin()
+        if err: return err
+        if not DB_AVAILABLE:
+            return jsonify({'error': 'Storage unavailable'}), 503
+
+        confirm = (request.get_json(silent=True) or {}).get('confirm')
+        if confirm != True:
+            return jsonify({'error': 'Confirmation required', 'message': 'Pass {"confirm": true} to proceed.'}), 400
+
+        count = ActivityLog.query.delete(synchronize_session=False)
+        db.session.commit()
+        log.warning(f'Admin {admin.username} ({admin.id}) cleared {count} activity log entries')
+        return jsonify({'success': True, 'cleared': count}), 200
 
     @app.route('/api/admin/stats', methods=['GET'])
     def admin_stats():
@@ -1888,8 +1969,18 @@ def create_app(test_config=None):
     def handle_join_user_room(data):
         user_id = data.get('user_id', '')
         if not user_id: return
+        # ── FIX: verify this socket's session actually belongs to user_id
+        # before joining their personal room — previously any connected
+        # socket could claim any user_id and receive that user's messages,
+        # presence events, and connection-request notifications. ──
+        from flask import session as flask_session
+        if flask_session.get('user_id') != user_id or flask_session.get('pending_2fa'):
+            log.warning(f'[security] sid={request.sid} tried to join room for '
+                        f'user_id={user_id} without a matching authenticated session — rejected')
+            emit('room_join_denied', {'reason': 'Session does not match requested user'})
+            return
         join_room(f'user_{user_id}')
-        sid_to_user[request.sid] = user_id   # ── FIX: needed so disconnect knows who this socket belonged to ──
+        sid_to_user[request.sid] = user_id
         log.info(f'[room] sid={request.sid} joined user_{user_id} '
                  f'(room now has {_room_size(f"user_{user_id}")} socket(s))')
         emit('joined_room', {'room': f'user_{user_id}'})
@@ -1910,18 +2001,22 @@ def create_app(test_config=None):
     @socketio.on('join_room')
     def handle_join_room(data):
         room = data.get('room', '')
+        # ── FIX: private_<id> rooms combine two user IDs; only allow joining
+        # if the requesting session's user_id is actually part of that room
+        # name, otherwise any socket could listen in on any conversation. ──
+        from flask import session as flask_session
+        uid = flask_session.get('user_id')
+        if room.startswith('private_') and uid and uid not in room:
+            log.warning(f'[security] sid={request.sid} (user={uid}) tried to join '
+                        f'room={room} it is not a party to — rejected')
+            emit('room_join_denied', {'reason': 'Not a participant in this conversation'})
+            return
         if room:
             join_room(room)
             emit('joined_room', {'room': room})
 
     @socketio.on('mark_read')
     def handle_mark_read(data):
-        """
-        Called by the client when a live message arrives in a chat that's
-        already open — get_chat_messages() only marks-as-read/logs on a fresh
-        chat open, so without this, messages received while already viewing
-        the conversation never got logged as 'message_received' at all.
-        """
         if not DB_AVAILABLE: return
         contact_id = data.get('contact_id', '')
         user_id = sid_to_user.get(request.sid)
@@ -1957,7 +2052,20 @@ def create_app(test_config=None):
         if not content or not sender_id or not receiver_id:
             return
 
-        # ── FIX: only accepted connections can exchange messages ──
+        # ── FIX: verify the socket's authenticated session actually matches
+        # the claimed sender_id — previously a socket could claim to be any
+        # user and send messages, saved to DB, under someone else's identity. ──
+        from flask import session as flask_session
+        if flask_session.get('user_id') != sender_id or flask_session.get('pending_2fa'):
+            log.warning(f'[security] sid={request.sid} tried to send as sender_id={sender_id} '
+                        f'without a matching authenticated session — rejected')
+            emit('message_failed', {'temp_id': temp_id, 'error': 'Authentication mismatch'})
+            return
+
+        if len(content) > 20000:
+            emit('message_failed', {'temp_id': temp_id, 'error': 'Message too long'})
+            return
+
         if DB_AVAILABLE:
             link = Contact.query.filter_by(user_id=sender_id, contact_id=receiver_id).first()
             if not link:
@@ -1975,7 +2083,7 @@ def create_app(test_config=None):
                 db.session.add(msg)
                 db.session.commit()
                 created_at = msg.created_at.isoformat()
-                _log_activity(sender_id, 'message_sent', 'text message')   # counts only
+                _log_activity(sender_id, 'message_sent', 'text message')
             except Exception as e:
                 log.error(f'Save chat msg failed: {e}')
                 emit('message_failed', {'temp_id': temp_id, 'error': 'Could not save message'})
@@ -1985,7 +2093,6 @@ def create_app(test_config=None):
                    'sender': sender, 'avatar': avatar, 'receiver_id': receiver_id,
                    'created_at': created_at, 'temp_id': temp_id}
 
-        # ── FIX: deliver exactly once to each side via their personal room.
         log.info(f'[room] delivering msg {msg_id}: user_{receiver_id} has '
                  f'{_room_size(f"user_{receiver_id}")} socket(s), '
                  f'user_{sender_id} has {_room_size(f"user_{sender_id}")} socket(s)')
@@ -2014,9 +2121,7 @@ def create_app(test_config=None):
 
 
 # ── Module-level variables for gunicorn ──────────────────────────────────────
-# gunicorn binds to flask_app:app
-# The socketio object is also available as flask_app:socketio for reference
-socketio = None   # will be set by create_app()
+socketio = None
 app = create_app()
 
 if __name__ == '__main__':

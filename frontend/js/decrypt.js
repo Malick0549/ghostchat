@@ -1,7 +1,11 @@
 /**
- * GHOSTCHAT DECRYPTION MODULE  v3.1
+ * GHOSTCHAT DECRYPTION MODULE  v3.2
  * Calls /api/decrypt (password-based AES-256 + emoji packet).
  * All crypto happens server-side.
+ *
+ * FIX: same issue as encrypt.js — never dispatched the `ghostchat:decrypt` /
+ * `ghostchat:error` events dashboard.js listens for, so notifications/sound
+ * never fired on a real decrypt action.
  *
  * INPUT FORMAT:
  *   Paste the FULL packet produced by encrypt — the string that looks like:
@@ -75,7 +79,6 @@ window.DecryptionModule = {
             return;
         }
 
-        // Quick sanity check — packets must contain the GHOST separator
         if (!packet.includes('GHOST')) {
             this._showError(
                 'Invalid packet format — make sure you pasted the <strong>complete</strong> ' +
@@ -92,8 +95,9 @@ window.DecryptionModule = {
             if (result.success) {
                 this._showResult(result.decrypted_message);
                 if (window.UI) UI.showToast('Message decrypted!', 'success');
+                if (window.UI?.playSound) window.UI.playSound('success');
+                window.dispatchEvent(new CustomEvent('ghostchat:decrypt', {}));
 
-                // Save to history
                 if (window.HistoryModule?.addMessage) {
                     window.HistoryModule.addMessage(
                         result.decrypted_message,
@@ -102,12 +106,16 @@ window.DecryptionModule = {
                     );
                 }
             } else {
-                this._showError(
-                    result.error || 'Decryption failed — check your password and packet.'
-                );
+                const msg = result.error || 'Decryption failed — check your password and packet.';
+                this._showError(msg);
+                if (window.UI?.playSound) window.UI.playSound('error');
+                window.dispatchEvent(new CustomEvent('ghostchat:error', { detail: { message: msg } }));
             }
         } catch (err) {
-            this._showError(`Decryption failed: ${err.message}`);
+            const msg = err?.isNetworkError ? 'You appear to be offline. Please check your connection.' : `Decryption failed: ${err.message}`;
+            this._showError(msg);
+            if (window.UI?.playSound) window.UI.playSound('error');
+            window.dispatchEvent(new CustomEvent('ghostchat:error', { detail: { message: msg } }));
         } finally {
             this._setLoading(false);
         }

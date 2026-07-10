@@ -55,7 +55,6 @@ window.IntegrationsModule = {
         const message = prompt('Enter the message to send:');
         if (!message) return;
         
-        // Create WhatsApp link
         const encodedMessage = encodeURIComponent(message);
         const whatsappUrl = `https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encodedMessage}`;
         
@@ -104,7 +103,6 @@ window.IntegrationsModule = {
         const message = prompt('Enter the message to send:');
         if (!message) return;
         
-        // Create mailto link
         const mailtoUrl = `mailto:${email}?subject=Encrypted Message from GhostChat&body=${encodeURIComponent(message)}`;
         window.open(mailtoUrl, '_blank');
         this.showToast('Opening email client...', 'success');
@@ -118,7 +116,6 @@ window.IntegrationsModule = {
         const message = prompt('Enter the message to send:');
         if (!message) return;
         
-        // Create SMS link
         const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
         window.location.href = smsUrl;
         this.logActivity(`SMS integration used`, 'success');

@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <meta name="theme-color" content="#080b12" />
   <title>Create Account — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
 <body data-theme="dark">
@@ -168,8 +169,6 @@
   'use strict';
 
   // ── CSRF ──────────────────────────────────────────────────────────────────
-  // api.js already calls fetchCsrfToken() on load; the hidden input is a
-  // belt-and-suspenders fallback for browsers where cookies load slowly.
   fetch('/api/csrf-token', { credentials: 'include' })
     .then(r => r.ok ? r.json() : null)
     .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
@@ -226,8 +225,6 @@
   }
 
   // ── Tab / Enter keyboard navigation ──────────────────────────────────────
-  // Ordered list of field IDs — Enter advances to the next field,
-  // Enter on the last field or Tab from confirm submits the form.
   const FIELDS = ['firstName', 'lastName', 'regUsername', 'regEmail', 'regPw', 'regPwConfirm'];
 
   FIELDS.forEach((id, idx) => {
@@ -237,19 +234,15 @@
       if (e.key === 'Enter') {
         e.preventDefault();
         if (idx < FIELDS.length - 1) {
-          // Move to next field
           document.getElementById(FIELDS[idx + 1])?.focus();
         } else {
-          // Last field → move focus to terms checkbox
           document.getElementById('terms')?.focus();
         }
       }
-      // Escape clears the current field
       if (e.key === 'Escape') this.value = '';
     });
   });
 
-  // Enter on terms checkbox → submit
   document.getElementById('terms')?.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -257,7 +250,6 @@
     }
   });
 
-  // Clear errors when user starts typing
   FIELDS.forEach(id => document.getElementById(id)?.addEventListener('input', hideAlerts));
 
   // ── Form submit ───────────────────────────────────────────────────────────
@@ -272,7 +264,6 @@
     const pw = document.getElementById('regPw').value;
     const pc = document.getElementById('regPwConfirm').value;
 
-    // Validation
     if (!fn || !ln) {
       showErr('Please enter your first and last name.');
       document.getElementById('firstName').focus();
@@ -322,7 +313,6 @@
             window.location.href = `verify-email.html?email=${encodeURIComponent(data.email || em)}`;
           }, 900);
         } else {
-          // Fallback for any deployment without the verification gate enabled
           showOk('Account created! Redirecting to dashboard…');
           setTimeout(() => { window.location.href = 'dashboard.html'; }, 900);
         }
@@ -330,8 +320,14 @@
         showErr(data.error || data.message || 'Registration failed. Please try again.');
       }
     } catch (err) {
-      const message = err?.data?.error || err?.message || 'Registration failed. Please try again.';
-      showErr(message);
+      if (err?.status === 429) {
+        showErr('Too many registration attempts. Please wait before trying again.');
+      } else if (err.isNetworkError) {
+        showErr('Cannot reach the server. Check your connection and try again.');
+      } else {
+        const message = err?.data?.error || err?.message || 'Registration failed. Please try again.';
+        showErr(message);
+      }
     } finally {
       btn.classList.remove('btn-loading');
       btn.disabled = false;

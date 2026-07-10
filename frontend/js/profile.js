@@ -1,9 +1,14 @@
 /**
- * GHOSTCHAT PROFILE MODULE  v3.2
+ * GHOSTCHAT PROFILE MODULE  v3.3
  * Fixes:
  *   • Avatar upload: pass File directly to uploadAvatar(), not FormData
- *   • Avatar display: build correct absolute URL for Render.com
+ *   • Avatar display: build correct absolute URL for Railway/Render
  *   • Enter key on profile inputs → save
+ *   • 2FA toggle now backed by a real email-OTP flow at login (see
+ *     flask_app.py /api/auth/2fa/*). Toggling it here just flips the DB
+ *     flag; the actual second factor is enforced on the NEXT login, so we
+ *     tell the user that explicitly rather than implying it's active
+ *     immediately in this session.
  */
 
 window.ProfileModule = {
@@ -40,7 +45,6 @@ window.ProfileModule = {
         if (em) em.value = this.user?.email    || '';
         if (tf) tf.checked = !!this.user?.two_factor_enabled;
 
-        // Build correct avatar URL — handles relative paths on Render
         const avatarPath = this.user?.avatar;
         const avatarUrl  = avatarPath
             ? (avatarPath.startsWith('http')
@@ -67,6 +71,7 @@ window.ProfileModule = {
         const username = (document.getElementById('profileUsername')?.value || '').trim();
         const email    = (document.getElementById('profileEmail')?.value    || '').trim();
         const tf       = document.getElementById('twoFactorToggle')?.checked || false;
+        const wasEnabled = !!this.user?.two_factor_enabled;
 
         if (!username) { this.showToast('Username cannot be empty', 'error'); return; }
         if (!email)    { this.showToast('Email cannot be empty',    'error'); return; }
@@ -79,7 +84,14 @@ window.ProfileModule = {
             this.user = data.user;
             localStorage.setItem('ghostchat_user', JSON.stringify(this.user));
             this.render();
-            this.showToast('Profile saved!', 'success');
+
+            if (tf && !wasEnabled) {
+                this.showToast('Profile saved. Two-factor authentication is now ON — you\'ll get an email code on your next sign-in.', 'success');
+            } else if (!tf && wasEnabled) {
+                this.showToast('Profile saved. Two-factor authentication is now OFF.', 'info');
+            } else {
+                this.showToast('Profile saved!', 'success');
+            }
         } catch (err) {
             this.showToast(err.message || 'Save failed', 'error');
         } finally {
@@ -97,7 +109,6 @@ window.ProfileModule = {
         this.showToast('Uploading…', 'info');
 
         try {
-            // GhostChatAPI.uploadAvatar() wraps the File in FormData internally
             const data = await window.GhostChatAPI.uploadAvatar(file);
 
             if (data.success && data.avatar) {
@@ -119,7 +130,6 @@ window.ProfileModule = {
             (this.user?.lastName?.[0]  || this.user?.username?.[1] || 'H')
         ).toUpperCase();
 
-        // Try img tag first (already replaced from earlier render)
         const avatarImg = document.getElementById('avatarImg');
         if (avatarImg && avatarUrl) {
             avatarImg.src    = `${avatarUrl}?t=${Date.now()}`;
@@ -142,7 +152,6 @@ window.ProfileModule = {
     },
 
     setupEventListeners() {
-        // Save button
         const saveBtn = document.getElementById('saveProfileBtn');
         if (saveBtn) {
             const fresh = saveBtn.cloneNode(true);
@@ -150,7 +159,6 @@ window.ProfileModule = {
             fresh.addEventListener('click', () => this.saveProfile());
         }
 
-        // Avatar upload button
         const changeBtn  = document.getElementById('changeAvatarBtn');
         const fileInput  = document.getElementById('avatarUpload');
         if (changeBtn && fileInput) {
@@ -161,7 +169,23 @@ window.ProfileModule = {
             });
         }
 
-        // ── Keyboard: Enter on profile inputs → save ──────────────
+        // ── 2FA toggle — confirm before turning ON so the user understands
+        // it changes their next login flow, not this session. ──
+        const tfToggle = document.getElementById('twoFactorToggle');
+        if (tfToggle) {
+            tfToggle.addEventListener('change', (e) => {
+                if (e.target.checked && !this.user?.two_factor_enabled) {
+                    if (!confirm(
+                        'Enable two-factor authentication?\n\n' +
+                        'From now on, signing in will require both your password AND a ' +
+                        '6-digit code sent to your email. Click Save to confirm.'
+                    )) {
+                        e.target.checked = false;
+                    }
+                }
+            });
+        }
+
         ['profileUsername', 'profileEmail'].forEach(id => {
             document.getElementById(id)?.addEventListener('keydown', e => {
                 if (e.key === 'Enter') { e.preventDefault(); this.saveProfile(); }

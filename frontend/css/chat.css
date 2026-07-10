@@ -1,5 +1,5 @@
 /* ================================================================
-   GHOSTCHAT  ·  Chat Interface  v2.0
+   GHOSTCHAT  ·  Chat Interface  v2.1
    WhatsApp-inspired layout — sidebar + chat window
    ================================================================ */
 
@@ -7,6 +7,7 @@
 .chat-app {
   display: flex;
   height: 100vh;
+  height: 100dvh; /* mobile browser chrome-safe viewport height */
   overflow: hidden;
   position: relative;
   z-index: 1;
@@ -87,6 +88,7 @@
 /* Contacts list */
 .contacts-list {
   flex: 1; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .contacts-loading {
   display: flex; flex-direction: column;
@@ -259,6 +261,7 @@
 /* ── Messages ───────────────────────────────────────────────────── */
 .chat-messages {
   flex: 1; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 16px;
   display: flex; flex-direction: column; gap: 4px;
   background:
@@ -321,17 +324,6 @@
 .msg-status { font-size: .72rem; color: var(--t3); }
 .msg-status.read { color: var(--primary); }
 
-/* Decrypt button */
-.msg-decrypt-btn {
-  background: rgba(0,212,255,.1); border: 1px solid var(--border2);
-  border-radius: var(--r1); color: var(--primary);
-  font-size: .72rem; padding: 2px 8px;
-  cursor: pointer; margin-top: 4px;
-  display: flex; align-items: center; gap: 4px;
-  transition: background var(--fast);
-}
-.msg-decrypt-btn:hover { background: rgba(0,212,255,.2); }
-
 /* Welcome */
 .chat-welcome {
   flex: 1; display: flex; flex-direction: column;
@@ -372,9 +364,10 @@
   background: var(--bg3);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  /* Keeps the bar clear of the iOS home indicator / gesture bar */
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
 
-/* ── FIX: added for media sharing (image/video/voice-note attach button) ── */
 .input-btn {
   background: none; border: none; color: var(--t2);
   font-size: 18px; padding: 8px; cursor: pointer;
@@ -507,13 +500,18 @@
   }
   .mobile-back { display: flex; }
   .msg-wrapper { max-width: 88%; }
+
+  /* Larger tap targets everywhere on touch devices */
+  .icon-btn { width: 42px; height: 42px; font-size: 16px; }
+  .send-btn { width: 48px; height: 48px; }
+  #chatInput { font-size: 16px; } /* prevents iOS auto-zoom on focus */
+  .contact-item { padding: 14px 16px; }
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   FIX: Buttons visibility and styling
+   Buttons visibility and styling
    ══════════════════════════════════════════════════════════════════ */
 
-/* ── Sidebar action buttons ────────────────────────────────────── */
 .sidebar-actions {
   display: flex;
   align-items: center;
@@ -727,6 +725,7 @@
   margin-top: 12px;
   max-height: 300px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 #userSearchResults .search-result-item {
@@ -847,17 +846,124 @@
   transform: scale(1.02);
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   PER-MESSAGE ACTION MENU — hidden behind a ⋮ toggle
+   Keeps each bubble clean; actions (encrypt/decrypt/copy/forward/
+   delete) only appear once the user explicitly asks for them.
+   ══════════════════════════════════════════════════════════════════ */
+
+.msg-bubble {
+  position: relative;
+}
+
+.msg-menu-toggle {
+  position: absolute;
+  top: 4px;
+  background: rgba(0,0,0,.28);
+  border: none;
+  color: var(--t2);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity var(--fast), background var(--fast), color var(--fast);
+  z-index: 2;
+}
+.bubble-mine .msg-menu-toggle  { left: -34px; }
+.bubble-theirs .msg-menu-toggle{ right: -34px; }
+
+.msg-bubble:hover .msg-menu-toggle,
+.msg-bubble:focus-within .msg-menu-toggle {
+  opacity: 1;
+}
+.msg-menu-toggle:hover,
+.msg-menu-toggle:focus {
+  background: var(--primary);
+  color: #04060e;
+  opacity: 1;
+}
+
+/* Actions row starts collapsed — only shown once .menu-open is toggled */
+.msg-crypto-actions {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  animation: fadeIn .15s var(--ease);
+}
+.msg-crypto-actions.menu-open {
+  display: flex;
+}
+
+/* Mobile: the toggle needs to be reachable without hover, so always show
+   it (smaller, less obtrusive) rather than relying on a hover state that
+   doesn't exist on touch devices. */
+@media (max-width: 768px) {
+  .msg-menu-toggle {
+    opacity: .55;
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+  }
+  .bubble-mine .msg-menu-toggle   { left: -38px; }
+  .bubble-theirs .msg-menu-toggle { right: -38px; }
+}
+
+@media (max-width: 480px) {
+  .bubble-mine .msg-menu-toggle,
+  .bubble-theirs .msg-menu-toggle {
+    position: absolute;
+    top: -8px;
+    left: auto;
+    right: -8px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    opacity: .85;
+  }
+  .msg-crypto-actions.menu-open {
+    gap: 8px;
+  }
+  .msg-crypto-actions .msg-crypto-btn,
+  .msg-decrypt-btn {
+    padding: 6px 12px;
+    font-size: .75rem;
+    min-height: 32px;
+  }
+}
+
 /* ── Send button disabled state ──────────────────────────────────── */
 .send-btn:disabled {
   opacity: .5;
   cursor: not-allowed;
   transform: none;
 }
+
+/* ── Offline banner ─────────────────────────────────────────────── */
+.offline-banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(255, 170, 0, 0.12);
+  border-bottom: 1px solid rgba(255, 170, 0, 0.25);
+  color: var(--amber);
+  font-size: .8rem;
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+.offline-banner.show { display: flex; }
+
 /* ══════════════════════════════════════════════════════════════════
    FIX: Search Results - Complete Redesign with Visible Buttons
    ══════════════════════════════════════════════════════════════════ */
 
-/* ── Search results container ───────────────────────────────────── */
 #userSearchResults {
     margin-top: 12px;
     max-height: 300px;
@@ -888,7 +994,6 @@
     margin-bottom: 0;
 }
 
-/* ── Search result avatar ────────────────────────────────────────── */
 #userSearchResults .search-result-item .result-avatar {
     width: 42px;
     height: 42px;
@@ -911,7 +1016,6 @@
     object-fit: cover;
 }
 
-/* ── Search result info ──────────────────────────────────────────── */
 #userSearchResults .search-result-item .result-info {
     flex: 1;
     min-width: 0;
@@ -928,7 +1032,6 @@
     color: var(--t3);
 }
 
-/* ── FIX: Add Contact Button - VISIBLE AND BEAUTIFUL ───────────── */
 #userSearchResults .search-result-item .btn-add-contact {
     padding: 8px 20px;
     background: linear-gradient(135deg, #00d4ff, #0088ff);
@@ -962,7 +1065,6 @@
     transform: scale(0.94);
 }
 
-/* ── Already Contact badge ──────────────────────────────────────── */
 #userSearchResults .search-result-item .contact-badge {
     display: inline-flex;
     align-items: center;
@@ -977,7 +1079,6 @@
     white-space: nowrap;
 }
 
-/* ── Pending Request badge ──────────────────────────────────────── */
 #userSearchResults .search-result-item .pending-badge {
     display: inline-flex;
     align-items: center;
@@ -992,7 +1093,6 @@
     white-space: nowrap;
 }
 
-/* ── No results message ──────────────────────────────────────────── */
 #userSearchResults .no-results {
     padding: 24px;
     text-align: center;
@@ -1016,7 +1116,6 @@
     50% { opacity: 0.5; }
 }
 
-/* ── Modal styling enhancements ──────────────────────────────────── */
 .modal-content {
     max-width: 500px;
     border-radius: 16px;
@@ -1044,56 +1143,28 @@
     line-height: 1.5;
 }
 
-.modal-body .input-wrap {
-    position: relative;
-    margin-bottom: 4px;
-}
-
-.modal-body .input-wrap .icon {
-    position: absolute;
-    left: 14px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--t3);
-    font-size: 14px;
-    pointer-events: none;
-    z-index: 2;
-}
-
 #newChatSearch {
-    width: 100%;
     padding: 14px 14px 14px 42px;
-    background: var(--bg2);
     border: 2px solid var(--border);
     border-radius: 12px;
-    color: var(--t1);
-    font-family: var(--font);
-    font-size: .875rem;
-    outline: none;
     transition: all 0.25s ease;
 }
 
 #newChatSearch:focus {
-    border-color: var(--primary);
     box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.15);
 }
 
-#newChatSearch::placeholder {
-    color: var(--t3);
-}
-
-/* ── Responsive adjustments ──────────────────────────────────────── */
 @media (max-width: 480px) {
     #userSearchResults .search-result-item {
         flex-wrap: wrap;
         padding: 10px 12px;
     }
-    
+
     #userSearchResults .search-result-item .btn-add-contact {
         padding: 6px 14px;
         font-size: .7rem;
     }
-    
+
     .modal-content {
         max-width: 95%;
         margin: 10px;

@@ -13,6 +13,13 @@ flask-bcrypt>=1.0.1
 # ── Cryptography ──────────────────────────────────────────────────
 cryptography>=42.0.0
 
+# ── Image validation (verify uploaded avatars/media are real images,
+#    not just extension-matched files) ──────────────────────────────
+Pillow>=10.0.0
+
+# ── Rate limiting (brute-force / abuse protection) ────────────────
+flask-limiter>=3.5.0
+
 # ── WebSocket / Realtime ─────────────────────────────────────────
 # FIX: python-engineio was previously unpinned, so pip installed whatever the
 # latest release was — which changed its internal disconnect-handler calling

@@ -1,7 +1,13 @@
 /**
- * GHOSTCHAT ENCRYPTION MODULE  v3.1
+ * GHOSTCHAT ENCRYPTION MODULE  v3.2
  * Calls /api/encrypt (password-based AES-256 + emoji packet).
  * All crypto happens server-side — this module only handles UI.
+ *
+ * FIX: this module never dispatched the `ghostchat:encrypt` / `ghostchat:error`
+ * window events that dashboard.js listens for — meaning the notification
+ * badge, sound effects, and activity-log write triggered by those events
+ * never actually fired on a real encrypt action. Dispatching them here is
+ * what makes dashboard.js's notification system actually turn on.
  */
 
 window.EncryptionModule = {
@@ -22,7 +28,6 @@ window.EncryptionModule = {
         const plain = document.getElementById('plaintext');
         if (plain) plain.addEventListener('input', () => this._clearResult());
 
-        // Export buttons
         [
             ['exportWhatsApp', () => this._exportWhatsApp()],
             ['exportTelegram', () => this._exportTelegram()],
@@ -58,8 +63,9 @@ window.EncryptionModule = {
                 this._showResult(result);
                 this._showExport(true);
                 if (window.UI) UI.showToast('Message encrypted successfully!', 'success');
+                if (window.UI?.playSound) window.UI.playSound('success');
+                window.dispatchEvent(new CustomEvent('ghostchat:encrypt', { detail: { length: plaintext.length } }));
 
-                // Save to history — store plaintext preview + full packet
                 if (window.HistoryModule?.addMessage) {
                     window.HistoryModule.addMessage(
                         plaintext,
@@ -70,10 +76,15 @@ window.EncryptionModule = {
             } else {
                 this._showError(result.error || 'Encryption failed');
                 this._showExport(false);
+                if (window.UI?.playSound) window.UI.playSound('error');
+                window.dispatchEvent(new CustomEvent('ghostchat:error', { detail: { message: result.error || 'Encryption failed' } }));
             }
         } catch (err) {
-            this._showError(`Encryption failed: ${err.message}`);
+            const msg = err?.isNetworkError ? 'You appear to be offline. Please check your connection.' : `Encryption failed: ${err.message}`;
+            this._showError(msg);
             this._showExport(false);
+            if (window.UI?.playSound) window.UI.playSound('error');
+            window.dispatchEvent(new CustomEvent('ghostchat:error', { detail: { message: msg } }));
         } finally {
             this._setLoading(false);
         }
@@ -154,21 +165,15 @@ window.EncryptionModule = {
         if (phone) {
             const cleanPhone = phone.replace(/\D/g, '');
             const message = this._lastPacket;
-            
-            // Encode the message properly for WhatsApp
             const encodedMessage = encodeURIComponent(message);
-            
-            // Use the api.whatsapp.com format which handles emojis better
             const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedMessage}`;
-            
+
             try {
                 const win = window.open(url, '_blank');
                 if (!win) {
-                    // Popup blocked - copy to clipboard instead
                     navigator.clipboard.writeText(message)
                         .then(() => {
                             if (window.UI) UI.showToast('Message copied! Open WhatsApp and paste it.', 'success');
-                            // Also open the regular WhatsApp link as fallback
                             window.open(`https://wa.me/${cleanPhone}`, '_blank');
                         })
                         .catch(() => {
@@ -178,7 +183,6 @@ window.EncryptionModule = {
                     if (window.UI) UI.showToast('Opening WhatsApp...', 'success');
                 }
             } catch (err) {
-                // Fallback: just copy to clipboard
                 navigator.clipboard.writeText(message)
                     .then(() => {
                         if (window.UI) UI.showToast('Message copied! Open WhatsApp and paste it.', 'success');

@@ -1,8 +1,8 @@
 /**
- * GHOSTCHAT REAL-TIME CHAT  v2.0
+ * GHOSTCHAT REAL-TIME CHAT  v2.1
  * WhatsApp-like private messaging with:
  *   - Real contacts loaded from database
- *   - Private per-user SocketIO rooms
+ *   - Private per-user SocketIO rooms (server-authenticated)
  *   - Add contact by username search (with approval)
  *   - AES-256 message encryption (emoji format)
  *   - Online/offline presence
@@ -10,16 +10,10 @@
  *   - Read receipts
  *   - Message history from DB
  *   - Keyboard shortcuts
+ *   - Per-message action menu (tap ⋮ to reveal actions — keeps the thread clean)
+ *   - Network-resilient fetch (retry + backoff) and offline send queue
  */
 
-// ── FIX: this whole file used to declare `class GhostChatRealtime` directly
-// in the global scope. If it ever gets loaded twice — a stray duplicate
-// <script> tag, a stale cached copy served alongside the fresh one, a
-// service worker re-injecting it — the second load throws a fatal
-// SyntaxError ("Identifier has already been declared"), which kills ALL
-// script execution on the page, including whatever hides the loading
-// spinner. Wrapping everything in an IIFE with a load-guard means a second
-// load is a harmless no-op instead of a page-breaking crash. ──
 (function () {
     if (window.__ghostChatScriptLoaded) {
         console.warn('chat-socket.js loaded more than once — skipping re-init. ' +
@@ -27,6 +21,36 @@
         return;
     }
     window.__ghostChatScriptLoaded = true;
+
+// ── Network resilience helpers ──────────────────────────────────────────────
+// Retries transient failures (network drop, timeout, 5xx) with exponential
+// backoff + jitter. Does NOT retry 4xx (auth/validation errors — retrying
+// those just wastes time and can trigger rate limits). Designed for flaky
+// mobile connections where a single dropped packet shouldn't fail a request
+// outright.
+async function resilientFetch(url, options = {}, { retries = 3, baseDelay = 600 } = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(timeout);
+
+            // Retry on server errors and rate limiting, not on client errors
+            if (res.status >= 500 || res.status === 429) {
+                throw new Error(`Server error ${res.status}`);
+            }
+            return res;
+        } catch (err) {
+            lastErr = err;
+            if (attempt === retries) break;
+            const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 300;
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastErr;
+}
 
 class GhostChatRealtime {
     constructor() {
@@ -42,10 +66,13 @@ class GhostChatRealtime {
         this.password        = '';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
-        this._pendingIncoming = [];   // incoming connection requests awaiting my confirmation
+        this._pendingIncoming = [];
         this.decryptData = {};
-        this._plainData = {};    // known plaintext per message id (originally-plain or decrypted)
-        this._msgViewState = {}; // 'plain' | 'encrypted' — manual toggle overrides the default
+        this._plainData = {};
+        this._msgViewState = {}; // 'plain' | 'encrypted'
+        this._openMenuId = null; // which message's ⋮ menu is currently open
+        this._sendQueue = [];    // messages queued while offline
+        this._isOnline = navigator.onLine;
 
         this.init();
     }
@@ -57,7 +84,31 @@ class GhostChatRealtime {
         this._setupEventListeners();
         this._setupKeyboardShortcuts();
         this._setupMobile();
+        this._setupNetworkMonitor();
         await this._loadPendingRequests();
+    }
+
+    // ── Network status monitor ──────────────────────────────────────────────
+    _setupNetworkMonitor() {
+        window.addEventListener('online', () => {
+            this._isOnline = true;
+            this._toast('Back online — syncing…', 'success');
+            this._flushSendQueue();
+            if (this.socket && !this.connected) this.socket.connect();
+        });
+        window.addEventListener('offline', () => {
+            this._isOnline = false;
+            this._toast('You are offline. Messages will send when reconnected.', 'info');
+        });
+    }
+
+    async _flushSendQueue() {
+        if (!this._sendQueue.length) return;
+        const queue = [...this._sendQueue];
+        this._sendQueue = [];
+        for (const item of queue) {
+            await this._deliverMessage(item.content, item.tempId, item.contactId);
+        }
     }
 
     _loadUser() {
@@ -84,7 +135,7 @@ class GhostChatRealtime {
 
     async _loadContacts() {
         try {
-            const res = await fetch(`${this._base()}/api/contacts`, {
+            const res = await resilientFetch(`${this._base()}/api/contacts`, {
                 credentials: 'include',
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
             });
@@ -94,6 +145,9 @@ class GhostChatRealtime {
             }
         } catch (_) {
             this.contacts = [];
+            if (!this._isOnline) {
+                this._toast('Offline — showing cached contacts', 'info');
+            }
         }
         this._renderContacts();
     }
@@ -149,8 +203,6 @@ class GhostChatRealtime {
         }).join('');
     }
 
-    // ── FIX: single source of truth for the header status line so presence
-    // and typing updates both route through it instead of one hardcoded string. ──
     _renderHeaderStatus(contactId) {
         const headerStatus = document.getElementById('chatHeaderStatus');
         if (!headerStatus) return;
@@ -166,11 +218,12 @@ class GhostChatRealtime {
 
     async openChat(contactId, displayName, avatar) {
         this.currentContact = { contact_id: contactId, display_name: displayName, avatar };
+        this._openMenuId = null;
 
         const headerName = document.getElementById('chatHeaderName');
         const headerAvatar = document.getElementById('chatHeaderAvatar');
         if (headerName) headerName.textContent = displayName;
-        this._renderHeaderStatus(contactId);   // ── FIX: was hardcoded to "End-to-End Encrypted" and never updated ──
+        this._renderHeaderStatus(contactId);
         if (headerAvatar) {
             if (avatar && avatar !== '/assets/images/default-avatar.png') {
                 headerAvatar.innerHTML = `<img src="${avatar}" alt="${displayName[0]}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span>${displayName[0].toUpperCase()}</span>';" />`;
@@ -202,7 +255,7 @@ class GhostChatRealtime {
         container.innerHTML = `<div style="display:flex;justify-content:center;padding:32px;"><div class="spinner"></div></div>`;
 
         try {
-            const res = await fetch(`${this._base()}/api/chat/${contactId}/messages?limit=50`, {
+            const res = await resilientFetch(`${this._base()}/api/chat/${contactId}/messages?limit=50`, {
                 credentials: 'include',
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
             });
@@ -210,6 +263,15 @@ class GhostChatRealtime {
             this.messages = data.messages || [];
         } catch (_) {
             this.messages = [];
+            if (!this._isOnline) {
+                container.innerHTML = `
+                    <div class="chat-welcome">
+                        <i class="fas fa-wifi" style="opacity:.4;"></i>
+                        <h3>You're offline</h3>
+                        <p>Messages will load once you're back online.</p>
+                    </div>`;
+                return;
+            }
         }
 
         this._renderMessages();
@@ -253,6 +315,8 @@ class GhostChatRealtime {
                         : '<span class="msg-status sent">✓</span>'
             ) : '';
 
+            const menuOpen = this._openMenuId === msg.id;
+
             // ── Media messages (image/audio/video) render as their own bubble type ──
             if (['image', 'audio', 'video'].includes(msg.message_type)) {
                 const url = msg.media_url || (msg.id ? `/api/media/${msg.id}` : '');
@@ -270,7 +334,11 @@ class GhostChatRealtime {
                     <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
                         ${mediaHtml}
                         ${caption}
-                        <div class="msg-crypto-actions">
+                        <button class="msg-menu-toggle" title="Message actions" aria-label="Message actions"
+                            onclick="window.chat.toggleMsgMenu('${msg.id}', event)">
+                            <i class="fas fa-ellipsis-vertical"></i>
+                        </button>
+                        <div class="msg-crypto-actions ${menuOpen ? 'menu-open' : ''}" id="crypto-actions-${msg.id}">
                             <a class="msg-decrypt-btn msg-crypto-btn" href="${url}?download=1" download="${this._esc(msg.file_name || msg.message_type)}" title="Download">
                                 <i class="fas fa-download"></i> Download
                             </a>
@@ -294,7 +362,6 @@ class GhostChatRealtime {
 
             const looksEncrypted = /[\u{1F000}-\u{1FFFF}]|[\u2600-\u27BF]|[\u{1F300}-\u{1F5FF}]/u.test(rawContent) && rawContent.length > 10;
 
-            // Remember the raw ciphertext / plaintext the first time we see this message
             if (looksEncrypted && !(msg.id in this.decryptData)) {
                 this.decryptData[msg.id] = rawContent;
             }
@@ -302,9 +369,6 @@ class GhostChatRealtime {
                 this._plainData[msg.id] = rawContent;
             }
 
-            // ── FIX: view state persists across re-renders so a manual encrypt/decrypt
-            // toggle sticks, instead of decrypt being a one-way reveal with no way back,
-            // and plaintext messages having no way to be hidden/encrypted at all. ──
             if (!(msg.id in this._msgViewState)) {
                 this._msgViewState[msg.id] = looksEncrypted ? 'encrypted' : 'plain';
             }
@@ -319,7 +383,11 @@ class GhostChatRealtime {
                     <div class="msg-content" id="content-${msg.id}">
                         ${state === 'encrypted' ? '🔒 ' : ''}${displayContent}
                     </div>
-                    <div class="msg-crypto-actions" id="crypto-actions-${msg.id}">
+                    <button class="msg-menu-toggle" title="Message actions" aria-label="Message actions"
+                        onclick="window.chat.toggleMsgMenu('${msg.id}', event)">
+                        <i class="fas fa-ellipsis-vertical"></i>
+                    </button>
+                    <div class="msg-crypto-actions ${menuOpen ? 'menu-open' : ''}" id="crypto-actions-${msg.id}">
                         <button class="msg-decrypt-btn msg-crypto-btn" id="crypto-toggle-${msg.id}" onclick="window.chat.${state === 'encrypted' ? 'decryptMessage' : 'encryptMessageBubble'}('${msg.id}')">
                             <i class="fas fa-${state === 'encrypted' ? 'lock' : 'lock-open'}"></i> ${state === 'encrypted' ? 'Decrypt' : 'Encrypt'}
                         </button>
@@ -346,6 +414,24 @@ class GhostChatRealtime {
         this._scrollToBottom();
     }
 
+    // ── Per-message ⋮ menu — only one open at a time, closes on outside click ──
+    toggleMsgMenu(msgId, event) {
+        if (event) event.stopPropagation();
+        this._openMenuId = this._openMenuId === msgId ? null : msgId;
+
+        document.querySelectorAll('.msg-crypto-actions.menu-open').forEach(el => {
+            if (el.id !== `crypto-actions-${this._openMenuId}`) el.classList.remove('menu-open');
+        });
+        const target = document.getElementById(`crypto-actions-${msgId}`);
+        if (target) target.classList.toggle('menu-open', this._openMenuId === msgId);
+    }
+
+    _closeAllMsgMenus() {
+        if (!this._openMenuId) return;
+        this._openMenuId = null;
+        document.querySelectorAll('.msg-crypto-actions.menu-open').forEach(el => el.classList.remove('menu-open'));
+    }
+
     async decryptMessage(msgId) {
         const password = prompt('Enter the encryption password to decrypt this message:');
         if (!password) return;
@@ -356,25 +442,22 @@ class GhostChatRealtime {
         const encryptedContent = this.decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '').trim();
 
         try {
-            const res = await fetch(`${this._base()}/api/decrypt`, {
+            const res = await resilientFetch(`${this._base()}/api/decrypt`, {
                 method: 'POST',
                 credentials: 'include',
-                headers: { 
-                    'Content-Type': 'application/json', 
+                headers: {
+                    'Content-Type': 'application/json',
                     'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-Token': this._getCsrf(),   // ── FIX: was missing, every decrypt call got 403'd by CSRF middleware ──
+                    'X-CSRF-Token': this._getCsrf(),
                 },
-                body: JSON.stringify({ 
-                    emoji_message: encryptedContent, 
-                    password: password 
+                body: JSON.stringify({
+                    emoji_message: encryptedContent,
+                    password: password
                 }),
             });
             const data = await res.json();
-            
+
             if (data.success) {
-                // ── FIX: decrypt used to be one-way (it removed the button entirely).
-                // Now it keeps the plaintext around and flips the toggle so the
-                // message can be re-encrypted/hidden again with one click. ──
                 this._plainData[msgId] = data.decrypted_message;
                 this._msgViewState[msgId] = 'plain';
 
@@ -385,13 +468,10 @@ class GhostChatRealtime {
                 this._toast('Wrong password or invalid message', 'error');
             }
         } catch (_) {
-            this._toast('Decryption failed', 'error');
+            this._toast(this._isOnline ? 'Decryption failed' : 'You are offline', 'error');
         }
     }
 
-    // ── FIX: lets a message be locked back up after decrypting, or lets a
-    // message that was sent as plain text be encrypted for on-screen display.
-    // Uses the same /api/encrypt endpoint sendMessage() already relies on. ──
     async encryptMessageBubble(msgId) {
         const password = this.password || prompt('Enter a password to encrypt this message:');
         if (!password) return;
@@ -406,7 +486,7 @@ class GhostChatRealtime {
         }
 
         try {
-            const res = await fetch(`${this._base()}/api/encrypt`, {
+            const res = await resilientFetch(`${this._base()}/api/encrypt`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -429,7 +509,7 @@ class GhostChatRealtime {
                 this._toast(data.error || 'Encryption failed', 'error');
             }
         } catch (_) {
-            this._toast('Encryption failed', 'error');
+            this._toast(this._isOnline ? 'Encryption failed' : 'You are offline', 'error');
         }
     }
 
@@ -448,7 +528,7 @@ class GhostChatRealtime {
                 copyBtn.title = 'Copy the exact encrypted packet — safe to paste into the Dashboard decrypt tool';
                 copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy';
                 copyBtn.onclick = () => this.copyRawPacket(msgId);
-                actions.appendChild(copyBtn);
+                actions.insertBefore(copyBtn, actions.children[1] || null);
             }
         } else {
             toggleBtn.innerHTML = '<i class="fas fa-lock-open"></i> Encrypt';
@@ -457,10 +537,6 @@ class GhostChatRealtime {
         }
     }
 
-    // ── FIX: copies the exact raw packet (no UI decoration like the 🔒 display
-    // prefix) so it can be safely pasted into the Dashboard's decrypt tool —
-    // manually selecting the bubble text was grabbing that prefix too, which
-    // EmojiMapper can't parse and made decryption fail every time. ──
     copyRawPacket(msgId) {
         const packet = this.decryptData?.[msgId];
         if (!packet) {
@@ -468,7 +544,7 @@ class GhostChatRealtime {
             return;
         }
         if (window.secureCopy) {
-            window.secureCopy(packet, 0);   // 0 = don't auto-clear, this needs to survive a page navigation to the dashboard
+            window.secureCopy(packet, 0);
         } else {
             navigator.clipboard.writeText(packet)
                 .then(() => this._toast('Encrypted packet copied', 'success'))
@@ -489,11 +565,9 @@ class GhostChatRealtime {
 
         let content = text;
 
-        // Encrypt only if encryption is ON and password is set
-        // If no password is set, send as plain text (user can enable later)
         if (this.encryptMessages && this.password) {
             try {
-                const encResult = await fetch(`${this._base()}/api/encrypt`, {
+                const encResult = await resilientFetch(`${this._base()}/api/encrypt`, {
                     method: 'POST',
                     credentials: 'include',
                     headers: {
@@ -506,21 +580,17 @@ class GhostChatRealtime {
                         password: this.password,
                         use_decoys: false,
                     }),
-                });
+                }, { retries: 1 }); // encryption itself shouldn't hang the send flow long
                 const encData = await encResult.json();
                 if (encData.success) {
                     content = encData.emoji_message;
                 } else {
-                    // Encryption failed — send as plain text with warning
                     this._toast('Encryption failed — sending as plain text', 'info');
                 }
             } catch (_) {
                 this._toast('Encryption unavailable — sending as plain text', 'info');
             }
         }
-        // No else-block: if no password set, just send plain text normally
-
-        const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
 
         const tempId = 'temp_' + Date.now();
         const tempMsg = {
@@ -536,6 +606,19 @@ class GhostChatRealtime {
         this.messages.push(tempMsg);
         this._renderMessages();
 
+        if (!this._isOnline) {
+            this._sendQueue.push({ content, tempId, contactId: this.currentContact.contact_id });
+            this._toast('Offline — message queued and will send automatically', 'info');
+            return;
+        }
+
+        await this._deliverMessage(content, tempId, this.currentContact.contact_id);
+    }
+
+    // ── Actual delivery, split out so the offline queue can replay it later ──
+    async _deliverMessage(content, tempId, contactId) {
+        const roomId = `private_${this._roomId(contactId)}`;
+
         if (this.socket && this.connected) {
             console.log('Sending message to room:', roomId);
             this.socket.emit('send_private_message', {
@@ -544,19 +627,19 @@ class GhostChatRealtime {
                 sender_id: this.user.id,
                 sender: this.user.username,
                 avatar: this.user.avatar || '',
-                receiver_id: this.currentContact.contact_id,
+                receiver_id: contactId,
                 temp_id: tempId,
             });
         } else {
             console.warn('Socket not connected, using REST fallback');
             try {
-                const res = await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/messages`, {
+                const res = await resilientFetch(`${this._base()}/api/chat/${contactId}/messages`, {
                     method: 'POST',
                     credentials: 'include',
-                    headers: { 
-                        'Content-Type': 'application/json', 
+                    headers: {
+                        'Content-Type': 'application/json',
                         'X-Requested-With': 'XMLHttpRequest',
-                        'X-CSRF-Token': this._getCsrf(),   // ── FIX: was missing, caused 403 on every fallback send ──
+                        'X-CSRF-Token': this._getCsrf(),
                     },
                     body: JSON.stringify({ content }),
                 });
@@ -565,8 +648,6 @@ class GhostChatRealtime {
                     throw new Error(errData.error || `HTTP ${res.status}`);
                 }
                 const data = await res.json();
-                // The REST path doesn't get a socket ack back, so replace the
-                // optimistic temp message with the real saved one directly here.
                 const idx = this.messages.findIndex(m => m.id === tempId);
                 if (idx > -1 && data.message) {
                     this.messages[idx] = { ...this.messages[idx], id: data.message.id, is_delivered: true };
@@ -574,11 +655,17 @@ class GhostChatRealtime {
                 }
             } catch (error) {
                 console.error('REST fallback failed:', error);
-                this._toast('Failed to send message', 'error');
+                if (!this._isOnline) {
+                    this._sendQueue.push({ content, tempId, contactId });
+                    this._toast('Connection lost — message queued', 'info');
+                } else {
+                    this._toast('Failed to send message', 'error');
+                }
+                return;
             }
         }
 
-        const contact = this.contacts.find(c => c.contact_id === this.currentContact.contact_id);
+        const contact = this.contacts.find(c => c.contact_id === contactId);
         if (contact) {
             contact.last_message = { content, created_at: new Date().toISOString(), is_mine: true };
             this._renderContacts();
@@ -598,6 +685,10 @@ class GhostChatRealtime {
             this._toast('Open a chat first', 'error');
             return;
         }
+        if (!this._isOnline) {
+            this._toast('You are offline — cannot send media right now', 'error');
+            return;
+        }
         const limit = this._mediaLimits()[mediaType];
         if (file.size > limit) {
             this._toast(`${mediaType} must be under ${Math.round(limit / (1024 * 1024))}MB`, 'error');
@@ -611,7 +702,7 @@ class GhostChatRealtime {
         form.append('media_type', mediaType);
 
         try {
-            const res = await fetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/media`, {
+            const res = await resilientFetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/media`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -619,15 +710,12 @@ class GhostChatRealtime {
                     'X-CSRF-Token': this._getCsrf(),
                 },
                 body: form,
-            });
+            }, { retries: 1 }); // large uploads shouldn't silently re-send multiple times
             const data = await res.json();
             if (!res.ok || !data.success) {
                 this._toast(data.error || `Failed to send ${mediaType}`, 'error');
                 return;
             }
-            // The socket 'receive_message' event (emitted server-side to both
-            // personal rooms) handles rendering — including for our own tab —
-            // so nothing else to do here on success.
             this._toast(`${mediaType[0].toUpperCase()}${mediaType.slice(1)} sent`, 'success');
         } catch (err) {
             console.error('Media upload failed:', err);
@@ -694,23 +782,15 @@ class GhostChatRealtime {
 
     _connectSocket() {
         const socketUrl = window.location.origin;
-        
+
         try {
             this.socket = io(socketUrl, {
-                // ── FIX: 'websocket' first meant the client only ever attempted
-                // a raw WebSocket handshake and kept retrying that same transport
-                // on every reconnect. Railway's edge was refusing/dropping it
-                // (NS_ERROR_WEBSOCKET_CONNECTION_REFUSED), so the socket never
-                // connected at all. Polling-first does the initial handshake over
-                // plain HTTP (works through virtually any proxy), then upgrades
-                // to WebSocket only if that succeeds — and just keeps using
-                // polling if it doesn't. ──
                 transports: ['polling', 'websocket'],
                 withCredentials: true,
                 reconnection: true,
-                reconnectionAttempts: 10,
+                reconnectionAttempts: Infinity,   // ── FIX: unstable mobile networks need to keep retrying, not give up after 10 ──
                 reconnectionDelay: 1000,
-                reconnectionDelayMax: 5000,
+                reconnectionDelayMax: 10000,
                 timeout: 20000,
                 path: '/socket.io',
             });
@@ -720,21 +800,29 @@ class GhostChatRealtime {
                 this.connected = true;
                 this.reconnectAttempts = 0;
                 this._updateOnlineStatus(true);
-                
+
                 this.socket.emit('join_user_room', { user_id: this.user.id });
                 console.log('Joined user room:', `user_${this.user.id}`);
-                
+
                 if (this.currentContact) {
                     const roomId = `private_${this._roomId(this.currentContact.contact_id)}`;
                     console.log('Re-joining room:', roomId);
                     this.socket.emit('join_room', { room: roomId });
                 }
-                
+
                 const statusEl = document.getElementById('userStatus');
                 if (statusEl) {
                     statusEl.textContent = '🟢 Online';
                     statusEl.style.color = 'var(--green)';
                 }
+
+                // Reconnect after a drop — replay anything queued while disconnected
+                this._flushSendQueue();
+            });
+
+            this.socket.on('room_join_denied', data => {
+                console.error('Room join denied:', data.reason);
+                this._toast('Session issue — please refresh the page', 'error');
             });
 
             this.socket.on('disconnect', () => {
@@ -762,6 +850,16 @@ class GhostChatRealtime {
             this.socket.on('receive_message', data => {
                 console.log('📨 Message received:', data);
                 this._handleReceivedMessage(data);
+            });
+
+            this.socket.on('message_failed', data => {
+                this._toast(data.error || 'Message failed to send', 'error');
+                const idx = this.messages.findIndex(m => m.id === data.temp_id);
+                if (idx > -1) {
+                    this.messages[idx].is_delivered = false;
+                    this.messages[idx]._failed = true;
+                    this._renderMessages();
+                }
             });
 
             this.socket.on('typing', data => {
@@ -808,10 +906,6 @@ class GhostChatRealtime {
                 if (this.currentContact) this._loadMessages(this.currentContact.contact_id);
             });
 
-            // ── FIX: these now come from the SERVER (emitted by the backend
-            // when a request is sent/accepted/rejected), not from the other
-            // client directly — the old client-to-client emits had no backend
-            // handler and never reached anyone. ──
             this.socket.on('friend_request', data => {
                 console.log('📨 Connection request received:', data);
                 this._handleFriendRequest(data);
@@ -834,10 +928,6 @@ class GhostChatRealtime {
     }
 
     _handleReceivedMessage(data) {
-        // ── FIX: this used to `return` immediately when no chat was open at all,
-        // which meant the sidebar preview/unread badge never updated and the
-        // message appeared to vanish until the page was reloaded. Now the
-        // sidebar always updates; only the open message thread is conditional. ──
         const isCurrentChat = !!this.currentContact && (
             (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
             (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
@@ -865,14 +955,10 @@ class GhostChatRealtime {
             this._renderMessages();
             if (data.sender_id !== this.user.id) {
                 this._notifyNewMessage(data);
-                // ── FIX: without this, messages received while the chat is
-                // already open never get marked read/logged server-side —
-                // get_chat_messages() only does that on a fresh chat open. ──
                 this.socket?.emit('mark_read', { contact_id: data.sender_id });
             }
         }
 
-        // Sidebar preview/unread — runs regardless of which chat is open
         if (data.sender_id !== this.user.id) {
             const contact = this.contacts.find(c => c.contact_id === data.sender_id);
             if (contact) {
@@ -890,12 +976,9 @@ class GhostChatRealtime {
         }
     }
 
-    // ── FIX: pending requests now live on the server (Contact.status),
-    // not localStorage, so they survive across devices/browsers and are
-    // visible to the invited user even if they were offline when it was sent. ──
     async _loadPendingRequests() {
         try {
-            const res = await fetch(`${this._base()}/api/contacts/requests`, {
+            const res = await resilientFetch(`${this._base()}/api/contacts/requests`, {
                 credentials: 'include',
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
             });
@@ -915,8 +998,8 @@ class GhostChatRealtime {
         badge.textContent = n > 99 ? '99+' : n;
     }
 
-    // ── Forward a message (text or media) to another contact ──
     openForwardPicker(msgId) {
+        this._closeAllMsgMenus();
         this._forwardingMsgId = msgId;
         const container = document.getElementById('userSearchResults');
         const searchInput = document.getElementById('newChatSearch');
@@ -948,7 +1031,7 @@ class GhostChatRealtime {
         const msgId = this._forwardingMsgId;
         if (!msgId) return;
         try {
-            const res = await fetch(`${this._base()}/api/messages/${msgId}/forward`, {
+            const res = await resilientFetch(`${this._base()}/api/messages/${msgId}/forward`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -967,22 +1050,18 @@ class GhostChatRealtime {
                 this._toast(data.error || 'Forward failed', 'error');
             }
         } catch (_) {
-            this._toast('Forward failed', 'error');
+            this._toast(this._isOnline ? 'Forward failed' : 'You are offline', 'error');
         }
         this._forwardingMsgId = null;
     }
 
-    // ── Delete a message — "for me" hides it only in your own view;
-    // "for everyone" (sender only) erases it for both sides. ──
-    // ── FIX: the old confirm() dialog only had OK/Cancel, so "Cancel" was
-    // silently treated as "delete for me" — there was no way to actually
-    // back out of deleting at all. This shows a real 3-option picker. ──
     async deleteMessage(msgId, isMine) {
+        this._closeAllMsgMenus();
         const scope = await this._showDeleteChoice(isMine);
-        if (!scope) return;   // true Cancel — nothing happens
+        if (!scope) return;
 
         try {
-            const res = await fetch(`${this._base()}/api/chat/messages/${msgId}?scope=${scope}`, {
+            const res = await resilientFetch(`${this._base()}/api/chat/messages/${msgId}?scope=${scope}`, {
                 method: 'DELETE',
                 credentials: 'include',
                 headers: {
@@ -1000,13 +1079,10 @@ class GhostChatRealtime {
                 this._toast(data.error || 'Delete failed', 'error');
             }
         } catch (_) {
-            this._toast('Delete failed', 'error');
+            this._toast(this._isOnline ? 'Delete failed' : 'You are offline', 'error');
         }
     }
 
-    // ── Small custom overlay with real Delete-for-everyone / Delete-for-me /
-    // Cancel options — resolves to a scope string ('everyone'|'me') or null
-    // if the user backs out via Cancel or clicking outside. ──
     _showDeleteChoice(isMine) {
         return new Promise(resolve => {
             document.getElementById('deleteChoiceOverlay')?.remove();
@@ -1056,9 +1132,6 @@ class GhostChatRealtime {
         });
     }
 
-    // ── Small custom toast with an actual Undo button — the shared UI.showToast
-    // helper is plain text/no-action, so this is a lightweight one-off for
-    // exactly this case. Auto-dismisses after 5s if not clicked. ──
     _showUndoToast(message, onUndo) {
         document.getElementById('undoToast')?.remove();
 
@@ -1085,7 +1158,7 @@ class GhostChatRealtime {
 
     async _undoDeleteMessage(msgId) {
         try {
-            const res = await fetch(`${this._base()}/api/chat/messages/${msgId}/undo-delete`, {
+            const res = await resilientFetch(`${this._base()}/api/chat/messages/${msgId}/undo-delete`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -1102,6 +1175,36 @@ class GhostChatRealtime {
             }
         } catch (_) {
             this._toast('Could not undo', 'error');
+        }
+    }
+
+    // ── Clear Chat — persists via /api/chat/<id>/clear (delete-for-me, bulk) ──
+    async clearChat() {
+        if (!this.currentContact) return;
+        if (!confirm(`Clear this conversation with ${this.currentContact.display_name}? ` +
+                     `This removes it from your view only — the other person keeps their copy. This cannot be undone.`)) {
+            return;
+        }
+        try {
+            const res = await resilientFetch(`${this._base()}/api/chat/${this.currentContact.contact_id}/clear`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-Token': this._getCsrf(),
+                },
+            });
+            const data = await res.json();
+            if (data.success) {
+                this.messages = [];
+                this._renderMessages();
+                this._toast(`Chat cleared (${data.cleared} message${data.cleared === 1 ? '' : 's'})`, 'success');
+            } else {
+                this._toast(data.error || 'Failed to clear chat', 'error');
+            }
+        } catch (_) {
+            this._toast(this._isOnline ? 'Failed to clear chat' : 'You are offline', 'error');
         }
     }
 
@@ -1138,7 +1241,7 @@ class GhostChatRealtime {
 
     async respondRequest(contactId, action, username) {
         try {
-            const res = await fetch(`${this._base()}/api/contacts/${contactId}/respond`, {
+            const res = await resilientFetch(`${this._base()}/api/contacts/${contactId}/respond`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -1162,7 +1265,7 @@ class GhostChatRealtime {
                 this._toast(data.error || 'Action failed', 'error');
             }
         } catch (_) {
-            this._toast('Action failed', 'error');
+            this._toast(this._isOnline ? 'Action failed' : 'You are offline', 'error');
         }
     }
 
@@ -1170,19 +1273,19 @@ class GhostChatRealtime {
         console.log('🔍 Searching for:', query);
         const resultsContainer = document.getElementById('userSearchResults');
         if (!resultsContainer) return;
-        
+
         if (query.length < 2) {
             resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
             return;
         }
-        
+
         try {
             resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Searching...</div>';
-            
+
             let csrfToken = this._getCsrf();
             if (!csrfToken) {
                 try {
-                    const tokenRes = await fetch('/api/csrf-token', {
+                    const tokenRes = await resilientFetch('/api/csrf-token', {
                         credentials: 'include',
                         headers: { 'X-Requested-With': 'XMLHttpRequest' }
                     });
@@ -1192,87 +1295,85 @@ class GhostChatRealtime {
                     console.error('Failed to fetch CSRF token:', tokenError);
                 }
             }
-            
-            const res = await fetch(`${this._base()}/api/contacts/search?q=${encodeURIComponent(query)}`, {
+
+            const res = await resilientFetch(`${this._base()}/api/contacts/search?q=${encodeURIComponent(query)}`, {
                 credentials: 'include',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'X-Requested-With': 'XMLHttpRequest',
                     'X-CSRF-Token': csrfToken || ''
                 },
             });
-            
+
             if (res.status === 401 || res.status === 403) {
                 resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Session expired. Please refresh the page.</div>';
                 return;
             }
-            
+
             const data = await res.json();
             console.log('Search results:', data);
-            
+
             if (data.success) {
                 this._renderSearchResults(data.users || []);
             } else {
-                resultsContainer.innerHTML = 
+                resultsContainer.innerHTML =
                     `<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${data.error || 'Search failed'}</div>`;
             }
         } catch (error) {
             console.error('Search error:', error);
-            resultsContainer.innerHTML = 
-                '<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">Search failed. Please try again.</div>';
+            resultsContainer.innerHTML =
+                `<div style="padding:20px;text-align:center;color:var(--red);font-size:.875rem;">${this._isOnline ? 'Search failed. Please try again.' : 'You are offline.'}</div>`;
         }
     }
 
-    // ── FIX: Render search results with visible, clickable buttons ──
-_renderSearchResults(users) {
-    const container = document.getElementById('userSearchResults');
-    if (!container) return;
-    
-    if (!users.length) {
-        container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
-        return;
-    }
-    
-    container.innerHTML = users.map(u => {
-        const isContact = u.is_contact || false;
-        const isPending = u.is_pending || false;     // request you sent, awaiting them
-        const isIncoming = u.is_incoming || false;   // they asked you — go accept it
+    _renderSearchResults(users) {
+        const container = document.getElementById('userSearchResults');
+        if (!container) return;
 
-        let actionHtml = '';
-        if (isContact) {
-            actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Connected</span>`;
-        } else if (isPending) {
-            actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
-        } else if (isIncoming) {
-            actionHtml = `<button class="btn-add-contact" onclick="window.chat.respondRequest('${u.id}','accept','${this._esc(u.username)}')">
-                <i class="fas fa-check"></i> Accept request
-            </button>`;
-        } else {
-            actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
-                <i class="fas fa-user-plus"></i> Add
-            </button>`;
+        if (!users.length) {
+            container.innerHTML = '<div class="no-results"><i class="fas fa-search" style="display:block;font-size:1.5rem;margin-bottom:8px;opacity:0.5;"></i>No users found. Try a different search.</div>';
+            return;
         }
-        
-        return `
-        <div class="search-result-item">
-            <div class="result-avatar">
-                ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
-                    ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
-                    : `<span>${u.username[0].toUpperCase()}</span>`}
-            </div>
-            <div class="result-info">
-                <div class="result-name">${this._esc(u.username)}</div>
-                <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
-            </div>
-            ${actionHtml}
-        </div>`;
-    }).join('');
-}
-    // ── FIX: sends a real request and stops there — no more instant mutual-add.
-    // The chat only opens once the other person has confirmed via respondRequest(). ──
+
+        container.innerHTML = users.map(u => {
+            const isContact = u.is_contact || false;
+            const isPending = u.is_pending || false;
+            const isIncoming = u.is_incoming || false;
+
+            let actionHtml = '';
+            if (isContact) {
+                actionHtml = `<span class="contact-badge"><i class="fas fa-check-circle"></i> Connected</span>`;
+            } else if (isPending) {
+                actionHtml = `<span class="pending-badge"><i class="fas fa-clock"></i> Pending</span>`;
+            } else if (isIncoming) {
+                actionHtml = `<button class="btn-add-contact" onclick="window.chat.respondRequest('${u.id}','accept','${this._esc(u.username)}')">
+                    <i class="fas fa-check"></i> Accept request
+                </button>`;
+            } else {
+                actionHtml = `<button class="btn-add-contact" onclick="window.chat.sendFriendRequest('${u.id}', '${this._esc(u.username)}')">
+                    <i class="fas fa-user-plus"></i> Add
+                </button>`;
+            }
+
+            return `
+            <div class="search-result-item">
+                <div class="result-avatar">
+                    ${u.avatar && u.avatar !== '/assets/images/default-avatar.png'
+                        ? `<img src="${u.avatar}" alt="${u.username[0]}" onerror="this.outerHTML='<span>${u.username[0].toUpperCase()}</span>';" />`
+                        : `<span>${u.username[0].toUpperCase()}</span>`}
+                </div>
+                <div class="result-info">
+                    <div class="result-name">${this._esc(u.username)}</div>
+                    <div class="result-status">${u.is_online ? '🟢 Online' : '⚫ Offline'}</div>
+                </div>
+                ${actionHtml}
+            </div>`;
+        }).join('');
+    }
+
     async sendFriendRequest(userId, username) {
         try {
-            const res = await fetch(`${this._base()}/api/contacts`, {
+            const res = await resilientFetch(`${this._base()}/api/contacts`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -1287,7 +1388,6 @@ _renderSearchResults(users) {
 
             if (data.success) {
                 if (data.status === 'accepted') {
-                    // They had already requested you — this confirmed it immediately
                     this._toast(`You're now connected with ${username}!`, 'success');
                     closeModal('newChatModal');
                     await this._loadContacts();
@@ -1301,15 +1401,10 @@ _renderSearchResults(users) {
             }
         } catch (error) {
             console.error('Connection request error:', error);
-            this._toast('Failed to send request', 'error');
+            this._toast(this._isOnline ? 'Failed to send request' : 'You are offline', 'error');
         }
     }
 
-    // ── FIX: no more confirm()-dialog — it only worked if the recipient
-    // happened to be looking at the screen the instant it arrived, and
-    // blocked the whole tab while open. Requests now land in a proper
-    // pending-requests panel (badge next to Add Contact) that persists
-    // across reloads because it's backed by the server, not localStorage. ──
     _handleFriendRequest(data) {
         this._pendingIncoming = this._pendingIncoming || [];
         if (!this._pendingIncoming.some(r => r.contact_id === data.from)) {
@@ -1338,7 +1433,6 @@ _renderSearchResults(users) {
             }
         });
 
-        // ── Media sharing: attach menu, file pickers, voice recording ──
         document.getElementById('attachBtn')?.addEventListener('click', e => {
             e.stopPropagation();
             const menu = document.getElementById('attachMenu');
@@ -1348,6 +1442,10 @@ _renderSearchResults(users) {
             const menu = document.getElementById('attachMenu');
             if (menu && menu.style.display !== 'none' && !menu.contains(e.target) && e.target.id !== 'attachBtn') {
                 menu.style.display = 'none';
+            }
+            // Close any open per-message menu when clicking elsewhere
+            if (!e.target.closest('.msg-crypto-actions') && !e.target.closest('.msg-menu-toggle')) {
+                this._closeAllMsgMenus();
             }
         });
 
@@ -1390,7 +1488,7 @@ _renderSearchResults(users) {
         if (addBtn) {
             const newBtn = addBtn.cloneNode(true);
             addBtn.parentNode.replaceChild(newBtn, addBtn);
-            
+
             newBtn.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1400,7 +1498,7 @@ _renderSearchResults(users) {
                 setTimeout(() => {
                     const search = document.getElementById('newChatSearch');
                     if (search) {
-                        search.style.display = '';   // ── FIX: restore visibility if openPendingPanel() hid it last time ──
+                        search.style.display = '';
                         search.value = '';
                         search.focus();
                         search.select();
@@ -1454,6 +1552,7 @@ _renderSearchResults(users) {
                 const picker = document.getElementById('emojiPicker');
                 if (picker) picker.style.display = 'none';
                 document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
+                this._closeAllMsgMenus();
             }
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
@@ -1574,6 +1673,7 @@ _renderSearchResults(users) {
 
     _notifyNewMessage(data) {
         if (window.UI) UI.showToast(`New message from ${data.sender || 'Someone'}`, 'info');
+        if (window.UI && window.UI.playSound) UI.playSound('info');
     }
 
     _scrollToBottom() {
@@ -1624,10 +1724,6 @@ _renderSearchResults(users) {
     }
 }
 
-// ── FIX: these are called from raw onclick="openModal(...)" attributes in
-// chat.html, which execute in global scope — being inside the IIFE now
-// means they must be attached to window explicitly, or every modal
-// open/close button in the HTML breaks. ──
 window.openModal = function (id) {
     const m = document.getElementById(id);
     if (m) m.classList.add('active');
@@ -1643,14 +1739,10 @@ document.addEventListener('click', e => {
     }
 });
 
-// ── FIX: chat.html has an inline <script> after this file that patches
-// GhostChatRealtime.prototype directly (openChat, setEncryptPassword,
-// clearChat, exportChat, blockContact) — it needs the class itself as a
-// global, not just the window.chat instance. ──
 window.GhostChatRealtime = GhostChatRealtime;
 
 document.addEventListener('DOMContentLoaded', () => {
     window.chat = new GhostChatRealtime();
 });
 
-})();  // end of duplicate-load guard IIFE
+})();

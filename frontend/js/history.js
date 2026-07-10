@@ -1,7 +1,15 @@
 /**
- * GHOSTCHAT HISTORY MODULE  v3.2
+ * GHOSTCHAT HISTORY MODULE  v3.3
  * Loads from server DB first, falls back to localStorage.
- * FIXED: Stores and displays FULL encrypted message.
+ * Stores and displays FULL encrypted message.
+ *
+ * FIX: this module used to overwrite #notificationCount with the total
+ * message count every render — fighting with dashboard.js's actual unread
+ * counter and contributing to the "badge won't stay cleared" bug. History's
+ * badge concerns (message count) and Dashboard's notification concerns
+ * (unread alerts) are different things that happened to share one DOM
+ * element. dashboard.js now owns #notificationCount exclusively; this
+ * module no longer touches it.
  */
 
 window.HistoryModule = {
@@ -10,13 +18,11 @@ window.HistoryModule = {
     async load() {
         await this._loadMessages();
         this._setupListeners();
-        this._updateBadge();
     },
 
     // ── Load ─────────────────────────────────────────────────────────────────
 
     async _loadMessages() {
-        // Try server first
         try {
             const d = await window.GhostChatAPI.getMessageHistory(100, 0);
             if (d.success && Array.isArray(d.messages)) {
@@ -29,7 +35,6 @@ window.HistoryModule = {
             // fall through to localStorage
         }
 
-        // localStorage fallback
         try {
             const saved = localStorage.getItem('ghostchat_message_history');
             this.messages = saved ? JSON.parse(saved) : [];
@@ -51,13 +56,12 @@ window.HistoryModule = {
     // ── Add a new message (called from encrypt.js / decrypt.js) ──────────────
 
     async addMessage(plaintext, encrypted, type = 'encryption') {
-        // FIXED: Store the FULL encrypted message
         const fullEncrypted = encrypted || '';
-        
+
         const item = {
             id:                String(Date.now()),
-            encrypted_content: fullEncrypted,   // FULL encrypted message
-            emoji_content:     fullEncrypted,   // FULL encrypted message
+            encrypted_content: fullEncrypted,
+            emoji_content:     fullEncrypted,
             plaintext_preview: plaintext        ? plaintext.substring(0, 80) : '',
             plaintext_full:    plaintext        || '',
             message_type:      type,
@@ -68,7 +72,6 @@ window.HistoryModule = {
         if (this.messages.length > 100) this.messages.pop();
         this._saveLocal();
 
-        // Persist to server (non-blocking)
         try {
             await window.GhostChatAPI.saveMessage({
                 encrypted_content: item.encrypted_content,
@@ -78,7 +81,6 @@ window.HistoryModule = {
         } catch (_) {}
 
         this.render();
-        this._updateBadge();
 
         if (window.UI) UI.showToast('Saved to history', 'success');
     },
@@ -121,11 +123,9 @@ window.HistoryModule = {
                   })
                 : '—';
 
-            // FIXED: Show the FULL encrypted message for copying
             const fullEncrypted = msg.encrypted_content || msg.emoji_content || '';
             const fullEncryptedEscaped = this._esc(fullEncrypted);
-            
-            // Preview for display (truncated)
+
             const preview = msg.plaintext_preview
                 ? this._esc(msg.plaintext_preview) + (msg.plaintext_preview.length >= 80 ? '…' : '')
                 : this._esc(fullEncrypted.substring(0, 60)) + (fullEncrypted.length > 60 ? '…' : '');
@@ -165,19 +165,31 @@ window.HistoryModule = {
         this.messages = this.messages.filter(m => String(m.id) !== String(id));
         this._saveLocal();
         this.render();
-        this._updateBadge();
 
         try { await window.GhostChatAPI.deleteMessage(id); } catch (_) {}
 
         if (window.UI) UI.showToast('Message deleted', 'info');
     },
 
-    clearAll() {
+    // ── FIX: now calls the real backend bulk-clear endpoint (POST
+    // /api/messages/clear) so the history is actually gone server-side too,
+    // not just wiped from localStorage and silently repopulated from the
+    // server on next load. ──
+    async clearAll() {
         if (!confirm('Clear ALL message history? This cannot be undone.')) return;
+
+        try {
+            await window.GhostChatAPI.clearEncryptionHistory();
+        } catch (_) {
+            // Even if the server call fails (offline, etc.), still clear the
+            // local copy so the UI reflects the user's intent — it will
+            // resync from the server (and may reappear) once back online,
+            // which is the best available behavior without a proper outbox.
+        }
+
         this.messages = [];
         this._saveLocal();
         this.render();
-        this._updateBadge();
 
         if (window.UI) UI.showToast('History cleared', 'info');
     },
@@ -209,7 +221,6 @@ window.HistoryModule = {
                     this.messages = [...imported, ...this.messages].slice(0, 100);
                     this._saveLocal();
                     this.render();
-                    this._updateBadge();
                     if (window.UI) UI.showToast(`Imported ${imported.length} messages`, 'success');
                 } catch (_) {
                     if (window.UI) UI.showToast('Invalid history file', 'error');
@@ -220,22 +231,20 @@ window.HistoryModule = {
         input.click();
     },
 
-    // FIXED: New method to copy FULL encrypted message
     _copyFull(text) {
         if (!text) {
             if (window.UI) UI.showToast('No message to copy', 'error');
             return;
         }
-        
+
         if (window.secureCopy) {
             window.secureCopy(text);
         } else {
             navigator.clipboard.writeText(text)
-                .then(() => { 
-                    if (window.UI) UI.showToast('Full encrypted message copied!', 'success'); 
+                .then(() => {
+                    if (window.UI) UI.showToast('Full encrypted message copied!', 'success');
                 })
                 .catch(() => {
-                    // Fallback for older browsers
                     try {
                         const ta = document.createElement('textarea');
                         ta.value = text;
@@ -248,17 +257,6 @@ window.HistoryModule = {
                         if (window.UI) UI.showToast('Failed to copy. Please select and copy manually.', 'error');
                     }
                 });
-        }
-    },
-
-    // ── Badge + listeners ─────────────────────────────────────────────────────
-
-    _updateBadge() {
-        const count = this.messages.length;
-        const badge = document.getElementById('notificationCount');
-        if (badge) {
-            badge.textContent   = count > 99 ? '99+' : count;
-            badge.style.display = count > 0 ? '' : 'none';
         }
     },
 

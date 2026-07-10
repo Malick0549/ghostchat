@@ -29,6 +29,15 @@ class User(db.Model):
     # Password reset fields
     reset_token = db.Column(db.String(100), nullable=True)
     reset_token_expires = db.Column(db.DateTime, nullable=True)
+
+    # ── 2FA (email OTP) fields ──
+    # two_factor_code is short-lived (OTP_EXPIRY_MINUTES) and single-use;
+    # never logged, never returned in any API response.
+    two_factor_code = db.Column(db.String(10), nullable=True)
+    two_factor_code_expires = db.Column(db.DateTime, nullable=True)
+    two_factor_attempts = db.Column(db.Integer, default=0)
+    # Set once a user has passed 2FA on this session's login; used to gate
+    # /api/auth/me and friends until the second factor is satisfied.
     
     # Chat fields
     phone = db.Column(db.String(20), nullable=True)

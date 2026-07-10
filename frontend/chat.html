@@ -2,15 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#080b12" />
   <title>Chat — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
   <link rel="stylesheet" href="css/chat.css" />
+  <link rel="stylesheet" href="css/chat-mobile.css" />
+  <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
-    /* ── FIX: Ensure Add Contact button is visible ────────────────── */
     .sidebar-actions {
       display: flex;
       align-items: center;
@@ -51,7 +52,6 @@
       font-size: 16px;
     }
   </style>
-  <!-- Socket.IO client -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body data-theme="dark">
@@ -60,15 +60,16 @@
 <div class="grid-overlay" aria-hidden="true"></div>
 <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-<!-- ════════════════════════════════════════════════════════════════
-     MAIN CHAT LAYOUT
-     ════════════════════════════════════════════════════════════════ -->
+<!-- Offline indicator — visible whenever the browser reports no connection -->
+<div class="offline-banner" id="offlineBanner">
+  <i class="fas fa-wifi-slash"></i>
+  <span>You're offline. Messages will send automatically once you're back online.</span>
+</div>
+
 <div class="chat-app" role="application" aria-label="GhostChat messaging">
 
-  <!-- ── SIDEBAR ──────────────────────────────────────────────── -->
   <aside class="chat-sidebar" role="navigation" aria-label="Contacts">
 
-    <!-- Sidebar header -->
     <div class="chat-sidebar-header">
       <div class="chat-user-info">
         <div class="contact-avatar" id="chatUserAvatar"
@@ -79,13 +80,10 @@
         </div>
       </div>
       <div class="sidebar-actions">
-        <!-- ── FIX: Add Contact button with visible styling ── -->
         <button class="icon-btn" id="addContactBtn"
                 title="Add contact (Alt+N)" aria-label="Add new contact">
           <i class="fas fa-user-plus"></i>
         </button>
-        <!-- ── FIX: pending connection-request badge — lets a user confirm
-             a connection before it's added, instead of it happening instantly ── -->
         <button class="icon-btn" id="pendingRequestsBtn"
                 title="Pending connection requests" aria-label="Pending connection requests"
                 style="position:relative;" onclick="window.chat.openPendingPanel()">
@@ -110,7 +108,6 @@
       </div>
     </div>
 
-    <!-- Search contacts -->
     <div class="contact-search-wrap">
       <i class="fas fa-search" aria-hidden="true"></i>
       <input type="search" id="contactSearch"
@@ -118,7 +115,6 @@
              aria-label="Search contacts" autocomplete="off" />
     </div>
 
-    <!-- Contacts list -->
     <div class="contacts-list" id="contactsList" role="list"
          aria-label="Your contacts">
       <div class="contacts-loading">
@@ -129,10 +125,8 @@
 
   </aside>
 
-  <!-- ── CHAT MAIN ─────────────────────────────────────────────── -->
   <main class="chat-main" role="main">
 
-    <!-- Empty state — no chat selected -->
     <div class="chat-empty-state" id="chatEmptyState">
       <div class="chat-empty-icon">
         <i class="fas fa-ghost"></i>
@@ -148,10 +142,8 @@
       </div>
     </div>
 
-    <!-- Chat window (hidden until contact selected) -->
     <div class="chat-window" id="chatWindow" style="display:none;">
 
-      <!-- Chat header -->
       <div class="chat-header">
         <button class="icon-btn mobile-back" id="mobileBackBtn"
                 aria-label="Back to contacts">
@@ -187,7 +179,6 @@
         </div>
       </div>
 
-      <!-- Chat options dropdown -->
       <div class="chat-options-menu" id="chatOptionsMenu" style="display:none;">
         <button onclick="window.chat?.clearChat()">
           <i class="fas fa-trash"></i> Clear chat
@@ -200,7 +191,6 @@
         </button>
       </div>
 
-      <!-- Messages area -->
       <div class="chat-messages" id="chatMessages" role="log"
            aria-label="Messages" aria-live="polite">
         <div class="chat-welcome">
@@ -209,7 +199,6 @@
         </div>
       </div>
 
-      <!-- Typing indicator -->
       <div class="typing-indicator-wrap" id="typingWrap" style="display:none;">
         <div class="typing-bubble">
           <span class="dot"></span>
@@ -219,7 +208,6 @@
         <span class="typing-text" id="typingText">typing…</span>
       </div>
 
-      <!-- Attach menu -->
       <div class="attach-menu" id="attachMenu" style="display:none;">
         <div class="attach-options">
           <button class="attach-option" id="attachImageBtn">
@@ -241,12 +229,10 @@
         </div>
       </div>
 
-      <!-- Hidden file pickers -->
       <input type="file" id="imageFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
       <input type="file" id="videoFileInput" accept="video/mp4,video/webm,video/quicktime" style="display:none;">
       <input type="file" id="songFileInput" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/*" style="display:none;">
 
-      <!-- Voice recording bar (shown while recording) -->
       <div class="recording-bar" id="recordingBar" style="display:none;">
         <span class="recording-dot"></span>
         <span id="recordingTime">0:00</span>
@@ -259,7 +245,6 @@
         </button>
       </div>
 
-      <!-- Message input bar -->
       <div class="chat-input-bar" id="chatInputBar">
         <button class="input-btn" id="attachBtn" title="Attach photo, video, or voice note" aria-label="Attach media">
           <i class="fas fa-paperclip"></i>
@@ -281,9 +266,6 @@
 
 </div>
 
-<!-- ════════════════════════════════════════════════════════════════
-     ADD CONTACT MODAL
-     ════════════════════════════════════════════════════════════════ -->
 <div class="modal" id="newChatModal" role="dialog"
      aria-labelledby="newChatTitle" aria-modal="true">
   <div class="modal-content">
@@ -312,9 +294,6 @@
   </div>
 </div>
 
-<!-- ════════════════════════════════════════════════════════════════
-     SET PASSWORD MODAL
-     ════════════════════════════════════════════════════════════════ -->
 <div class="modal" id="passwordModal" role="dialog"
      aria-labelledby="passwordModalTitle" aria-modal="true">
   <div class="modal-content">
@@ -354,13 +333,11 @@
 <script src="js/api.js"></script>
 <script src="js/chat-socket.js"></script>
 <script>
-  // Wire password modal button
   document.getElementById('setPasswordBtn')?.addEventListener('click', () => {
     openModal('passwordModal');
     document.getElementById('encPasswordInput')?.focus();
   });
 
-  // Chat options menu toggle
   document.getElementById('chatMenuBtn')?.addEventListener('click', function (e) {
     e.stopPropagation();
     const menu = document.getElementById('chatOptionsMenu');
@@ -371,7 +348,6 @@
     if (m) m.style.display = 'none';
   });
 
-  // Show chat window when contact is opened
   const _origOpenChat = GhostChatRealtime.prototype.openChat;
   GhostChatRealtime.prototype.openChat = async function (...args) {
     await _origOpenChat.apply(this, args);
@@ -379,7 +355,6 @@
     document.getElementById('chatWindow').style.display      = 'flex';
   };
 
-  // setEncryptPassword via modal
   GhostChatRealtime.prototype.setEncryptPassword = function () {
     const pw = document.getElementById('encPasswordInput')?.value.trim();
     if (!pw) { if (window.UI) UI.showToast('Please enter a password', 'error'); return; }
@@ -392,15 +367,10 @@
     document.getElementById('encPasswordInput').value = '';
   };
 
-  // clearChat
-  GhostChatRealtime.prototype.clearChat = function () {
-    if (!confirm('Clear this conversation? This only removes it from your view.')) return;
-    this.messages = [];
-    this._renderMessages();
-    if (window.UI) UI.showToast('Chat cleared', 'info');
-  };
+  // ── clearChat is now defined on the class itself in chat-socket.js
+  // (real backend-persisted delete-for-me, not just wiping this.messages
+  // in memory) — no override needed here anymore. ──
 
-  // exportChat
   GhostChatRealtime.prototype.exportChat = function () {
     if (!this.messages.length) { if (window.UI) UI.showToast('No messages to export', 'error'); return; }
     const lines = this.messages.map(m => {
@@ -418,7 +388,6 @@
     if (window.UI) UI.showToast('Chat exported', 'success');
   };
 
-  // blockContact
   GhostChatRealtime.prototype.blockContact = async function () {
     if (!this.currentContact) return;
     if (!confirm(`Block ${this.currentContact.display_name}? They won't be able to message you.`)) return;
@@ -439,6 +408,16 @@
       if (window.UI) UI.showToast('Failed to block contact', 'error');
     }
   };
+
+  // ── Offline banner — mirrors network status at the top of the chat window ──
+  function _syncOfflineBanner() {
+    const banner = document.getElementById('offlineBanner');
+    if (!banner) return;
+    banner.classList.toggle('show', !navigator.onLine);
+  }
+  window.addEventListener('online', _syncOfflineBanner);
+  window.addEventListener('offline', _syncOfflineBanner);
+  document.addEventListener('DOMContentLoaded', _syncOfflineBanner);
 </script>
 </body>
 </html>

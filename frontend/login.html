@@ -2,11 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <meta name="theme-color" content="#080b12" />
   <title>Sign In — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
+  <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 </head>
 <body data-theme="dark">
@@ -47,61 +48,103 @@
     <!-- FORM PANEL -->
     <section class="auth-form-panel" aria-labelledby="login-heading">
       <div class="auth-form-wrap">
-        <h1 class="form-title" id="login-heading">Sign In</h1>
-        <p class="form-subtitle">No account? <a href="register.html">Create one free</a></p>
 
-        <div class="alert alert-error"   id="alertErr" role="alert">
-          <i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span>
+        <!-- STEP 1: username + password -->
+        <div id="stepCredentials">
+          <h1 class="form-title" id="login-heading">Sign In</h1>
+          <p class="form-subtitle">No account? <a href="register.html">Create one free</a></p>
+
+          <div class="alert alert-error"   id="alertErr" role="alert">
+            <i class="fas fa-triangle-exclamation"></i><span id="errMsg"></span>
+          </div>
+          <div class="alert alert-success" id="alertOk"  role="status">
+            <i class="fas fa-check-circle"></i><span id="okMsg"></span>
+          </div>
+
+          <form id="loginForm" novalidate autocomplete="on">
+            <input type="hidden" id="csrfToken" />
+
+            <div class="form-group">
+              <label class="form-label" for="loginId">Username or Email</label>
+              <div class="input-wrap">
+                <i class="fas fa-user icon"></i>
+                <input type="text" id="loginId" name="username" class="form-input"
+                  placeholder="ghost_user or email@domain.com"
+                  autocomplete="username" required aria-required="true"
+                  tabindex="1" autofocus />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <label class="form-label" for="loginPw" style="margin:0;">Password</label>
+                <a href="forgot-password.html" class="forgot-link" tabindex="10">Forgot password?</a>
+              </div>
+              <div class="input-wrap">
+                <i class="fas fa-lock icon"></i>
+                <input type="password" id="loginPw" name="password" class="form-input"
+                  placeholder="Your password" autocomplete="current-password"
+                  required aria-required="true" tabindex="2" />
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:24px;">
+              <label class="form-check" for="rememberMe">
+                <input type="checkbox" id="rememberMe" name="remember_me" tabindex="3" />
+                <span>Keep me signed in for 30 days</span>
+              </label>
+            </div>
+
+            <button type="submit" class="btn-submit" id="btnLogin" tabindex="4">
+              <i class="fas fa-right-to-bracket"></i>
+              <span>SIGN IN SECURELY</span>
+            </button>
+          </form>
+
+          <p style="text-align:center;margin-top:20px;font-size:.8125rem;color:var(--t3);">
+            <a href="index.html" style="color:var(--t2);" tabindex="5">
+              <i class="fas fa-arrow-left" style="font-size:.7rem;"></i> Back to home
+            </a>
+          </p>
         </div>
-        <div class="alert alert-success" id="alertOk"  role="status">
-          <i class="fas fa-check-circle"></i><span id="okMsg"></span>
+
+        <!-- STEP 2: 2FA email code (only shown if the account has 2FA enabled) -->
+        <div id="step2FA" style="display:none;">
+          <div class="forgot-icon"><i class="fas fa-shield-halved"></i></div>
+          <h1 class="form-title" style="font-size:1.6rem;">Verify It's You</h1>
+          <p class="form-subtitle" id="twoFaSubtitle">Enter the 6-digit code we emailed you.</p>
+
+          <div class="alert alert-error" id="alertErr2FA" role="alert">
+            <i class="fas fa-triangle-exclamation"></i><span id="errMsg2FA"></span>
+          </div>
+
+          <form id="twoFaForm" novalidate autocomplete="off">
+            <div class="form-group">
+              <label class="form-label" for="twoFaCode">Verification code</label>
+              <div class="input-wrap">
+                <i class="fas fa-key icon"></i>
+                <input type="text" id="twoFaCode" class="form-input"
+                  placeholder="000000" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                  autocomplete="one-time-code" required autofocus tabindex="1"
+                  style="letter-spacing:6px;font-size:1.1rem;text-align:center;" />
+              </div>
+            </div>
+            <button type="submit" class="btn-submit" id="btn2FA" tabindex="2">
+              <i class="fas fa-shield-check"></i><span>VERIFY &amp; SIGN IN</span>
+            </button>
+          </form>
+
+          <p style="text-align:center;margin-top:20px;font-size:.8125rem;color:var(--t3);">
+            Didn't get a code?
+            <a href="#" id="resend2FALink" style="color:var(--primary);">Resend code</a>
+          </p>
+          <p style="text-align:center;margin-top:8px;font-size:.8125rem;color:var(--t3);">
+            <a href="#" id="back2FALink" style="color:var(--t2);">
+              <i class="fas fa-arrow-left" style="font-size:.7rem;"></i> Use a different account
+            </a>
+          </p>
         </div>
 
-        <form id="loginForm" novalidate autocomplete="on">
-          <input type="hidden" id="csrfToken" />
-
-          <div class="form-group">
-            <label class="form-label" for="loginId">Username or Email</label>
-            <div class="input-wrap">
-              <i class="fas fa-user icon"></i>
-              <input type="text" id="loginId" name="username" class="form-input"
-                placeholder="ghost_user or email@domain.com"
-                autocomplete="username" required aria-required="true"
-                tabindex="1" autofocus />
-            </div>
-          </div>
-
-          <div class="form-group">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-              <label class="form-label" for="loginPw" style="margin:0;">Password</label>
-              <a href="forgot-password.html" class="forgot-link" tabindex="10">Forgot password?</a>
-            </div>
-            <div class="input-wrap">
-              <i class="fas fa-lock icon"></i>
-              <input type="password" id="loginPw" name="password" class="form-input"
-                placeholder="Your password" autocomplete="current-password"
-                required aria-required="true" tabindex="2" />
-            </div>
-          </div>
-
-          <div class="form-group" style="margin-bottom:24px;">
-            <label class="form-check" for="rememberMe">
-              <input type="checkbox" id="rememberMe" name="remember_me" tabindex="3" />
-              <span>Keep me signed in for 30 days</span>
-            </label>
-          </div>
-
-          <button type="submit" class="btn-submit" id="btnLogin" tabindex="4">
-            <i class="fas fa-right-to-bracket"></i>
-            <span>SIGN IN SECURELY</span>
-          </button>
-        </form>
-
-        <p style="text-align:center;margin-top:20px;font-size:.8125rem;color:var(--t3);">
-          <a href="index.html" style="color:var(--t2);" tabindex="5">
-            <i class="fas fa-arrow-left" style="font-size:.7rem;"></i> Back to home
-          </a>
-        </p>
       </div>
     </section>
 
@@ -114,14 +157,11 @@
 (function () {
   'use strict';
 
-  // Fetch CSRF token — api.js already calls this on load, but we store
-  // it in the hidden input as a fallback for slow cookie propagation.
   fetch('/api/csrf-token', { credentials: 'include' })
     .then(r => r.ok ? r.json() : null)
     .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
     .catch(() => {});
 
-  // ── Alert helpers ────────────────────────────────────────────────
   function showErr(m) {
     document.getElementById('errMsg').textContent = m;
     document.getElementById('alertErr').classList.add('show');
@@ -136,32 +176,36 @@
     document.getElementById('alertErr').classList.remove('show');
     document.getElementById('alertOk').classList.remove('show');
   }
+  function showErr2FA(m) {
+    document.getElementById('errMsg2FA').textContent = m;
+    document.getElementById('alertErr2FA').classList.add('show');
+  }
+  function hideErr2FA() {
+    document.getElementById('alertErr2FA').classList.remove('show');
+  }
 
-  // ── Keyboard navigation ──────────────────────────────────────────
-  // Enter on username → jump to password
+  function showStep(step) {
+    document.getElementById('stepCredentials').style.display = step === 'credentials' ? '' : 'none';
+    document.getElementById('step2FA').style.display = step === '2fa' ? '' : 'none';
+    if (step === '2fa') {
+      setTimeout(() => document.getElementById('twoFaCode')?.focus(), 80);
+    }
+  }
+
   document.getElementById('loginId').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      document.getElementById('loginPw').focus();
-    }
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loginPw').focus(); }
     if (e.key === 'Escape') this.value = '';
   });
 
-  // Enter on password → submit form
   document.getElementById('loginPw').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      document.getElementById('loginForm').requestSubmit();
-    }
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('loginForm').requestSubmit(); }
     if (e.key === 'Escape') this.value = '';
   });
 
-  // Clear errors on typing
   ['loginId', 'loginPw'].forEach(id =>
     document.getElementById(id)?.addEventListener('input', hideAlerts)
   );
 
-  // ── Form submit ──────────────────────────────────────────────────
   document.getElementById('loginForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     hideAlerts();
@@ -188,12 +232,18 @@
     try {
       const data = await window.GhostChatAPI.login(username, password, remember);
 
-      if (data.user) localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
-      showOk('Login successful! Redirecting…');
-      setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
+      if (data.requires_2fa) {
+        showStep('2fa');
+      } else if (data.user) {
+        localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+        showOk('Login successful! Redirecting…');
+        setTimeout(() => { window.location.href = 'dashboard.html'; }, 800);
+      }
     } catch (err) {
       const status = err?.status;
-      if (status === 401) {
+      if (status === 429) {
+        showErr('Too many attempts. Please wait a moment before trying again.');
+      } else if (status === 401) {
         showErr('Invalid credentials. Please try again.');
         document.getElementById('loginPw').value = '';
         document.getElementById('loginPw').focus();
@@ -206,6 +256,8 @@
         await window.GhostChatAPI.fetchCsrfToken();
         document.getElementById('csrfToken').value = window.GhostChatAPI.getCsrfToken() || '';
         showErr('Security token refreshed. Please try again.');
+      } else if (err.isNetworkError) {
+        showErr('Cannot reach the server. Check your connection and try again.');
       } else {
         showErr(err?.data?.error || err?.message || 'Login failed. Please try again.');
       }
@@ -213,6 +265,71 @@
       btn.classList.remove('btn-loading');
       btn.disabled = false;
     }
+  });
+
+  // ── 2FA step ──
+  const codeInput = document.getElementById('twoFaCode');
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, 6);
+    hideErr2FA();
+  });
+
+  document.getElementById('twoFaForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    hideErr2FA();
+
+    const code = codeInput.value.trim();
+    if (code.length !== 6) {
+      showErr2FA('Please enter the 6-digit code.');
+      codeInput.focus();
+      return;
+    }
+
+    const btn = document.getElementById('btn2FA');
+    btn.classList.add('btn-loading');
+    btn.disabled = true;
+
+    try {
+      const data = await window.GhostChatAPI.verify2FA(code);
+      if (data.success && data.user) {
+        localStorage.setItem('ghostchat_user', JSON.stringify(data.user));
+        if (window.UI) UI.showToast('Verified! Redirecting…', 'success');
+        setTimeout(() => { window.location.href = 'dashboard.html'; }, 700);
+      } else {
+        showErr2FA(data.error || 'Verification failed.');
+      }
+    } catch (err) {
+      if (err?.status === 429) {
+        showErr2FA('Too many attempts. Please wait before trying again.');
+      } else if (err.isNetworkError) {
+        showErr2FA('Cannot reach the server. Check your connection.');
+      } else {
+        showErr2FA(err?.data?.error || err?.message || 'Verification failed. The code may have expired.');
+      }
+    } finally {
+      btn.classList.remove('btn-loading');
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('resend2FALink').addEventListener('click', async function (e) {
+    e.preventDefault();
+    try {
+      await window.GhostChatAPI.resend2FA();
+      if (window.UI) UI.showToast('A new code has been sent to your email', 'success');
+    } catch (err) {
+      if (err?.status === 429) {
+        if (window.UI) UI.showToast('Please wait before requesting another code', 'error');
+      } else {
+        if (window.UI) UI.showToast('Could not resend code. Try again shortly.', 'error');
+      }
+    }
+  });
+
+  document.getElementById('back2FALink').addEventListener('click', function (e) {
+    e.preventDefault();
+    showStep('credentials');
+    document.getElementById('loginPw').value = '';
   });
 })();
 </script>
