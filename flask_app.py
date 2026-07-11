@@ -106,8 +106,31 @@ def create_app(test_config=None):
     global sid_to_user
     sid_to_user = {}
 
+    # FIX: this file's location relative to frontend/ has been a recurring
+    # source of bugs — a previous version assumed frontend/ was nested inside
+    # backend/, a later "fix" assumed the opposite. Neither assumption is safe
+    # to hardcode, since it depends entirely on incidental deploy-layout details
+    # (e.g. whether this file is copied to the repo root at build time, or left
+    # nested under backend/). Rather than guess a third time, this checks both
+    # real candidate locations and uses whichever one actually exists on disk,
+    # logging clearly if neither does — self-healing regardless of deploy
+    # layout, and fails loudly instead of silently serving nothing if the
+    # layout changes again in the future.
     _basedir = os.path.abspath(os.path.dirname(__file__))
-    _frontend = os.path.abspath(os.path.join(_basedir, 'frontend'))
+    _frontend_candidates = [
+        os.path.join(_basedir, 'frontend'),        # flask_app.py at repo root, frontend/ is a direct sibling
+        os.path.join(_basedir, '..', 'frontend'),  # flask_app.py nested one level down, frontend/ is one level up
+    ]
+    _frontend = next(
+        (os.path.abspath(p) for p in _frontend_candidates if os.path.isdir(p)),
+        os.path.abspath(_frontend_candidates[0]),
+    )
+    if not os.path.isdir(_frontend):
+        log.error(
+            f"Could not locate the frontend/ directory. Checked: "
+            f"{[os.path.abspath(p) for p in _frontend_candidates]}. "
+            f"Static files (HTML/CSS/JS) will fail to serve until this is fixed."
+        )
 
     app = Flask(
         __name__,
@@ -170,7 +193,11 @@ def create_app(test_config=None):
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAX_CONTENT_LENGTH'] = 45 * 1024 * 1024
 
-    upload_folder = os.path.join(basedir, '..', 'frontend', 'assets', 'uploads')
+    # Reuse the same self-healed frontend/ location resolved above, instead of
+    # guessing a second, independent path here (this is exactly what caused
+    # the earlier inconsistency — two different hardcoded guesses for the same
+    # directory, in the same file, that could each be wrong independently).
+    upload_folder = os.path.join(_frontend, 'assets', 'uploads')
     os.makedirs(upload_folder, exist_ok=True)
     app.config['UPLOAD_FOLDER'] = upload_folder
 
@@ -1358,12 +1385,13 @@ def create_app(test_config=None):
         return jsonify({'success': True, 'contacts': result}), 200
 
     @app.route('/api/contacts/search', methods=['GET','OPTIONS'])
+    @limiter.limit("60 per minute")
     def search_users():
         if request.method == 'OPTIONS': return '', 200
         user, err = _require_auth()
         if err: return err
         q = (request.args.get('q') or '').strip()
-        if len(q) < 2: return jsonify({'success': True, 'users': []}), 200
+        if len(q) < 1: return jsonify({'success': True, 'users': []}), 200
         matches = User.query.filter(
             User.id != user.id, User.is_active == True,
             db.or_(User.username.ilike(f'%{q}%'), User.email.ilike(f'%{q}%'))

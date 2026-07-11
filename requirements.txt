@@ -10,6 +10,12 @@ flask-session>=0.6.0
 flask-sqlalchemy>=3.1.0
 flask-bcrypt>=1.0.1
 
+# ── Postgres driver ────────────────────────────────────────────────
+# Only used if DATABASE_URL is set to a postgres:// connection string
+# (recommended for production — see deployment notes). Falls back to
+# the built-in SQLite file automatically if DATABASE_URL is unset.
+psycopg2-binary>=2.9.9
+
 # ── Cryptography ──────────────────────────────────────────────────
 cryptography>=42.0.0
 
@@ -19,11 +25,10 @@ Pillow>=10.0.0
 
 # ── Rate limiting (brute-force / abuse protection) ────────────────
 flask-limiter>=3.5.0
-# FIX: Railway has a real Redis service provisioned for this project
-# (REDIS_URL is set), and rate_limit.py correctly uses it when present —
-# but flask-limiter's Redis storage backend needs this client library,
-# which was never added, causing a boot-time crash the moment REDIS_URL
-# is set: "'redis' prerequisite not available."
+# FIX: flask-limiter's Redis storage backend needs this client library
+# installed to actually use REDIS_URL when it's set — without it, the app
+# crashes at boot the moment REDIS_URL is present with:
+# "'redis' prerequisite not available." This was missing entirely.
 redis>=5.0.0
 
 # ── WebSocket / Realtime ─────────────────────────────────────────
