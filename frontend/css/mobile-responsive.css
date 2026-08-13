@@ -5,9 +5,17 @@
   html { font-size: 14px; }
   
   /* Forms */
+  /* FIX: previously this overrode ALL padding (including the horizontal
+     space reserved for the left icon and the right-side password
+     show/hide toggle), causing both to visually overlap typed text on
+     narrow screens — this is the "signs cover part of the text box" bug.
+     Only vertical padding is adjusted here now; horizontal padding stays
+     whatever the base .form-input rule set (which reserves space for
+     icons on both sides). */
   .form-input, .form-textarea, input[type="password"], textarea {
     font-size: 16px !important; /* Prevents iOS zoom on input */
-    padding: 10px 12px;
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
   
   /* History items */
@@ -111,6 +119,32 @@
     padding: 8px 12px;
     font-size: 0.9rem;
   }
+
+  /* FIX: the real markup uses class="field-row" (register.html's First
+     Name / Last Name pair) — a separate rule further down in this file
+     targeted "form-row", a class that doesn't exist anywhere in the
+     actual HTML, so the intended "stack these on mobile" behavior never
+     applied. The fields stayed squeezed into two narrow columns, each
+     too tight for its icon + placeholder text, causing the overlapping
+     layout on the register page. Using grid-template-columns instead of
+     flex-direction, since .field-row is a CSS grid container
+     (flex-direction has no effect on grid children). Placed at the same
+     768px breakpoint as the rest of this file's mobile rules, rather
+     than only the narrower 480px one, since the auth layout goes
+     single-column (and the squeeze starts) well before 480px. */
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  /* FIX: .auth-form-panel had a fixed 40px padding on every side with no
+     mobile override anywhere — on a ~375px-wide phone that alone eats
+     80px (over 20% of the viewport) before any field is even laid out,
+     compounding the field-row squeeze above. */
+  .auth-form-panel {
+    padding: 24px 20px;
+  }
 }
 
 @media(max-width:480px) {
@@ -130,7 +164,8 @@
   
   .form-input, textarea, input[type="password"] {
     font-size: 16px !important;
-    padding: 8px 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
   
   .btn, button { 
