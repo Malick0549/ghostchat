@@ -583,16 +583,37 @@
   });
 
   /* ── Init ─────────────────────────────────────────────────────── */
-  loadUserUI();
-  navigate('encrypt');
-  API.ensureSession().catch(()=>{});
+  // FIX: this used to call navigate('encrypt') unconditionally — which
+  // immediately renders the encrypt page's "Session Password" input
+  // field into the page for ANY visitor, authenticated or not, before
+  // dashboard.js's own (separate, async) auth check has a chance to
+  // redirect away. That meant an unauthenticated visitor — including
+  // Google's Safe Browsing scanner — could load /dashboard.html and see
+  // a password field rendered with no login required, which is exactly
+  // the fingerprint automated phishing detectors look for. This is very
+  // likely what got dashboard.html flagged. Now the page performs an
+  // auth check FIRST, and only renders dashboard content (via
+  // navigate()) once that check actually succeeds — an unauthenticated
+  // visitor is redirected to login.html before anything sensitive-looking
+  // is ever painted to the screen.
+  (async function initDashboard() {
+    try {
+      await API.getProfile();
+    } catch (_) {
+      window.location.href = 'login.html';
+      return;
+    }
+    loadUserUI();
+    navigate('encrypt');
+    API.ensureSession().catch(()=>{});
 
-  if (!localStorage.getItem('gc_shortcuts_shown')) {
-    setTimeout(() => {
-      UI.showToast('Tip: Press ? to see keyboard shortcuts', 'info', 4000);
-      localStorage.setItem('gc_shortcuts_shown', '1');
-    }, 2000);
-  }
+    if (!localStorage.getItem('gc_shortcuts_shown')) {
+      setTimeout(() => {
+        UI.showToast('Tip: Press ? to see keyboard shortcuts', 'info', 4000);
+        localStorage.setItem('gc_shortcuts_shown', '1');
+      }, 2000);
+    }
+  })();
 })();
 </script>
 
