@@ -9,6 +9,10 @@ flask-session>=0.6.0
 # ── Database + ORM ────────────────────────────────────────────────
 flask-sqlalchemy>=3.1.0
 flask-bcrypt>=1.0.1
+# FIX: needed to connect to a real Postgres database (Neon) instead of the
+# ephemeral local SQLite file — Render's free tier wipes local files on every
+# restart/spin-down, so SQLite alone can't survive there long-term.
+psycopg2-binary>=2.9.9
 
 # ── Postgres driver ────────────────────────────────────────────────
 # Only used if DATABASE_URL is set to a postgres:// connection string
