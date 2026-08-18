@@ -54,6 +54,30 @@
   display: flex; align-items: center; gap: 4px; flex-shrink: 0;
 }
 
+@media (max-width: 480px) {
+  /* FIX: 5 icon buttons (add contact, pending requests, theme, dashboard,
+     logout) sitting in the same row as the avatar+username, with
+     flex-shrink:0 on the button row and no wrap fallback — on a narrow
+     phone this row could spill past the header edge instead of properly
+     fitting, since nothing was allowed to shrink or wrap. Reducing the
+     icon size specifically for this dense row (single-icon buttons
+     elsewhere keep their larger, more tappable size) and adding a wrap
+     fallback so it degrades to two rows instead of overflowing/visually
+     colliding with anything if it still doesn't fit on a very narrow
+     device. */
+  .sidebar-actions {
+    gap: 2px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 4px;
+  }
+  .sidebar-actions .icon-btn {
+    width: 34px;
+    height: 34px;
+    font-size: 13px;
+  }
+}
+
 /* Search */
 .contact-search-wrap {
   position: relative;
@@ -114,7 +138,18 @@
   display: flex; justify-content: space-between;
   align-items: baseline; margin-bottom: 3px;
 }
-.contact-name  { font-weight: 600; font-size: .9375rem; color: var(--t1); }
+.contact-name  {
+  font-weight: 600; font-size: .9375rem; color: var(--t1);
+  /* FIX: this had no overflow handling at all — unlike .contact-preview
+     right below it, which already truncates correctly. A longer contact
+     name had nothing stopping it from colliding with .contact-time next
+     to it, or wrapping and pushing the row below out of alignment. This
+     is very likely the main "things overlap" culprit in the contacts
+     list, since it happens for any name too long to fit, which is
+     common. min-width:0 is required here (not just on the parent) for
+     ellipsis to actually engage inside a flex row. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
 .contact-time  { font-size: .7rem; color: var(--t3); flex-shrink: 0; margin-left: 8px; }
 .contact-footer{
   display: flex; justify-content: space-between; align-items: center;
@@ -861,7 +896,12 @@
   top: 4px;
   background: rgba(0,0,0,.28);
   border: none;
-  color: var(--t2);
+  /* FIX: this was color:var(--t2), which is a dark navy in light mode —
+     rendering a dark icon on a fixed dark circle (dark-on-dark). This
+     button's background is intentionally theme-invariant (a translucent
+     dark overlay control, same pattern as media controls in most chat
+     apps), so its icon must be too. */
+  color: #ffffff;
   width: 26px;
   height: 26px;
   border-radius: 50%;
@@ -920,12 +960,21 @@
   .bubble-mine .msg-menu-toggle,
   .bubble-theirs .msg-menu-toggle {
     position: absolute;
-    top: -8px;
+    top: -6px;
     left: auto;
-    right: -8px;
+    right: -6px;
     background: var(--bg3);
     border: 1px solid var(--border2);
     opacity: .85;
+  }
+  /* FIX: on mobile the ⋮ toggle is always partially visible (not just on
+     tap, since there's no hover state on touch devices) and sits 6-8px
+     above each bubble — with only the default 4px gap between messages,
+     it was constantly overlapping into the message above it, on every
+     single message in the thread. Widening the gap here gives it real
+     clearance. */
+  .chat-messages {
+    gap: 14px;
   }
   .msg-crypto-actions.menu-open {
     gap: 8px;
@@ -1025,6 +1074,12 @@
     font-weight: 600;
     font-size: .875rem;
     color: var(--t1);
+    /* FIX: same missing-truncation bug as .contact-name — a longer
+       username here had nothing stopping it from overlapping the
+       Add/Connected/Pending badge to its right. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #userSearchResults .search-result-item .result-info .result-status {
