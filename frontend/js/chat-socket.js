@@ -220,6 +220,14 @@ class GhostChatRealtime {
         this.currentContact = { contact_id: contactId, display_name: displayName, avatar };
         this._openMenuId = null;
 
+        // ── FIX: this used to only run AFTER await this._loadMessages() below,
+        // meaning on mobile the sidebar-to-chat transition waited on a network
+        // fetch to finish before showing anything. On a slow/unstable
+        // connection that gap made the first tap look like it did nothing,
+        // so a second tap seemed "needed." Now it fires immediately, and
+        // messages load into the (already-existing) loading spinner behind it. ──
+        document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
+
         const headerName = document.getElementById('chatHeaderName');
         const headerAvatar = document.getElementById('chatHeaderAvatar');
         if (headerName) headerName.textContent = displayName;
@@ -244,7 +252,6 @@ class GhostChatRealtime {
             el.classList.toggle('active', el.dataset.id === contactId);
         });
 
-        document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
         document.getElementById('chatInput')?.focus();
     }
 
