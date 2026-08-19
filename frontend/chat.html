@@ -51,6 +51,26 @@
     .sidebar-actions .icon-btn#addContactBtn i {
       font-size: 16px;
     }
+
+    /* ── FIX: on mobile, avatar + username + 5 icon buttons all fighting for
+       one row left zero space for the username text, causing it to collapse
+       and visually overlap the icons. Stacking into a column instead gives
+       the username its own full-width row and the icons their own row
+       below it — nothing overlaps, nothing gets hidden. ── */
+    @media (max-width: 768px) {
+      .chat-sidebar-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+      }
+      .chat-user-info {
+        width: 100%;
+      }
+      .sidebar-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
+    }
   </style>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
