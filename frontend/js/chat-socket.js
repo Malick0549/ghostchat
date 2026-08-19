@@ -244,6 +244,14 @@ class GhostChatRealtime {
             el.classList.toggle('active', el.dataset.id === contactId);
         });
 
+        // FIX: this used to only slide .chat-main into view without ever
+        // hiding .chat-sidebar — since the sidebar has a higher z-index,
+        // it stayed visible on top the whole time regardless, so opening
+        // a chat never visually appeared to do anything on mobile. The
+        // class toggle here is harmless on desktop (mobile-hidden's
+        // transform only has any effect inside the max-width:768px media
+        // query), so no viewport check is needed.
+        document.querySelector('.chat-sidebar')?.classList.add('mobile-hidden');
         document.querySelector('.chat-main')?.classList.add('mobile-chat-open');
         document.getElementById('chatInput')?.focus();
     }
@@ -1274,8 +1282,8 @@ class GhostChatRealtime {
         const resultsContainer = document.getElementById('userSearchResults');
         if (!resultsContainer) return;
 
-        if (query.length < 2) {
-            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Type at least 2 characters</div>';
+        if (query.length < 1) {
+            resultsContainer.innerHTML = '<div style="padding:20px;text-align:center;color:var(--t3);font-size:.875rem;">Start typing a username or email…</div>';
             return;
         }
 
@@ -1510,7 +1518,12 @@ class GhostChatRealtime {
         }
 
         document.getElementById('newChatSearch')?.addEventListener('input', e => {
-            this.searchUsers(e.target.value.trim());
+            // ── Debounced — searches by first letter typed, but waits a
+            // beat for fast typists so we're not firing an API call per
+            // keystroke (also plays nicer with the search rate limit). ──
+            clearTimeout(this._searchDebounce);
+            const val = e.target.value.trim();
+            this._searchDebounce = setTimeout(() => this.searchUsers(val), 250);
         });
 
         document.getElementById('contactSearch')?.addEventListener('input', e => {
@@ -1537,6 +1550,14 @@ class GhostChatRealtime {
 
         document.getElementById('mobileBackBtn')?.addEventListener('click', () => {
             document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
+            document.querySelector('.chat-sidebar')?.classList.remove('mobile-hidden');
+            // FIX: this was never cleared, so the app still considered a
+            // chat "open" after going back — harmless most of the time,
+            // but the rotation/resize handler in _setupMobile() checks
+            // this exact flag to decide whether to hide the sidebar, so a
+            // stale value here could re-hide it incorrectly on rotate.
+            this.currentContact = null;
+            document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
         });
 
         document.getElementById('chatMenuBtn')?.addEventListener('click', () => {
@@ -1552,6 +1573,7 @@ class GhostChatRealtime {
                 const picker = document.getElementById('emojiPicker');
                 if (picker) picker.style.display = 'none';
                 document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
+                document.querySelector('.chat-sidebar')?.classList.remove('mobile-hidden');
                 this._closeAllMsgMenus();
             }
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
