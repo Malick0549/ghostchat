@@ -178,20 +178,39 @@ window.HistoryModule = {
     async clearAll() {
         if (!confirm('Clear ALL message history? This cannot be undone.')) return;
 
+        // FIX: this used to swallow any failure from the server call and
+        // show "History cleared" regardless — so if the delete request
+        // failed for any reason (auth hiccup, network issue, server
+        // error), the user got a false success message, nothing was
+        // actually deleted server-side, and the next page refresh
+        // correctly re-synced from a server that still had everything —
+        // which looked exactly like "clearing didn't work." Now this
+        // only clears the local view and shows success once the server
+        // has actually confirmed the delete, and shows a real error
+        // (plus logs the real cause to the console) otherwise.
         try {
-            await window.GhostChatAPI.clearEncryptionHistory();
-        } catch (_) {
-            // Even if the server call fails (offline, etc.), still clear the
-            // local copy so the UI reflects the user's intent — it will
-            // resync from the server (and may reappear) once back online,
-            // which is the best available behavior without a proper outbox.
+            const result = await window.GhostChatAPI.clearEncryptionHistory();
+            if (!result || result.success !== true) {
+                throw new Error(result?.error || 'Server did not confirm the history was cleared.');
+            }
+        } catch (err) {
+            console.error('Clear history failed:', err);
+            if (window.UI) {
+                UI.showToast(
+                    err?.isNetworkError
+                        ? 'Could not clear history — you appear to be offline.'
+                        : `Failed to clear history: ${err.message || 'unknown error'}`,
+                    'error'
+                );
+            }
+            return; // don't touch the local view — it still matches the (unchanged) server state
         }
 
         this.messages = [];
         this._saveLocal();
         this.render();
 
-        if (window.UI) UI.showToast('History cleared', 'info');
+        if (window.UI) UI.showToast('History cleared', 'success');
     },
 
     exportHistory() {

@@ -1233,11 +1233,22 @@ def create_app(test_config=None):
         limit  = request.args.get('limit',  100, type=int)
         offset = request.args.get('offset',  0,  type=int)
 
+        # FIX: this had no message_type filter at all, so it returned every
+        # message row for the user — chat messages, images, audio, video —
+        # not just the encryption/decryption history entries this page is
+        # actually for. That meant real chat content could show up
+        # mislabeled in the dashboard's History list, and it's inconsistent
+        # with /api/messages/clear below, which correctly only ever
+        # touches encryption/decryption rows. Scoping this the same way.
+        _history_types = ['encryption', 'decryption']
         msgs  = (Message.query
                  .filter_by(user_id=user.id)
+                 .filter(Message.message_type.in_(_history_types))
                  .order_by(Message.created_at.desc())
                  .limit(limit).offset(offset).all())
-        total = Message.query.filter_by(user_id=user.id).count()
+        total = Message.query.filter_by(user_id=user.id).filter(
+            Message.message_type.in_(_history_types)
+        ).count()
 
         return jsonify({
             'success':  True,
