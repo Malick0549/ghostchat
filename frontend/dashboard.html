@@ -61,10 +61,6 @@
       </div>
     </div>
   </div>
-  <div class="activity-logs">
-    <div class="log-header"><span><i class="fas fa-terminal"></i> Activity Log</span><span id="logTime" style="font-family:var(--mono);font-size:.7rem;color:var(--t3);">Live</span></div>
-    <div class="log-list" id="encryptLogList"><div class="log-item">// Waiting for encryption operation…</div></div>
-  </div>
 </template>
 
 <!-- DECRYPT PAGE -->
@@ -451,6 +447,13 @@
 
     closeSidebar();
   }
+
+  // Exposed so dashboard.js (a separate script, loaded earlier, with no
+  // access to this IIFE's local scope) can trigger navigation — needed
+  // for the notification bell click handler, which should take the user
+  // to the History page (the app's one canonical place to review past
+  // encrypt/decrypt activity).
+  window.dashboardNavigate = navigate;
 
   document.querySelectorAll('.sidebar-nav .nav-item[data-page]').forEach(btn=>{
     btn.addEventListener('click',()=>navigate(btn.dataset.page));

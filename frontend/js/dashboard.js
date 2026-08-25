@@ -36,7 +36,6 @@ class GhostChatDashboard {
 
         await this._loadUserProfile();
         this._startSessionMonitoring();
-        await this._loadActivityLogs();
         this._setupGlobalListeners();
         this._setupNotificationSystem();
         this.updateNotificationBadge(this._notificationCount);
@@ -108,30 +107,6 @@ class GhostChatDashboard {
         }, 2500);
     }
 
-    /* ── Activity logs ─────────────────────────────────────────── */
-    async _loadActivityLogs() {
-        try {
-            const d = await window.GhostChatAPI.getActivityLogs(50);
-            this.activityLogs = d.logs || [];
-            this._renderActivityLogs();
-        } catch (_) {}
-    }
-
-    _renderActivityLogs() {
-        const container = document.querySelector('#encryptLogList, .log-list');
-        if (!container || !this.activityLogs.length) return;
-
-        container.innerHTML = this.activityLogs
-            .slice(-20)
-            .reverse()
-            .map(log => `
-                <div class="log-item ${log.type || 'info'}">
-                    <span style="color:var(--t3);margin-right:8px;">${new Date(log.timestamp).toLocaleTimeString()}</span>
-                    <span>${this._escHtml(log.message)}</span>
-                </div>
-            `).join('');
-    }
-
     /* ── Notification System ───────────────────────────────────── */
     _setupNotificationSystem() {
         window.addEventListener('ghostchat:encrypt', () => {
@@ -166,6 +141,11 @@ class GhostChatDashboard {
         if (notifBtn) {
             notifBtn.addEventListener('click', () => {
                 this._clearUnread();
+                // History is the app's one canonical place to review past
+                // encrypt/decrypt activity — navigate() itself lives in a
+                // separate inline script in dashboard.html, so it's exposed
+                // on window as dashboardNavigate for this file to call.
+                if (window.dashboardNavigate) window.dashboardNavigate('history');
             });
         }
     }
@@ -223,19 +203,14 @@ class GhostChatDashboard {
 
     /* ── Global event listeners ────────────────────────────────── */
     _setupGlobalListeners() {
-        window.addEventListener('ghostchat:encrypt', async (e) => {
-            await window.GhostChatAPI.logActivity('Message encrypted successfully', 'success');
-            await this._loadActivityLogs();
-        });
-        window.addEventListener('ghostchat:decrypt', async (e) => {
-            await window.GhostChatAPI.logActivity('Message decrypted successfully', 'success');
-            await this._loadActivityLogs();
-        });
-        window.addEventListener('ghostchat:error', async (e) => {
-            await window.GhostChatAPI.logActivity(e.detail?.message || 'Operation failed', 'error');
-            await this._loadActivityLogs();
-        });
-
+        // FIX: this used to also call window.GhostChatAPI.logActivity(...)
+        // and this._loadActivityLogs() on these same three events — both
+        // existed solely to feed the Activity Log widget that used to sit
+        // below the Encrypt page, which has been removed (History is now
+        // the one place to review past activity). The badge/sound/toast
+        // reactions to these events already live independently in
+        // _setupNotificationSystem() above, so there's nothing left for
+        // this method to do beyond the notification-permission request.
         if ('Notification' in window && Notification.permission === 'default') {
             Notification.requestPermission().catch(() => {});
         }
