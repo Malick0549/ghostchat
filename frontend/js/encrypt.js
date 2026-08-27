@@ -12,6 +12,7 @@
 
 window.EncryptionModule = {
     _lastPacket: null,
+    _showFullCipher: false,   // display-only toggle — never affects what gets copied/exported
 
     init() {
         this._wire();
@@ -91,31 +92,61 @@ window.EncryptionModule = {
     },
 
     _showResult(result) {
+        this._showFullCipher = false;   // always start clean on a fresh encryption
+        this._renderResultBody(result.algorithm);
+    },
+
+    // ── Separated from _showResult so the "Show full cipher" toggle can
+    // re-render just the display without re-encrypting anything. The full
+    // packet in this._lastPacket is read here but never reassigned — this
+    // function only ever changes what's shown, never what's stored. ──
+    _renderResultBody(algorithm) {
         const div = document.getElementById('encryptResult');
-        if (!div) return;
+        if (!div || !this._lastPacket) return;
+
+        // The packet format is: emoji + "GHOST" + iv_b64 + "GHOST" + salt_b64
+        // Splitting on the separator to isolate just the emoji portion is a
+        // read-only operation — this._lastPacket itself is untouched, so
+        // every export/copy function still has the exact complete packet.
+        const emojiOnly = this._lastPacket.split('GHOST')[0];
+        const displayText = this._showFullCipher ? this._lastPacket : emojiOnly;
+
         div.innerHTML = `
             <div style="margin-top:20px;padding:16px;background:rgba(0,255,136,0.07);
                         border:1px solid rgba(0,255,136,0.2);border-radius:var(--r2);">
                 <p style="font-family:var(--mono);font-size:.75rem;color:var(--green);margin-bottom:12px;">
-                    ✓ ENCRYPTION COMPLETE — ${result.algorithm || 'AES-256-CBC'} + EMOJI OBFUSCATION
+                    ✓ ENCRYPTION COMPLETE — ${algorithm || 'AES-256-CBC'} + EMOJI OBFUSCATION
                 </p>
-                <label style="font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
-                              text-transform:uppercase;color:var(--t2);display:block;margin-bottom:8px;">
-                    Encrypted Packet (copy the entire string below)
-                </label>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <label style="font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
+                                  text-transform:uppercase;color:var(--t2);">
+                        ${this._showFullCipher ? 'Full Encrypted Packet' : 'Encrypted Message'}
+                    </label>
+                    <button type="button" id="toggleCipherViewBtn"
+                            class="btn btn-ghost btn-sm" style="font-size:.7rem;padding:4px 10px;">
+                        <i class="fas fa-${this._showFullCipher ? 'eye-slash' : 'code'}"></i>
+                        ${this._showFullCipher ? 'Show emoji only' : 'Show full cipher'}
+                    </button>
+                </div>
                 <div style="background:rgba(0,0,0,.35);border:1px solid var(--border);
                             border-radius:var(--r2);padding:14px;word-break:break-all;
                             font-family:var(--mono);font-size:.75rem;line-height:1.7;
                             color:var(--t1);max-height:180px;overflow-y:auto;">
-                    ${this._esc(result.emoji_message || '')}
+                    ${this._esc(displayText)}
                 </div>
                 <p style="font-size:.75rem;color:var(--t3);margin-top:8px;">
                     <i class="fas fa-info-circle"></i>
-                    Copy the <strong>entire</strong> string above (including the GHOST separator)
-                    and paste it into the Decrypt panel.
+                    ${this._showFullCipher
+                        ? 'This is the complete packet, including the hidden decryption data. Copy/Export always use this full version.'
+                        : 'Copy and Export always include the complete data needed to decrypt this message — even though only the emoji are shown here.'}
                 </p>
             </div>
         `;
+
+        document.getElementById('toggleCipherViewBtn')?.addEventListener('click', () => {
+            this._showFullCipher = !this._showFullCipher;
+            this._renderResultBody(algorithm);
+        });
     },
 
     _showExport(show) {
@@ -128,6 +159,7 @@ window.EncryptionModule = {
         if (div) div.innerHTML = '';
         this._showExport(false);
         this._lastPacket = null;
+        this._showFullCipher = false;
     },
 
     _setLoading(on) {
