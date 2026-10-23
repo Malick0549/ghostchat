@@ -186,10 +186,25 @@ def create_app(test_config=None):
 
     # ── Database ───────────────────────────────────────────────────────────────
     basedir = os.path.abspath(os.path.dirname(__file__))
+    _db_url = os.environ.get('DATABASE_URL') or ''
+    # Force the psycopg2 driver (the one in requirements.txt). The newer
+    # "psycopg" v3 driver crashes under eventlet, and "postgres://" is not
+    # accepted by SQLAlchemy 2.x.
+    for _prefix in ('postgres://', 'postgresql+psycopg://', 'postgresql://'):
+        if _db_url.startswith(_prefix):
+            _db_url = 'postgresql+psycopg2://' + _db_url[len(_prefix):]
+            break
     app.config['SQLALCHEMY_DATABASE_URI'] = (
-        os.environ.get('DATABASE_URL')
+        _db_url
         or f'sqlite:///{os.path.join(basedir, "ghostchat.db")}'
     )
+    # Neon closes idle connections and sleeps when unused; this stops
+    # "SSL connection closed" errors after idle periods.
+    if _db_url.startswith('postgresql'):
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+            'pool_pre_ping': True,
+            'pool_recycle': 280,
+        }
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAX_CONTENT_LENGTH'] = 45 * 1024 * 1024
 
