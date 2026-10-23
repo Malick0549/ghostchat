@@ -56,6 +56,10 @@ class User(db.Model):
     last_location = db.Column(db.String(200), nullable=True)
     last_device = db.Column(db.String(200), nullable=True)
     
+    # Avatar image stored in the database so it survives Render restarts
+    avatar_data = db.Column(db.LargeBinary, nullable=True)
+    avatar_mime = db.Column(db.String(100), nullable=True)
+    
     # Relationships - FIXED: Specify foreign_keys to avoid ambiguity
     messages = db.relationship('Message', foreign_keys='Message.user_id', backref='user', lazy=True)
     sessions = db.relationship('UserSession', backref='user', lazy=True)

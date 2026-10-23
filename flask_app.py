@@ -248,6 +248,8 @@ def create_app(test_config=None):
                 'two_factor_code_expires': 'DATETIME',
                 'two_factor_attempts': 'INTEGER DEFAULT 0',
             })
+            _blob = 'BYTEA' if db.engine.dialect.name == 'postgresql' else 'BLOB'
+            _migrate_columns(User, {'avatar_data': _blob, 'avatar_mime': 'VARCHAR(100)'})
 
             try:
                 admin_emails = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
@@ -1118,21 +1120,20 @@ def create_app(test_config=None):
         try:
             from PIL import Image
             img = Image.open(file)
+            fmt = (img.format or '').upper()
             img.verify()
             file.seek(0)
         except Exception:
             return jsonify({'error': 'File is not a valid image'}), 400
 
-        if user.avatar and '/assets/uploads/' in (user.avatar or ''):
-            old = os.path.join(app.config['UPLOAD_FOLDER'], os.path.basename(user.avatar))
-            try:
-                os.remove(old)
-            except OSError:
-                pass
+        mime = {'PNG': 'image/png', 'JPEG': 'image/jpeg',
+                'GIF': 'image/gif', 'WEBP': 'image/webp'}.get(fmt)
+        if not mime:
+            return jsonify({'error': 'File is not a valid image'}), 400
 
-        filename = f"avatar_{user.id}_{int(datetime.utcnow().timestamp())}.{ext}"
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        user.avatar = f'/assets/uploads/{filename}'
+        user.avatar_data = file.read()
+        user.avatar_mime = mime
+        user.avatar = f'/api/avatar/{user.id}?v={int(datetime.utcnow().timestamp())}'
         db.session.commit()
 
         return jsonify({
@@ -1140,6 +1141,19 @@ def create_app(test_config=None):
             'avatar':  user.avatar,
             'message': 'Avatar updated',
         }), 200
+
+    @app.route('/api/avatar/<user_id>')
+    def serve_avatar(user_id):
+        viewer, err = _require_auth()
+        if err:
+            return err
+        u = db.session.get(User, user_id)
+        if not u or not u.avatar_data:
+            return '', 404
+        resp = Response(u.avatar_data, mimetype=u.avatar_mime or 'image/png')
+        resp.headers['Cache-Control'] = 'private, max-age=3600'
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
+        return resp
 
     @app.route('/assets/uploads/<path:filename>')
     def serve_upload(filename):
