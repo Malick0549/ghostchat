@@ -59,6 +59,12 @@ class User(db.Model):
     # Avatar image stored in the database so it survives Render restarts
     avatar_data = db.Column(db.LargeBinary, nullable=True)
     avatar_mime = db.Column(db.String(100), nullable=True)
+# End-to-end encryption: PUBLIC key + password-locked recovery vaults.
+    # The server never sees a private key or any passphrase.
+    public_key = db.Column(db.Text, nullable=True)
+    key_vault  = db.Column(db.Text, nullable=True)
+    manual_vault = db.Column(db.Text, nullable=True)
+
     
     # Relationships - FIXED: Specify foreign_keys to avoid ambiguity
     messages = db.relationship('Message', foreign_keys='Message.user_id', backref='user', lazy=True)
@@ -313,3 +319,19 @@ class IntegrationToken(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     __table_args__ = (db.UniqueConstraint('user_id', 'service', name='unique_user_service'),)
+    
+class ManualKeyStatus(db.Model):
+    """Which manual-key ID a user currently uses with a contact.
+ 
+    Holds only a short HMAC tag (never the key) so each side can check that the
+    other has the SAME manual key before a message is sent.
+    """
+    __tablename__ = 'manual_key_status'
+ 
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    contact_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    kid = db.Column(db.String(16), nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+ 
+    __table_args__ = (db.UniqueConstraint('user_id', 'contact_id', name='unique_manual_key_status'),)

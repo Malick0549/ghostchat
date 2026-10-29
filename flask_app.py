@@ -79,6 +79,7 @@ try:
         IntegrationToken,
         Contact,
         ContactRequest,   # ── FIX: use the existing dedicated request table instead of a Contact.status hack ──
+        ManualKeyStatus,
         ActivityLog,
     )
     DB_AVAILABLE = True
@@ -265,6 +266,7 @@ def create_app(test_config=None):
             })
             _blob = 'BYTEA' if db.engine.dialect.name == 'postgresql' else 'BLOB'
             _migrate_columns(User, {'avatar_data': _blob, 'avatar_mime': 'VARCHAR(100)'})
+            _migrate_columns(User, {'public_key': 'TEXT', 'key_vault': 'TEXT', 'manual_vault': 'TEXT'})
 
             try:
                 admin_emails = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]

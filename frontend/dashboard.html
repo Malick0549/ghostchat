@@ -164,8 +164,10 @@
 <template id="settings-page">
   <div style="max-width:600px;">
     <h2 style="font-size:1.2rem;font-weight:700;letter-spacing:-.02em;margin-bottom:24px;"><i class="fas fa-cog" style="color:var(--primary);margin-right:10px;"></i>Settings</h2>
+    <div class="settings-group" id="e2eSettingsMount"></div>
     <div class="settings-group">
       <h3>Encryption</h3>
+
       <div class="setting-row">
         <div><div class="setting-label">Algorithm</div><div class="setting-sub">Encryption method for all messages</div></div>
         <select id="encryptionAlgorithm"><option value="AES-256-GCM" selected>AES-256-GCM (Recommended)</option></select>
@@ -312,6 +314,8 @@
 <script src="js/history.js"></script>
 <script src="js/integrations.js"></script>
 <script src="js/profile.js"></script>
+<script src="js/e2e.js"></script>
+<script src="js/e2e-ui.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/dashboard.js"></script>
 
@@ -432,7 +436,7 @@
       history:    ()=>window.HistoryModule?.load(),
       integrations:()=>window.IntegrationsModule?.init(),
       profile:    ()=>window.ProfileModule?.init(),
-      settings:   ()=>window.SettingsModule?.init(),
+      settings:   ()=>{ window.SettingsModule?.init(); window.GhostE2EUI?.mountSettings(document.getElementById('e2eSettingsMount')); },
     };
     map[page]?.();
 

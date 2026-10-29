@@ -79,6 +79,7 @@ class GhostChatRealtime {
 
     async init() {
         this._loadUser();
+        this._startE2E();
         await this._loadContacts();
         this._connectSocket();
         this._setupEventListeners();
@@ -88,6 +89,49 @@ class GhostChatRealtime {
         await this._loadPendingRequests();
     }
 
+// ── End-to-end encryption (Automatic or Manual keys, set per chat) ───────
+    _startE2E() {
+        if (!window.GhostE2E || !this.user?.id) return;
+        window.GhostE2E.onKeyChange = (cid) => {
+            const c = this.contacts.find(x => x.contact_id === cid);
+            this._toast(`${c?.display_name || 'A contact'}'s security key changed. Compare safety numbers before sharing anything sensitive.`, 'error');
+        };
+        window.GhostE2E.init(this.user.id, this._base(), () => this._getCsrf()).then(async () => {
+            await this._e2eReveal();
+            if (this.currentContact) this._renderMessages();
+        });
+        // keys restored / changed from the encryption screen: unlock what can now be read
+        window.addEventListener('ghoste2e:changed', async () => {
+            await this._e2eReveal();
+            if (this.currentContact) this._renderMessages();
+        });
+    }
+ 
+    openEncryption() {
+        if (!this.currentContact) { this._toast('Open a chat first', 'info'); return; }
+        window.GhostE2EUI?.open(this.currentContact);
+    }
+ 
+    async _e2eReveal() {
+        const E = window.GhostE2E;
+        if (!E) return;
+        for (const m of this.messages) {
+            const raw = m.encrypted_content;
+            if (!E.isE2E(raw) || m.id in this._plainData) continue;
+            const peer = m.sender_id === this.user.id ? m.receiver_id : m.sender_id;
+            try {
+                this._plainData[m.id] = await E.decrypt(peer, raw);
+                this.decryptData[m.id] = raw;
+                this._msgViewState[m.id] = 'plain';
+            } catch (_) { /* stays locked: this device does not have the key */ }
+        }
+    }
+ 
+    _preview(text) {
+        if (window.GhostE2E?.isE2E(text)) return '🔒 Encrypted message';
+        return this._truncate(text, 36);
+    }
+ 
     // ── Network status monitor ──────────────────────────────────────────────
     _setupNetworkMonitor() {
         window.addEventListener('online', () => {
@@ -172,7 +216,7 @@ class GhostChatRealtime {
                 ? `<img src="${c.avatar}" alt="${initials}" onerror="this.outerHTML='<span>${initials}</span>';" />`
                 : `<span>${initials}</span>`;
 
-            const lastMsg = c.last_message?.content ? this._truncate(c.last_message.content, 36) : 'Start a secure conversation';
+            const lastMsg = c.last_message?.content ? this._preview(c.last_message.content) : 'Start a secure conversation';
             const lastTime = c.last_message?.created_at ? this._formatTime(c.last_message.created_at) : '';
             const unread = c.unread_count > 0 ? `<span class="contact-unread">${c.unread_count > 99 ? '99+' : c.unread_count}</span>` : '';
             const online = c.is_online ? '<span class="online-dot"></span>' : '';
@@ -441,6 +485,17 @@ class GhostChatRealtime {
     }
 
     async decryptMessage(msgId) {
+        // Secure message: unlock with the chat's key, no password needed
+        if (window.GhostE2E?.isE2E(this.decryptData?.[msgId])) {
+            await this._e2eReveal();
+            if (msgId in this._plainData) {
+                this._msgViewState[msgId] = 'plain';
+                this._renderMessages();
+            } else {
+                this._toast('Cannot unlock: this device does not have the key. Open the key button to set it up or restore a backup.', 'error');
+            }
+            return;
+        }
         const password = prompt('Enter the encryption password to decrypt this message:');
         if (!password) return;
 
@@ -481,6 +536,12 @@ class GhostChatRealtime {
     }
 
     async encryptMessageBubble(msgId) {
+        // Secure message: just lock it again, it is still encrypted on the server
+        if (window.GhostE2E?.isE2E(this.decryptData?.[msgId])) {
+            this._msgViewState[msgId] = 'encrypted';
+            this._renderMessages();
+            return;
+        }
         const password = this.password || prompt('Enter a password to encrypt this message:');
         if (!password) return;
 
@@ -611,6 +672,11 @@ class GhostChatRealtime {
             is_read: false,
             is_delivered: false,
         };
+if (sentE2E) {   // sender sees plain text at once; the server only ever holds ciphertext
+            this._plainData[tempId] = text;
+            this.decryptData[tempId] = content;
+            this._msgViewState[tempId] = 'plain';
+        }
         this.messages.push(tempMsg);
         this._renderMessages();
 
@@ -658,7 +724,8 @@ class GhostChatRealtime {
                 const data = await res.json();
                 const idx = this.messages.findIndex(m => m.id === tempId);
                 if (idx > -1 && data.message) {
-                    this.messages[idx] = { ...this.messages[idx], id: data.message.id, is_delivered: true };
+                                        this.messages[idx] = { ...this.messages[idx], id: data.message.id, is_delivered: true };
+                    await this._e2eReveal();
                     this._renderMessages();
                 }
             } catch (error) {
@@ -935,7 +1002,7 @@ class GhostChatRealtime {
         }
     }
 
-    _handleReceivedMessage(data) {
+    async _handleReceivedMessage(data) {
         const isCurrentChat = !!this.currentContact && (
             (data.sender_id === this.currentContact.contact_id && data.receiver_id === this.user.id) ||
             (data.receiver_id === this.currentContact.contact_id && data.sender_id === this.user.id)
@@ -960,9 +1027,11 @@ class GhostChatRealtime {
                     is_delivered: true,
                 });
             }
+            await this._e2eReveal();
             this._renderMessages();
             if (data.sender_id !== this.user.id) {
                 this._notifyNewMessage(data);
+
                 this.socket?.emit('mark_read', { contact_id: data.sender_id });
             }
         }
@@ -1539,14 +1608,7 @@ class GhostChatRealtime {
             this._toggleEncryption();
         });
 
-        document.getElementById('setPasswordBtn')?.addEventListener('click', () => {
-            const pw = prompt('Set encryption password (shared with your contact):');
-            if (pw) {
-                this.password = pw;
-                this.encryptMessages = true;
-                this._toast('Encryption password set. Messages will be encrypted.', 'success');
-            }
-        });
+        document.getElementById('setPasswordBtn')?.addEventListener('click', () => this.openEncryption());
 
         document.getElementById('mobileBackBtn')?.addEventListener('click', () => {
             document.querySelector('.chat-main')?.classList.remove('mobile-chat-open');
@@ -1657,7 +1719,7 @@ class GhostChatRealtime {
     }
 
     _toggleEncryption() {
-        if (!this.password && !this.encryptMessages) {
+        if (!window.GhostE2E && !this.password && !this.encryptMessages) {
             const pw = prompt('Enter a shared encryption password:');
             if (!pw) return;
             this.password = pw;
