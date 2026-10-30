@@ -122,7 +122,7 @@ class GhostChatRealtime {
             try {
                 this._plainData[m.id] = await E.decrypt(peer, raw);
                 this.decryptData[m.id] = raw;
-                this._msgViewState[m.id] = 'plain';
+                if (!(m.id in this._msgViewState)) this._msgViewState[m.id] = 'encrypted';
             } catch (_) { /* stays locked: this device does not have the key */ }
         }
     }
@@ -692,7 +692,7 @@ class GhostChatRealtime {
 if (sentE2E) {   // sender sees plain text at once; the server only ever holds ciphertext
             this._plainData[tempId] = text;
             this.decryptData[tempId] = content;
-            this._msgViewState[tempId] = 'plain';
+            this._msgViewState[tempId] = 'encrypted';
         }
         this.messages.push(tempMsg);
         this._renderMessages();
