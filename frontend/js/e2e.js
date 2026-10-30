@@ -403,6 +403,8 @@ window.GhostE2E = (() => {
 
     return {
         P1, P2,
+        wrap: s => toEmoji(String(s)),
+        unwrap: s => unwrap(String(s)),
         toDisplay: s => (typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2))) ? toEmoji(s) : s,
         isE2E: s => { s = unwrap(s); return typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2)); },
         set onKeyChange(fn) { onKeyChange = fn; },

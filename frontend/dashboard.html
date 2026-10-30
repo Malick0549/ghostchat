@@ -403,7 +403,7 @@
         const avatarSrc = u.avatar.startsWith('http')
           ? u.avatar
           : `${window.location.origin}${u.avatar.startsWith('/') ? '' : '/'}${u.avatar}`;
-        el.outerHTML=`<img id="avatarImg" src="${avatarSrc}?t=${Date.now()}" alt="${fn}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span id=\'avatarInitials\'>${fn[0]||'G'}</span>';" />`;
+        el.outerHTML=`<img id="avatarImg" src="${avatarSrc}?t=${Date.now()}" alt="${fn}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.outerHTML='<span id=&quot;avatarInitials&quot;>${fn[0]||'G'}</span>';" />`;
       }
       if (u.is_admin) {
         document.getElementById('adminSectionLabel').style.display = '';

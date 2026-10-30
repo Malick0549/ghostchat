@@ -59,6 +59,7 @@ window.EncryptionModule = {
             const result = await window.GhostChatAPI.encryptSimple(plaintext, password, useDecoys);
 
             if (result.success) {
+                if (window.GhostE2E?.wrap) result.emoji_message = window.GhostE2E.wrap(result.emoji_message);
                 this._lastPacket = result.emoji_message;
                 this._showResult(result);
                 this._showExport(true);
@@ -111,7 +112,7 @@ window.EncryptionModule = {
                 </div>
                 <p style="font-size:.75rem;color:var(--t3);margin-top:8px;">
                     <i class="fas fa-info-circle"></i>
-                    Copy the <strong>entire</strong> string above (including the GHOST separator)
+                    Copy the <strong>entire</strong> string above (every emoji, nothing missed)
                     and paste it into the Decrypt panel.
                 </p>
             </div>

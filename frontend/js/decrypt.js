@@ -64,7 +64,8 @@ window.DecryptionModule = {
     },
 
     async _decrypt() {
-        const packet   = (document.getElementById('ciphertext')?.value       || '').trim();
+        let packet = (document.getElementById('ciphertext')?.value || '').trim();
+        if (window.GhostE2E?.unwrap) packet = window.GhostE2E.unwrap(packet);
         const password = (document.getElementById('decryptPassword')?.value  || '').trim();
 
         if (!packet) {
