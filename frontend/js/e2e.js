@@ -34,6 +34,12 @@ window.GhostE2E = (() => {
     let _ttl = 5000;                           // how long a 'ready' answer is trusted (ms)
 
     // ── helpers ──────────────────────────────────────────────────────────────
+    // Emoji view: every byte of a packet becomes one emoji (256 fixed, stable emoji), so chat shows emojis, not text.
+    const EMO = []; for (const [a, b] of [[0x1F300,0x1F320],[0x1F330,0x1F335],[0x1F337,0x1F37C],[0x1F380,0x1F393],[0x1F3A0,0x1F3C4],[0x1F3E0,0x1F3F0],[0x1F400,0x1F43E],[0x1F440,0x1F440],[0x1F442,0x1F44A]]) for (let c = a; c <= b; c++) EMO.push(String.fromCodePoint(c));
+    const EMO_IDX = new Map(EMO.map((e, i) => [e, i]));
+    const toEmoji = str => Array.from(new TextEncoder().encode(str), x => EMO[x]).join('');
+    const fromEmoji = s => { const a = []; for (const ch of s) { const i = EMO_IDX.get(ch); if (i === undefined) return null; a.push(i); } return new TextDecoder().decode(Uint8Array.from(a)); };
+    const unwrap = s => { if (typeof s !== 'string' || s.startsWith('🔐')) return s; const full = fromEmoji(s); return full === null ? s : full; };
     const b64 = buf => { let s = ''; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); };
     const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
     const b64u = buf => b64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -181,7 +187,7 @@ window.GhostE2E = (() => {
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: k.aad }, k.key, enc.encode(text)));
         const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
-        return { ok: true, packet: P1 + b64(out), mode: 'auto' };
+        return { ok: true, packet: toEmoji(P1 + b64(out)), mode: 'auto' };
     }
 
     // ══ MANUAL MODE ══════════════════════════════════════════════════════════
@@ -245,7 +251,7 @@ window.GhostE2E = (() => {
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, aes, enc.encode(text)));
         const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
-        return { ok: true, packet: `${P2}${entry.kid}:${b64(out)}`, mode: 'manual' };
+        return { ok: true, packet: toEmoji(`${P2}${entry.kid}:${b64(out)}`), mode: 'manual' };
     }
 
     // ── manual setup methods ────────────────────────────────────────────────
@@ -378,6 +384,7 @@ window.GhostE2E = (() => {
         catch (e) { console.warn('encrypt failed', e); return { ok: false, reason: 'error', mode }; }
     }
     async function decrypt(cid, packet) {
+        packet = unwrap(packet);
         if (packet.startsWith(P2)) {
             const rest = packet.slice(P2.length), i = rest.indexOf(':');
             const kid = rest.slice(0, i), raw = unb64(rest.slice(i + 1));
@@ -396,7 +403,7 @@ window.GhostE2E = (() => {
 
     return {
         P1, P2,
-        isE2E: s => typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2)),
+        isE2E: s => { s = unwrap(s); return typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2)); },
         set onKeyChange(fn) { onKeyChange = fn; },
         setStatusTtl(ms) { _ttl = Math.max(0, +ms || 0); },
         bindUser(userId) { _me = String(userId); },          // modes only, no key setup (Settings page)
