@@ -263,6 +263,7 @@ class GhostChatRealtime {
     async openChat(contactId, displayName, avatar) {
         this.currentContact = { contact_id: contactId, display_name: displayName, avatar };
         this._openMenuId = null;
+        window.GhostE2EUI?.attach(this.currentContact);
 
         const headerName = document.getElementById('chatHeaderName');
         const headerAvatar = document.getElementById('chatHeaderAvatar');
@@ -325,7 +326,7 @@ class GhostChatRealtime {
                 return;
             }
         }
-
+        await this._e2eReveal();
         this._renderMessages();
     }
 
@@ -634,7 +635,23 @@ class GhostChatRealtime {
 
         let content = text;
 
-        if (this.encryptMessages && this.password) {
+        let sentE2E = false;
+
+        // End-to-end encryption (Automatic or Manual, per chat). If the key is not ready,
+        // the message is NOT sent and the text is given back so nothing is lost.
+        if (this.encryptMessages && window.GhostE2E) {
+            const r = await window.GhostE2E.encryptFor(this.currentContact.contact_id, text);
+            if (r.ok) { content = r.packet; sentE2E = true; }
+            else {
+                input.value = text;
+                input.focus();
+                if (window.GhostE2EUI) window.GhostE2EUI.blocked(this.currentContact, r.reason, r.mode);
+                else this._toast('Not sent: encryption is not ready for this chat', 'error');
+                return;
+            }
+        }
+
+        if (this.encryptMessages && this.password && !sentE2E) {
             try {
                 const encResult = await resilientFetch(`${this._base()}/api/encrypt`, {
                     method: 'POST',

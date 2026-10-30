@@ -1159,6 +1159,123 @@ def create_app(test_config=None):
             'message': 'Avatar updated',
         }), 200
 
+    # ══ End-to-end encryption keys ═══════════════════════════════════════════
+    def _valid_public_jwk(j):
+        """Accept only a bare P-256 public key (kty/crv/x/y), nothing else."""
+        if not isinstance(j, dict):
+            return None
+        if j.get('kty') != 'EC' or j.get('crv') != 'P-256':
+            return None
+        x, y = j.get('x'), j.get('y')
+        pat = re.compile(r'^[A-Za-z0-9_-]{43}$')
+        if not (isinstance(x, str) and isinstance(y, str) and pat.match(x) and pat.match(y)):
+            return None
+        return {'kty': 'EC', 'crv': 'P-256', 'x': x, 'y': y}
+
+    @app.route('/api/keys/public', methods=['PUT'])
+    @limiter.limit("20 per hour")
+    def put_public_key():
+        user, err = _require_auth()
+        if err:
+            return err
+        data = request.get_json(silent=True) or {}
+        jwk = _valid_public_jwk(data.get('public_key'))
+        if not jwk:
+            return jsonify({'error': 'Invalid public key'}), 400
+        vault = data.get('vault')
+        if vault is not None:
+            if (not isinstance(vault, dict)
+                    or set(vault) != {'v', 'iter', 'salt', 'iv', 'data'}
+                    or len(json.dumps(vault)) > 4096):
+                return jsonify({'error': 'Invalid vault'}), 400
+        user.public_key = json.dumps(jwk)
+        if data.get('reset'):
+            user.key_vault = json.dumps(vault) if vault else None
+        db.session.commit()
+        _log_activity(user.id, 'e2e_key', 'Secure-message key updated')
+        return jsonify({'success': True}), 200
+
+    @app.route('/api/keys/vault', methods=['GET'])
+    @limiter.limit("30 per hour")
+    def get_key_vault():
+        user, err = _require_auth()
+        if err:
+            return err
+        return jsonify({'vault': json.loads(user.key_vault) if user.key_vault else None}), 200
+
+    # ── Manual-mode key checks (the server only ever sees a short key ID) ──────
+    def _is_contact(user_id, other_id):
+        return Contact.query.filter_by(user_id=user_id, contact_id=other_id).first() is not None
+
+    @app.route('/api/keys/manual-status', methods=['PUT'])
+    @limiter.limit("60 per minute")
+    def put_manual_status():
+        user, err = _require_auth()
+        if err:
+            return err
+        data = request.get_json(silent=True) or {}
+        cid = data.get('contact_id')
+        kid = data.get('kid')
+        if not isinstance(cid, str) or not _is_contact(user.id, cid):
+            return jsonify({'error': 'Not one of your contacts'}), 403
+        row = ManualKeyStatus.query.filter_by(user_id=user.id, contact_id=cid).first()
+        if kid is None:
+            if row:
+                db.session.delete(row)
+                db.session.commit()
+            return jsonify({'success': True}), 200
+        if not isinstance(kid, str) or not re.match(r'^[0-9a-f]{16}$', kid):
+            return jsonify({'error': 'Invalid key id'}), 400
+        if row:
+            row.kid = kid
+        else:
+            db.session.add(ManualKeyStatus(user_id=user.id, contact_id=cid, kid=kid))
+        db.session.commit()
+        return jsonify({'success': True}), 200
+
+    @app.route('/api/keys/manual-status/<cid>', methods=['GET'])
+    @limiter.limit("120 per minute")
+    def get_manual_status(cid):
+        user, err = _require_auth()
+        if err:
+            return err
+        if not _is_contact(user.id, cid):
+            return jsonify({'error': 'Not one of your contacts'}), 403
+        mine = ManualKeyStatus.query.filter_by(user_id=user.id, contact_id=cid).first()
+        theirs = ManualKeyStatus.query.filter_by(user_id=cid, contact_id=user.id).first()
+        return jsonify({'mine': mine.kid if mine else None,
+                        'theirs': theirs.kid if theirs else None}), 200
+
+    @app.route('/api/keys/manual-vault', methods=['GET', 'PUT'])
+    @limiter.limit("30 per hour")
+    def manual_vault():
+        user, err = _require_auth()
+        if err:
+            return err
+        if request.method == 'GET':
+            return jsonify({'vault': json.loads(user.manual_vault) if user.manual_vault else None}), 200
+        data = request.get_json(silent=True) or {}
+        vault = data.get('vault')
+        if (not isinstance(vault, dict)
+                or set(vault) != {'v', 'iter', 'salt', 'iv', 'data'}
+                or len(json.dumps(vault)) > 200000):
+            return jsonify({'error': 'Invalid vault'}), 400
+        user.manual_vault = json.dumps(vault)
+        db.session.commit()
+        _log_activity(user.id, 'e2e_backup', 'Manual-key backup updated')
+        return jsonify({'success': True}), 200
+
+    @app.route('/api/keys/<user_id>', methods=['GET'])
+    @limiter.limit("120 per minute")
+    def get_public_key(user_id):
+        user, err = _require_auth()
+        if err:
+            return err
+        target = db.session.get(User, user_id)
+        if not target or not target.public_key:
+            return jsonify({'public_key': None}), 200
+        return jsonify({'user_id': target.id, 'public_key': json.loads(target.public_key)}), 200
+    
     @app.route('/api/avatar/<user_id>')
     def serve_avatar(user_id):
         viewer, err = _require_auth()

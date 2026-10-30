@@ -112,6 +112,10 @@ def add_security_headers(response):
             "max-age=63072000; includeSubDomains; preload"
         )
 
+    response.headers["Permissions-Policy"] = (
+        "geolocation=(), camera=(self), microphone=(self), payment=(), "
+        "usb=(), magnetometer=(), gyroscope=(), interest-cohort=()"
+    )
     response.headers["X-GhostChat-API"] = "v3"
     response.headers.pop("Server", None)
     return response

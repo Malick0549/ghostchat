@@ -374,7 +374,14 @@ window.GhostE2EUI = (() => {
         const t = `Encryption: ${MODE_LABEL[mode]} (${ready ? 'ready' : 'not ready yet'}). Tap to change.`;
         btn.title = t; btn.setAttribute('aria-label', t);
     }
-    function attach(c) { contact = c; refreshBadge(); }
+    let badgeTimer = null;
+    function attach(c) {
+        contact = c; refreshBadge();
+        if (!badgeTimer) {   // keep the key button colour fresh (e.g. once the contact finishes setting up)
+            badgeTimer = setInterval(() => { if (!document.hidden) refreshBadge(); }, 20000);
+            window.addEventListener('focus', () => refreshBadge());
+        }
+    }
     window.addEventListener('ghoste2e:changed', () => { refreshBadge(); });
 
     // ── why a message was not sent ───────────────────────────────────────────
