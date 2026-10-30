@@ -427,7 +427,7 @@ class GhostChatRealtime {
             }
             const state = this._msgViewState[msg.id];
             const displayContent = state === 'encrypted'
-                ? this._esc(this.decryptData[msg.id] ?? rawContent)
+                ? this._esc((window.GhostE2E?.toDisplay || (x => x))(this.decryptData[msg.id] ?? rawContent))
                 : this._esc(this._plainData[msg.id] ?? rawContent);
 
             html += `
