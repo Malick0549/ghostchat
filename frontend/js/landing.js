@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initTheme() {
     // Load saved theme
-    const savedTheme = localStorage.getItem('ghostchat_theme') || 'dark';
+    const savedTheme = 'dark';
     applyTheme(savedTheme);
     
     // Setup theme toggle button

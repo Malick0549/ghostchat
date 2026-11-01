@@ -112,11 +112,10 @@ window.UI = {
 class ThemeManager {
   constructor() {
     this.themes = {
-      dark:  { name: 'Dark',  icon: 'fa-moon', file: 'dark.theme.css',  meta: '#080b12' },
-      light: { name: 'Light', icon: 'fa-sun',  file: 'light.theme.css', meta: '#f0f4f8' },
+      dark:  { name: 'Dark',  icon: 'fa-moon', file: 'dark.theme.css',  meta: '#0c0f16' },
     };
-    this.order   = ['dark', 'light'];
-    this.current = localStorage.getItem('ghostchat_theme') || 'dark';
+    this.order   = ['dark'];
+    this.current = 'dark';
     if (!this.themes[this.current]) this.current = 'dark';
     this._apply(this.current);
   }
