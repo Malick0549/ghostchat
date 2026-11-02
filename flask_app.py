@@ -85,11 +85,11 @@ try:
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
-    
-    try:
-        from backend.audit import install_audit
-    except Exception as _audit_err:
-        install_audit = None
+
+try:
+    from backend.audit import install_audit
+except Exception as _audit_err:
+    install_audit = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -2137,7 +2137,7 @@ def create_app(test_config=None):
             'offset': offset,
         }), 200
         
-    if install_audit:
+    if globals().get('install_audit'):
         _log_activity, _geolocate_ip, _client_ip = install_audit(
             app, ActivityLog=ActivityLog, User=User, Message=Message, Contact=Contact,
             send_email=_send_email, require_admin=_require_admin, limiter=limiter,
