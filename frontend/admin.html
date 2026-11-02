@@ -2,464 +2,478 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <meta name="theme-color" content="#080b12" />
-  <title>Admin Dashboard — GhostChat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0c0f16" />
+  <title>Admin Console — GhostChat</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
   <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="stylesheet" href="css/ghost-ui.css" />
   <style>
-    .admin-shell {
-      max-width: 1200px; margin: 0 auto; padding: 32px 24px 60px;
-    }
-    .admin-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 28px; flex-wrap: wrap; gap: 12px;
-    }
-    .admin-header h1 {
-      font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em;
-      display: flex; align-items: center; gap: 10px;
-    }
-    .admin-header h1 i { color: var(--primary); }
-    .admin-back {
-      color: var(--t2); font-size: .8rem; text-decoration: none;
-      display: inline-flex; align-items: center; gap: 6px;
-    }
-    .admin-back:hover { color: var(--primary); }
+    :root { --warn: var(--amber); }
+    body { min-height: 100vh; }
+    .shell { max-width: 1280px; margin: 0 auto; padding: 20px 20px 80px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .topbar h1 { font-size: 1.35rem; display: flex; align-items: center; gap: 10px; }
+    .topbar h1 i { color: var(--primary); }
+    .topbar a.back { color: var(--t2); font-size: .9rem; }
+    .topbar a.back:hover { color: var(--primary); }
 
-    .stat-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px; margin-bottom: 32px;
-    }
-    .stat-card {
-      background: var(--card, var(--bg3)); border: 1px solid var(--border);
-      border-radius: var(--r4); padding: 20px;
-    }
-    .stat-card .stat-label {
-      font-family: var(--mono); font-size: .7rem; letter-spacing: .08em;
-      text-transform: uppercase; color: var(--t3); margin-bottom: 8px;
-    }
-    .stat-card .stat-value {
-      font-size: 1.8rem; font-weight: 700; color: var(--t1);
-    }
-    .stat-card .stat-value.accent { color: var(--primary); }
+    .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { flex: 0 0 auto; background: none; border: 0; color: var(--t2); font-weight: 600; font-size: .95rem; padding: 10px 14px; border-radius: 10px 10px 0 0; border-bottom: 2px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+    .tab:hover { color: var(--t1); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab .count { background: rgba(255,115,133,.15); color: var(--red); border-radius: 999px; font-size: .75rem; padding: 1px 8px; }
 
-    .panel {
-      background: var(--card, var(--bg3)); border: 1px solid var(--border);
-      border-radius: var(--r4); padding: 20px; margin-bottom: 24px;
-    }
-    .panel-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
-    }
-    .panel-header h2 { font-size: 1rem; font-weight: 600; }
-    .panel-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .grid { display: grid; gap: 14px; }
+    .stats { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 18px; }
+    .stat { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r3); padding: 14px 16px; text-align: left; cursor: default; font: inherit; color: inherit; }
+    button.stat { cursor: pointer; }
+    button.stat:hover { border-color: var(--border2); }
+    .stat .l { color: var(--t2); font-size: .85rem; }
+    .stat .v { font-family: var(--display); font-size: 1.8rem; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+    .stat .s { color: var(--t3); font-size: .8rem; }
+    .stat.bad .v { color: var(--red); } .stat.warn .v { color: var(--amber); } .stat.good .v { color: var(--green); }
 
-    .event-breakdown { display: flex; flex-wrap: wrap; gap: 8px; }
-    .event-pill {
-      background: var(--bg, #0a0d14); border: 1px solid var(--border);
-      border-radius: 999px; padding: 5px 12px; font-size: .75rem;
-      color: var(--t2); cursor: pointer; transition: border-color .15s, color .15s;
-    }
-    .event-pill:hover, .event-pill.active {
-      border-color: var(--primary); color: var(--primary);
-    }
-    .event-pill .count { color: var(--t3); margin-left: 4px; }
-    .event-pill.active .count { color: var(--primary); }
+    .cols { grid-template-columns: 1.6fr 1fr; align-items: start; margin-bottom: 14px; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r3); padding: 16px; margin-bottom: 14px; min-width: 0; }
+    .card h2 { font-size: 1.05rem; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+    .card h2 small { font-family: var(--font); font-weight: 400; color: var(--t3); font-size: .8rem; }
+    .muted { color: var(--t2); } .faint { color: var(--t3); font-size: .85rem; }
 
-    table.log-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
-    table.log-table th {
-      text-align: left; font-family: var(--mono); font-size: .68rem;
-      letter-spacing: .06em; text-transform: uppercase; color: var(--t3);
-      padding: 10px 12px; border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-    table.log-table td {
-      padding: 10px 12px; border-bottom: 1px solid var(--border);
-      color: var(--t1); vertical-align: top;
-    }
-    table.log-table tr:last-child td { border-bottom: none; }
-    table.log-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .banner { border-radius: var(--r2); padding: 12px 14px; margin-bottom: 14px; font-size: .92rem; display: flex; gap: 10px; align-items: flex-start; }
+    .banner.warn { background: rgba(242,188,88,.1); border: 1px solid rgba(242,188,88,.3); color: var(--amber); }
+    .banner.bad { background: rgba(255,115,133,.1); border: 1px solid rgba(255,115,133,.3); color: var(--red); }
 
-    .event-badge {
-      display: inline-block; padding: 2px 9px; border-radius: 999px;
-      font-size: .7rem; font-weight: 600; white-space: nowrap;
-    }
-    .event-badge.login, .event-badge.email_verified, .event-badge.contact_request_accepted { background: rgba(0,255,136,.12); color: var(--green); }
-    .event-badge.login_failed, .event-badge.contact_request_rejected { background: rgba(255,59,92,.12); color: var(--red); }
-    .event-badge.register { background: rgba(0,212,255,.12); color: var(--primary); }
-    .event-badge.logout { background: rgba(255,255,255,.08); color: var(--t2); }
-    .event-badge.password_reset_requested, .event-badge.password_reset_completed { background: rgba(255,184,0,.12); color: var(--amber); }
-    .event-badge.message_sent { background: rgba(255,255,255,.06); color: var(--t2); }
-    .event-badge.message_deleted { background: rgba(255,59,92,.10); color: var(--red); }
-    .event-badge.message_received { background: rgba(0,255,136,.08); color: var(--green); }
-    .event-badge.message_restored { background: rgba(0,212,255,.10); color: var(--primary); }
-    .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
-    .status-dot.online { background: var(--green); }
-    .status-dot.offline { background: var(--t3); }
-    .event-badge.contact_request_sent { background: rgba(0,212,255,.10); color: var(--primary); }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+    .toolbar input, .toolbar select { min-height: 40px; padding: 0 12px; font-size: .92rem; background: var(--bg) !important; }
+    .toolbar input[type=search] { flex: 1 1 200px; min-width: 0; }
+    .toolbar .sp { flex: 1; }
+    .btn { cursor: pointer; display: inline-flex; align-items: center; gap: 8px; justify-content: center; padding: 9px 16px; font-size: .92rem; }
+    .btn-sm { padding: 6px 12px; font-size: .85rem; }
 
-    .pagination {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-top: 16px; font-size: .8rem; color: var(--t3); flex-wrap: wrap; gap: 10px;
-    }
-    .pagination-controls { display: flex; gap: 8px; }
+    table.t { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    table.t th { text-align: left; color: var(--t3); font-weight: 600; font-size: .8rem; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    table.t td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    table.t tr:last-child td { border-bottom: 0; }
+    table.t tbody tr.click { cursor: pointer; }
+    table.t tbody tr.click:hover { background: rgba(255,255,255,.03); }
+    .nowrap { white-space: nowrap; }
+    .desc { max-width: 380px; word-break: break-word; }
+    a.lnk, button.lnk { color: var(--primary); background: none; border: 0; padding: 0; cursor: pointer; font: inherit; text-align: left; }
+    a.lnk:hover, button.lnk:hover { text-decoration: underline; color: #fff; }
 
-    .admin-empty, .admin-loading {
-      text-align: center; padding: 40px 20px; color: var(--t3); font-size: .875rem;
-    }
-    .admin-denied {
-      max-width: 480px; margin: 80px auto; text-align: center; padding: 40px;
-    }
+    .sev { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; font-weight: 600; border-radius: 999px; padding: 2px 9px; }
+    .sev::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .sev.info { color: var(--t2); background: rgba(255,255,255,.06); }
+    .sev.warning { color: var(--amber); background: rgba(242,188,88,.12); }
+    .sev.critical { color: var(--red); background: rgba(255,115,133,.14); }
+    .pill { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin: 0 4px 4px 0; background: rgba(255,255,255,.07); color: var(--t2); }
+    .pill.on { background: rgba(111,220,174,.14); color: var(--green); } .pill.off { background: rgba(255,115,133,.14); color: var(--red); }
+    .pill.warn { background: rgba(242,188,88,.14); color: var(--amber); } .pill.acc { background: var(--primary-dim); color: var(--primary); }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--t3); margin-right: 6px; }
+    .dot.on { background: var(--green); }
 
-    /* ══════════════════════════════════════════════════════════════
-       MOBILE RESPONSIVENESS — this page had none before; the tables
-       in particular need horizontal scroll rather than squeezing.
-       ══════════════════════════════════════════════════════════════ */
-    @media (max-width: 768px) {
-      .admin-shell { padding: 20px 14px 40px; }
-      .admin-header { flex-direction: column; align-items: flex-start; }
-      .admin-header h1 { font-size: 1.25rem; }
-      .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-      .stat-card { padding: 14px; }
-      .stat-card .stat-value { font-size: 1.4rem; }
-      .panel { padding: 14px; }
-      .panel-header { flex-direction: column; align-items: flex-start; }
-      .panel-header-actions { width: 100%; }
-      .panel-header-actions .btn { flex: 1; justify-content: center; }
-      table.log-table { font-size: .75rem; }
-      table.log-table th, table.log-table td { padding: 8px; }
-      .pagination { flex-direction: column; align-items: stretch; }
-      .pagination-controls { justify-content: stretch; }
-      .pagination-controls .btn { flex: 1; }
-    }
-    @media (max-width: 480px) {
-      .stat-grid { grid-template-columns: 1fr 1fr; }
-      .event-breakdown { gap: 6px; }
-      .event-pill { font-size: .7rem; padding: 4px 10px; }
-    }
+    .pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; color: var(--t3); font-size: .85rem; }
+    .empty { text-align: center; color: var(--t3); padding: 28px 12px; }
 
-    .btn-danger-outline {
-      background: rgba(255,59,92,.08);
-      border: 1px solid rgba(255,59,92,.3);
-      color: var(--red);
-    }
-    .btn-danger-outline:hover {
-      background: rgba(255,59,92,.16);
-      border-color: rgba(255,59,92,.5);
+    .list { list-style: none; }
+    .list li { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: .92rem; align-items: flex-start; }
+    .list li:last-child { border-bottom: 0; }
+    .list .grow { flex: 1; min-width: 0; word-break: break-word; }
+    .bar { height: 8px; border-radius: 99px; background: var(--bg3); overflow: hidden; margin-top: 4px; }
+    .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
+    .check { display: flex; gap: 10px; padding: 9px 0; font-size: .92rem; align-items: flex-start; }
+    .check i { margin-top: 3px; } .check.ok i { color: var(--green); } .check.no i { color: var(--amber); }
+
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .82rem; color: var(--t2); margin-top: 8px; }
+    .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 6px; }
+    svg.chart { width: 100%; height: auto; display: block; }
+
+    /* Drawer */
+    .scrim { position: fixed; inset: 0; background: rgba(5,7,12,.65); z-index: 300; display: none; }
+    .scrim.open { display: block; }
+    .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--bg2); border-left: 1px solid var(--border2); z-index: 310; transform: translateX(100%); transition: transform .22s ease; overflow-y: auto; padding: 18px; }
+    .drawer.open { transform: none; }
+    .drawer h3 { font-size: 1.2rem; }
+    .drawer .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+    .drawer h4 { font-size: .95rem; margin: 18px 0 8px; }
+    .kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 10px; font-size: .9rem; }
+    .kv dt { color: var(--t3); } .kv dd { word-break: break-word; }
+    .kinds { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    .kinds button { border: 1px solid var(--border2); background: transparent; color: var(--t2); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: .85rem; min-height: 36px; }
+    .kinds button.active { background: var(--primary-dim); border-color: var(--primary); color: var(--primary); }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; margin-bottom: 4px; }
+    .field input, .field textarea, .field select { width: 100%; padding: 10px 12px; }
+    .field textarea { min-height: 150px; resize: vertical; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .danger { color: var(--red) !important; border-color: rgba(255,115,133,.35) !important; }
+
+    @media (max-width: 960px) { .cols { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) {
+      .shell { padding: 14px 12px 70px; }
+      .stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .stat .v { font-size: 1.5rem; }
+      table.t thead { display: none; }
+      table.t, table.t tbody, table.t tr, table.t td { display: block; width: 100%; }
+      table.t tr { border: 1px solid var(--border); border-radius: var(--r2); padding: 8px 10px; margin-bottom: 10px; }
+      table.t td { border: 0; padding: 4px 0; display: flex; gap: 10px; }
+      table.t td::before { content: attr(data-l); flex: 0 0 82px; color: var(--t3); font-size: .8rem; padding-top: 2px; }
+      .desc { max-width: none; }
+      .drawer { width: 100%; border-left: 0; top: 6vh; border-radius: 18px 18px 0 0; border-top: 1px solid var(--border2); transform: translateY(100%); }
+      .drawer.open { transform: none; }
+      .kv { grid-template-columns: 96px 1fr; }
+      .toolbar select, .toolbar input { flex: 1 1 140px; }
     }
   </style>
 </head>
 <body data-theme="dark">
-
 <div class="cyber-bg" aria-hidden="true"></div>
-<div class="grid-overlay" aria-hidden="true"></div>
 <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-<div id="deniedView" class="admin-denied" style="display:none;">
+<div id="deniedView" class="admin-denied" style="display:none;max-width:480px;margin:80px auto;padding:30px;">
   <i class="fas fa-lock" style="font-size:2rem;color:var(--red);margin-bottom:16px;display:block;"></i>
   <h2 style="margin-bottom:10px;">Admin access required</h2>
   <p style="color:var(--t2);margin-bottom:20px;">This account doesn't have admin privileges.</p>
-  <a href="dashboard.html" class="btn btn-primary">Back to Dashboard</a>
+  <a href="dashboard.html" class="btn btn-primary">Back to dashboard</a>
 </div>
 
-<div id="adminView" class="admin-shell" style="display:none;">
-  <div class="admin-header">
-    <h1><i class="fas fa-shield-halved"></i> Admin Dashboard</h1>
-    <a href="dashboard.html" class="admin-back"><i class="fas fa-arrow-left"></i> Back to Dashboard</a>
-  </div>
-
-  <div class="stat-grid" id="statGrid">
-    <div class="admin-loading">Loading stats…</div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-header">
-      <h2><i class="fas fa-chart-simple" style="color:var(--primary);"></i> Event breakdown</h2>
-      <div class="panel-header-actions">
-        <button class="btn btn-ghost btn-sm" id="refreshBtn"><i class="fas fa-rotate"></i> Refresh</button>
-      </div>
-    </div>
-    <div class="event-breakdown" id="eventBreakdown"></div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-header">
-      <h2><i class="fas fa-users" style="color:var(--primary);"></i> Users</h2>
-    </div>
-    <div style="overflow-x:auto;">
-      <table class="log-table" id="usersTable">
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Email</th>
-            <th>Status</th>
-            <th>Verified</th>
-            <th>Last Login</th>
-            <th>Last IP</th>
-            <th>Location</th>
-            <th>Device</th>
-          </tr>
-        </thead>
-        <tbody id="usersTableBody">
-          <tr><td colspan="8" class="admin-loading">Loading users…</td></tr>
-        </tbody>
-      </table>
+<div id="app" class="shell" style="display:none;">
+  <div class="topbar">
+    <h1><i class="fas fa-shield-halved"></i> Admin console</h1>
+    <div class="row">
+      <button class="btn btn-ghost btn-sm" id="refreshBtn"><i class="fas fa-rotate"></i> Refresh</button>
+      <a class="back btn btn-ghost btn-sm" href="dashboard.html"><i class="fas fa-arrow-left"></i> Dashboard</a>
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-header">
-      <h2><i class="fas fa-list-ul" style="color:var(--primary);"></i> Activity Log</h2>
-      <div class="panel-header-actions">
-        <!-- ── Clear Logs — irreversible, admin-only, requires confirmation ── -->
-        <button class="btn btn-sm btn-danger-outline" id="clearLogsBtn">
-          <i class="fas fa-trash"></i> Clear Logs
-        </button>
-      </div>
-    </div>
-    <div style="overflow-x:auto;">
-      <table class="log-table" id="logTable">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>User</th>
-            <th>Event</th>
-            <th>Description</th>
-            <th>IP Address</th>
-            <th>Location</th>
-            <th>Device</th>
-          </tr>
-        </thead>
-        <tbody id="logTableBody">
-          <tr><td colspan="7" class="admin-loading">Loading activity…</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="pagination">
-      <span id="pageInfo">—</span>
-      <div class="pagination-controls">
-        <button class="btn btn-ghost btn-sm" id="prevPageBtn"><i class="fas fa-chevron-left"></i> Prev</button>
-        <button class="btn btn-ghost btn-sm" id="nextPageBtn">Next <i class="fas fa-chevron-right"></i></button>
-      </div>
-    </div>
-  </div>
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab active" data-tab="overview" role="tab"><i class="fas fa-gauge-high"></i> Overview</button>
+    <button class="tab" data-tab="audit" role="tab"><i class="fas fa-clipboard-list"></i> Audit log</button>
+    <button class="tab" data-tab="security" role="tab"><i class="fas fa-user-shield"></i> Security <span class="count" id="secCount" hidden></span></button>
+    <button class="tab" data-tab="users" role="tab"><i class="fas fa-users"></i> Users</button>
+    <button class="tab" data-tab="emails" role="tab"><i class="fas fa-envelope"></i> Email</button>
+  </nav>
+
+  <section id="p-overview"></section>
+  <section id="p-audit" hidden></section>
+  <section id="p-security" hidden></section>
+  <section id="p-users" hidden></section>
+  <section id="p-emails" hidden></section>
 </div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="User details"></aside>
 
 <script src="js/ui.js"></script>
 <script src="js/api.js"></script>
 <script>
 (function () {
   'use strict';
+  const API = '/api/admin/console';
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const esc = v => { const d = document.createElement('div'); d.textContent = String(v ?? ''); return d.innerHTML; };
+  const get = p => window.GhostChatAPI._get(API + p);
+  const post = (p, b) => window.GhostChatAPI._post(API + p, b);
+  const toast = (m, t = 'info') => window.UI?.showToast ? UI.showToast(m, t) : alert(m);
+  const num = n => (n ?? 0).toLocaleString();
+  const fmt = iso => iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+  function ago(iso) {
+    if (!iso) return 'never';
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+    if (s < 86400 * 30) return Math.floor(s / 86400) + ' d ago';
+    return fmt(iso);
+  }
+  const sev = s => `<span class="sev ${esc(s)}">${esc(s)}</span>`;
+  let catalogue = {};
+  const loaded = {};
 
-  const PAGE_SIZE = 50;
-  let offset = 0;
-  let total = 0;
-  let activeEventType = '';
+  /* ── tabs ───────────────────────────────────────────── */
+  function show(tab) {
+    $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    ['overview', 'audit', 'security', 'users', 'emails'].forEach(t => $('#p-' + t).hidden = t !== tab);
+    if (!loaded[tab]) { loaded[tab] = true; ({ overview, audit, security, users, emails })[tab](); }
+    try { history.replaceState(null, '', '#' + tab); } catch (_) {}
+  }
+  $('#tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) show(b.dataset.tab); });
+  $('#refreshBtn').addEventListener('click', () => { const t = $('.tab.active').dataset.tab; loaded[t] = false; show(t); });
 
-  const EVENT_LABELS = {
-    login: 'Login', login_failed: 'Login failed', logout: 'Logout',
-    register: 'Registered', email_verified: 'Email verified',
-    message_deleted: 'Message deleted', message_received: 'Message received',
-    message_restored: 'Delete undone',
-    password_reset_requested: 'Reset requested', password_reset_completed: 'Reset completed',
-    contact_request_sent: 'Request sent', contact_request_accepted: 'Request accepted',
-    contact_request_rejected: 'Request declined', message_sent: 'Message sent',
+  /* ── overview ───────────────────────────────────────── */
+  async function overview() {
+    const el = $('#p-overview'); el.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await get('/overview'); const t = d.totals;
+    const stat = (l, v, s, cls = '', go = '') => `<${go ? 'button' : 'div'} class="stat ${cls}" ${go ? `data-go="${go}"` : ''}><div class="l">${l}</div><div class="v">${num(v)}</div><div class="s">${s}</div></${go ? 'button' : 'div'}>`;
+    el.innerHTML = `
+      ${d.email_configured ? '' : '<div class="banner warn"><i class="fas fa-triangle-exclamation"></i><div><b>Email is not set up.</b> Warnings, guides and 2FA codes cannot reach users until you add RESEND_API_KEY and MAIL_FROM (or SMTP settings) on the server.</div></div>'}
+      <div class="grid stats">
+        ${stat('Total users', t.users, `${num(t.verified)} verified · ${num(t.unverified)} not yet`, '', 'users:all')}
+        ${stat('Online now', t.online_now, 'active in the last 5 minutes', 'good', 'users:online')}
+        ${stat('Active today', t.active_24h, `${num(t.active_7d)} in the last 7 days`)}
+        ${stat('New users', t.new_24h, `${num(t.new_7d)} this week`, '', 'users:new7d')}
+        ${stat('Sign-ins today', t.logins_24h, 'successful', '', 'audit:login')}
+        ${stat('Failed sign-ins', t.failed_logins_24h, 'last 24 hours', t.failed_logins_24h ? 'warn' : '', 'audit:login_failed')}
+        ${stat('Critical events', t.critical_24h, 'last 24 hours', t.critical_24h ? 'bad' : 'good', 'audit:critical')}
+        ${stat('Messages today', t.messages_24h, `${num(t.messages_total)} in total (content is never read)`)}
+        ${stat('Disabled accounts', t.disabled, `${num(t.admins)} admin(s)`, t.disabled ? 'warn' : '', 'users:disabled')}
+        ${stat('With 2FA', t.two_factor, `of ${num(t.users)} users`, '', 'users:no2fa')}
+        ${stat('Emails sent', t.emails_sent, 'by admins')}
+      </div>
+      <div class="grid cols">
+        <div class="card"><h2>Last 14 days <small>days are in UTC</small></h2>${chart(d.trend)}</div>
+        <div class="card"><h2>Where users are</h2>${countries(d.countries)}</div>
+      </div>
+      <div class="card"><h2>Needs attention <small>warnings and critical events, last 7 days</small>
+        <button class="btn btn-ghost btn-sm" data-go="audit:warning">Open audit log</button></h2>
+        ${d.attention.length ? `<ul class="list">${d.attention.map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b> ${e.username ? '· ' + esc(e.username) : ''}<div class="muted">${esc(e.description)}</div><div class="faint">${esc(ago(e.time))} · ${esc(e.ip || '')} ${e.location ? '· ' + esc(e.location) : ''}</div></div></li>`).join('')}</ul>` : '<div class="empty">Nothing needs attention.</div>'}
+      </div>`;
+    const crit = d.totals.critical_24h + d.totals.failed_logins_24h;
+    const c = $('#secCount'); c.hidden = !d.totals.critical_24h; c.textContent = d.totals.critical_24h;
+  }
+  function chart(tr) {
+    const W = 600, H = 170, P = 24, n = tr.days.length;
+    const series = [['login', 'Sign-ins', 'var(--primary)'], ['login_failed', 'Failed', 'var(--red)'], ['register', 'New accounts', 'var(--green)'], ['message_sent', 'Messages', 'var(--amber)']];
+    const max = Math.max(1, ...series.flatMap(([k]) => tr[k]));
+    const x = i => P + i * (W - P * 2) / (n - 1), y = v => H - P - (v / max) * (H - P * 2);
+    const lines = series.map(([k, , c]) => `<polyline fill="none" stroke="${c}" stroke-width="2.2" stroke-linejoin="round" points="${tr[k].map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"/>`).join('');
+    const ticks = [0, Math.floor(n / 2), n - 1].map(i => `<text x="${x(i)}" y="${H - 5}" fill="var(--t3)" font-size="11" text-anchor="middle">${esc(tr.days[i].slice(5))}</text>`).join('');
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Activity over the last 14 days">
+      <line x1="${P}" y1="${H - P}" x2="${W - P}" y2="${H - P}" stroke="var(--border2)"/><text x="${P - 6}" y="${P}" fill="var(--t3)" font-size="11" text-anchor="end">${max}</text>${lines}${ticks}</svg>
+      <div class="legend">${series.map(([, l, c]) => `<span style="--c:${c}">${l}</span>`).join('')}</div>`;
+  }
+  function countries(list) {
+    if (!list.length) return '<div class="empty">No locations yet. They appear after users sign in.</div>';
+    const m = Math.max(...list.map(c => c.users));
+    return `<ul class="list">${list.map(c => `<li><div class="grow">${esc(c.country)}<div class="bar"><i style="width:${(c.users / m * 100).toFixed(0)}%"></i></div></div><b>${num(c.users)}</b></li>`).join('')}</ul>`;
+  }
+
+  /* ── audit log ──────────────────────────────────────── */
+  const A = { offset: 0, limit: 50, total: 0, f: { q: '', severity: '', category: '', event_type: '', hours: '', ip: '', user_id: '' } };
+  function auditShell() {
+    $('#p-audit').innerHTML = `
+      <div class="card">
+        <div class="toolbar">
+          <input type="search" id="aq" placeholder="Search user, IP, place, device or text" aria-label="Search the audit log" />
+          <select id="asev" aria-label="Severity"><option value="">Any severity</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select>
+          <select id="acat" aria-label="Category"><option value="">All categories</option><option value="auth">Sign-in</option><option value="security">Security</option><option value="account">Account</option><option value="chat">Chat</option><option value="admin">Admin actions</option><option value="system">System</option></select>
+          <select id="aev" aria-label="Event"><option value="">Any event</option></select>
+          <select id="ahrs" aria-label="Time"><option value="">All time</option><option value="1">Last hour</option><option value="24">Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option></select>
+        </div>
+        <div class="toolbar" id="achips"></div>
+        <div class="toolbar"><span class="faint" id="atotal"></span><span class="sp"></span>
+          <a class="btn btn-ghost btn-sm" id="acsv" href="#"><i class="fas fa-file-csv"></i> Export CSV</a>
+          <button class="btn btn-ghost btn-sm danger" id="apurge"><i class="fas fa-broom"></i> Purge old entries</button></div>
+        <div id="abody"></div>
+        <div class="pager"><span id="apage"></span><div class="row"><button class="btn btn-ghost btn-sm" id="aprev">Previous</button><button class="btn btn-ghost btn-sm" id="anext">Next</button></div></div>
+      </div>`;
+    let t; $('#aq').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { A.f.q = e.target.value; auditLoad(0); }, 350); });
+    [['asev', 'severity'], ['acat', 'category'], ['aev', 'event_type'], ['ahrs', 'hours']].forEach(([id, k]) => $('#' + id).addEventListener('change', e => { A.f[k] = e.target.value; auditLoad(0); }));
+    $('#aprev').onclick = () => auditLoad(Math.max(0, A.offset - A.limit)); $('#anext').onclick = () => auditLoad(A.offset + A.limit);
+    $('#acsv').onclick = e => { e.preventDefault(); window.location.href = API + '/audit.csv?' + qs(A.f); };
+    $('#apurge').onclick = async () => {
+      const d = prompt('Delete audit entries older than how many days? (30 or more). This cannot be undone, and the purge itself is recorded.', '365');
+      if (!d) return;
+      try { const r = await post('/audit/purge', { days: parseInt(d, 10), confirm: true }); toast(`Purged ${r.purged} entries`, 'success'); auditLoad(0); } catch (e) { toast(e.message, 'error'); }
+    };
+  }
+  const qs = f => new URLSearchParams(Object.entries(f).filter(([, v]) => v !== '' && v != null)).toString();
+  async function audit() { auditShell(); await auditLoad(0); }
+  async function auditLoad(off) {
+    A.offset = off;
+    const body = $('#abody'); body.innerHTML = '<div class="empty">Loading…</div>';
+    let d;
+    try { d = await get(`/audit?limit=${A.limit}&offset=${off}&${qs(A.f)}`); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    catalogue = d.catalogue; A.total = d.total;
+    const sel = $('#aev'); if (sel.options.length < 2) Object.entries(catalogue).sort((a, b) => a[1].label.localeCompare(b[1].label)).forEach(([k, v]) => sel.add(new Option(v.label, k)));
+    sel.value = A.f.event_type; $('#asev').value = A.f.severity; $('#acat').value = A.f.category; $('#ahrs').value = A.f.hours; $('#aq').value = A.f.q;
+    $('#achips').innerHTML = ['ip', 'user_id'].filter(k => A.f[k]).map(k => `<span class="pill acc">${k === 'ip' ? 'IP ' + esc(A.f.ip) : 'One user'} <button class="lnk" data-clear="${k}" aria-label="Remove filter">✕</button></span>`).join('');
+    $('#atotal').textContent = `${num(d.total)} events`;
+    body.innerHTML = d.events.length ? `<table class="t"><thead><tr><th>Time</th><th>Severity</th><th>Event</th><th>User</th><th>Details</th><th>IP</th><th>Place</th><th>Device</th></tr></thead><tbody>${d.events.map(e => `
+      <tr><td data-l="Time" class="nowrap">${esc(fmt(e.time))}</td><td data-l="Severity">${sev(e.severity)}</td><td data-l="Event"><b>${esc(e.label)}</b></td>
+      <td data-l="User">${e.user_id ? `<button class="lnk" data-user="${esc(e.user_id)}">${esc(e.username || 'user')}</button>` : '<span class="faint">unknown</span>'}</td>
+      <td data-l="Details" class="desc">${esc(e.description)}</td>
+      <td data-l="IP">${e.ip ? `<button class="lnk" data-ip="${esc(e.ip)}">${esc(e.ip)}</button>` : ''}</td><td data-l="Place">${esc(e.location || '')}</td><td data-l="Device">${esc(e.device || '')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No events match these filters.</div>';
+    $('#apage').textContent = d.total ? `${off + 1}–${Math.min(off + A.limit, d.total)} of ${num(d.total)}` : '';
+    $('#aprev').disabled = off === 0; $('#anext').disabled = off + A.limit >= d.total;
+  }
+  function gotoAudit(filters) {
+    A.f = { q: '', severity: '', category: '', event_type: '', hours: '', ip: '', user_id: '' };
+    if (filters.critical) { A.f.severity = 'critical'; } else if (filters.warning) { A.f.severity = 'warning'; } else Object.assign(A.f, filters);
+    closeDrawer(); loaded.audit = true; show('audit'); if ($('#abody')) { auditLoad(0); } else audit();
+  }
+
+  /* ── security ───────────────────────────────────────── */
+  async function security() {
+    const el = $('#p-security'); el.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await get('/security');
+    const evList = (rows, empty) => rows.length ? `<ul class="list">${rows.map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b>${e.username ? ' · <button class="lnk" data-user="' + esc(e.user_id) + '">' + esc(e.username) + '</button>' : ''}<div class="muted">${esc(e.description)}</div><div class="faint">${esc(fmt(e.time))} · ${e.ip ? `<button class="lnk" data-ip="${esc(e.ip)}">${esc(e.ip)}</button>` : ''} ${esc(e.location || '')}</div></div></li>`).join('')}</ul>` : `<div class="empty">${empty}</div>`;
+    el.innerHTML = `
+      <div class="card"><h2>Security checklist</h2>${d.checks.map(c => `<div class="check ${c.ok ? 'ok' : 'no'}"><i class="fas ${c.ok ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i><div>${esc(c.text)}</div></div>`).join('')}
+        <div class="row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" id="diagBtn"><i class="fas fa-stethoscope"></i> Check how visitor IPs are read</button></div><div id="diagOut" class="faint" style="margin-top:8px"></div></div>
+      <div class="grid cols">
+        <div class="card"><h2>Failed sign-ins by IP <small>${num(d.failed_24h)} in the last 24 hours</small></h2>
+          ${d.top_ips.length ? `<table class="t"><thead><tr><th>IP</th><th>Place</th><th>Attempts</th><th>Names tried</th><th>Last</th></tr></thead><tbody>${d.top_ips.map(i => `<tr><td data-l="IP"><button class="lnk" data-ip="${esc(i.ip)}">${esc(i.ip)}</button></td><td data-l="Place">${esc(i.location || '')}</td><td data-l="Attempts"><b>${i.count}</b></td><td data-l="Tried">${i.tried.map(esc).join(', ')}</td><td data-l="Last" class="nowrap">${esc(ago(i.last))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No failed sign-ins in the last 24 hours.</div>'}</div>
+        <div class="card"><h2>Most targeted names</h2>${d.top_targets.length ? `<ul class="list">${d.top_targets.map(t => `<li><div class="grow">${esc(t.name)}</div><b>${t.count}</b></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}</div>
+      </div>
+      <div class="grid cols">
+        <div class="card"><h2>Brute-force alerts <small>last 7 days</small></h2>${evList(d.brute_force, 'None.')}</div>
+        <div class="card"><h2>Admin access denied <small>last 7 days</small></h2>${evList(d.admin_denied, 'No one tried to open the admin console without permission.')}</div>
+      </div>
+      <div class="grid cols">
+        <div class="card"><h2>Blocked sign-ins and wrong 2FA codes</h2>${evList(d.blocked_logins, 'None.')}</div>
+        <div class="card"><h2>Rate limits and CSRF failures</h2>${evList(d.rate_limited, 'None.')}</div>
+      </div>
+      <div class="card"><h2>Sensitive changes <small>last 30 days</small></h2>${evList(d.changes, 'None.')}</div>
+      <div class="grid cols">
+        <div class="card"><h2>Admin accounts</h2><ul class="list">${d.admins.map(a => `<li><div class="grow"><b>${esc(a.username)}</b> ${a.two_factor ? '<span class="pill on">2FA on</span>' : '<span class="pill warn">2FA off</span>'}<div class="faint">${esc(a.email)} · last sign-in ${esc(ago(a.last_login))} from ${esc(a.last_ip || '?')} ${esc(a.location || '')}</div></div></li>`).join('')}</ul></div>
+        <div class="card"><h2>Disabled accounts</h2>${d.disabled_accounts.length ? `<ul class="list">${d.disabled_accounts.map(u => `<li><div class="grow"><button class="lnk" data-user="${esc(u.id)}">${esc(u.username)}</button><div class="faint">${esc(u.email)}</div></div></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}</div>
+      </div>`;
+    $('#diagBtn').onclick = async () => {
+      const r = await get('/diagnostics/ip');
+      $('#diagOut').innerHTML = `Your request reached the server with <b>X-Forwarded-For: ${esc(r.x_forwarded_for || '(none)')}</b>. It is recorded as <b>${esc(r.derived_ip)}</b> (TRUSTED_PROXY_HOPS = ${esc(r.trusted_proxy_hops)}). If that is not your real public IP, or it is the same for everyone, change TRUSTED_PROXY_HOPS and check again. Open <b>whatismyip</b> on this device to compare.`;
+    };
+  }
+
+  /* ── users ──────────────────────────────────────────── */
+  const U = { q: '', status: 'all', sort: 'created', offset: 0, limit: 50 };
+  async function users() {
+    $('#p-users').innerHTML = `<div class="card">
+      <div class="toolbar"><input type="search" id="uq" placeholder="Search name, email, IP or place" aria-label="Search users" />
+        <select id="ust" aria-label="Filter"><option value="all">Everyone</option><option value="online">Online now</option><option value="new7d">New this week</option><option value="unverified">Not verified</option><option value="no2fa">Without 2FA</option><option value="disabled">Disabled</option><option value="admin">Admins</option></select>
+        <select id="uso" aria-label="Sort"><option value="created">Newest</option><option value="seen">Last seen</option><option value="login">Last sign-in</option><option value="name">Name</option></select></div>
+      <div class="toolbar"><span class="faint" id="utotal"></span></div><div id="ubody"></div>
+      <div class="pager"><span id="upage"></span><div class="row"><button class="btn btn-ghost btn-sm" id="uprev">Previous</button><button class="btn btn-ghost btn-sm" id="unext">Next</button></div></div></div>`;
+    let t; $('#uq').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { U.q = e.target.value; usersLoad(0); }, 350); });
+    $('#ust').onchange = e => { U.status = e.target.value; usersLoad(0); }; $('#uso').onchange = e => { U.sort = e.target.value; usersLoad(0); };
+    $('#uprev').onclick = () => usersLoad(Math.max(0, U.offset - U.limit)); $('#unext').onclick = () => usersLoad(U.offset + U.limit);
+    await usersLoad(0);
+  }
+  async function usersLoad(off) {
+    U.offset = off; const b = $('#ubody'); b.innerHTML = '<div class="empty">Loading…</div>';
+    const d = await get(`/users?${qs({ q: U.q, status: U.status, sort: U.sort, limit: U.limit, offset: off })}`);
+    $('#ust').value = U.status; $('#uso').value = U.sort; $('#uq').value = U.q;
+    $('#utotal').textContent = `${num(d.total)} users`;
+    b.innerHTML = d.users.length ? `<table class="t"><thead><tr><th>User</th><th>Status</th><th>Last seen</th><th>Last sign-in</th><th>Place / IP</th><th>Device</th><th>Msgs</th><th>Failed (7d)</th></tr></thead><tbody>${d.users.map(u => `
+      <tr class="click" data-user="${esc(u.id)}"><td data-l="User"><b>${esc(u.username)}</b><div class="faint">${esc(u.email)}</div></td>
+      <td data-l="Status">${u.online ? '<span class="pill on">online</span>' : ''}${u.is_active ? '' : '<span class="pill off">disabled</span>'}${u.is_verified ? '' : '<span class="pill warn">unverified</span>'}${u.is_admin ? '<span class="pill acc">admin</span>' : ''}${u.two_factor ? '<span class="pill">2FA</span>' : ''}</td>
+      <td data-l="Seen" class="nowrap">${esc(ago(u.last_seen))}</td><td data-l="Sign-in" class="nowrap">${esc(ago(u.last_login))}</td>
+      <td data-l="Place">${esc(u.location || '—')}<div class="faint">${esc(u.last_ip || '')}</div></td><td data-l="Device">${esc(u.device || '—')}</td>
+      <td data-l="Msgs">${num(u.messages_sent)}</td><td data-l="Failed">${u.failed_logins_7d ? `<b style="color:var(--amber)">${u.failed_logins_7d}</b>` : '0'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No users match.</div>';
+    $('#upage').textContent = d.total ? `${off + 1}–${Math.min(off + U.limit, d.total)} of ${num(d.total)}` : '';
+    $('#uprev').disabled = off === 0; $('#unext').disabled = off + U.limit >= d.total;
+  }
+
+  /* ── user drawer ────────────────────────────────────── */
+  const TEMPLATES = {
+    guide: ['Getting the most from GhostChat', 'Here are three quick tips:\n\n1. Open a chat and tap the key button to see how your messages are protected. Automatic mode needs nothing from you.\n2. Turn on two-factor sign-in in Profile so a stolen password is not enough.\n3. Messages show as emojis until you tap the decrypt button, so people looking over your shoulder see nothing.\n\nReply to this person if anything is unclear.'],
+    notice: ['An update about GhostChat', 'Hello {{username}},\n\nWe are letting you know about a change to the service.\n\n[write the details here]\n\nThank you for using GhostChat.'],
+    warning: ['Unusual activity on your account', 'Hello {{username}},\n\nWe noticed activity on your account that looks unusual.\n\n[describe what you saw]\n\nIf this was you, no action is needed. If it was not, change your password now and turn on two-factor sign-in.'],
+    security: ['Please secure your account', 'Hello {{username}},\n\nFor your safety, please change your password and turn on two-factor sign-in in your profile.\n\nWe will never ask for your password or your encryption keys by email.'],
+    custom: ['', ''],
   };
-
-  function fmtTime(iso) {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  let drawerUser = null;
+  const closeDrawer = () => { $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open'); drawerUser = null; };
+  $('#scrim').onclick = closeDrawer;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  async function openUser(id) {
+    const dr = $('#drawer'); dr.innerHTML = '<div class="empty">Loading…</div>'; dr.classList.add('open'); $('#scrim').classList.add('open');
+    let d; try { d = await get('/users/' + encodeURIComponent(id)); } catch (e) { dr.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    const u = d.user; drawerUser = u;
+    dr.innerHTML = `
+      <div class="head"><div><h3>${esc(u.username)}</h3><div class="muted">${esc(u.email)}</div>
+        <div style="margin-top:6px">${u.online ? '<span class="pill on">online</span>' : '<span class="pill">offline</span>'}${u.is_active ? '' : '<span class="pill off">disabled</span>'}${u.is_verified ? '' : '<span class="pill warn">unverified</span>'}${u.is_admin ? '<span class="pill acc">admin</span>' : ''}${u.two_factor ? '<span class="pill on">2FA</span>' : '<span class="pill warn">no 2FA</span>'}</div></div>
+        <button class="btn btn-ghost btn-sm" id="dClose" aria-label="Close"><i class="fas fa-xmark"></i></button></div>
+      <dl class="kv"><dt>Joined</dt><dd>${esc(fmt(u.created_at))}</dd><dt>Last seen</dt><dd>${esc(ago(u.last_seen))}</dd><dt>Last sign-in</dt><dd>${esc(fmt(u.last_login))}</dd>
+        <dt>From</dt><dd>${esc(u.location || '—')} · ${esc(u.last_ip || '—')}</dd><dt>Device</dt><dd>${esc(u.device || '—')}</dd>
+        <dt>Activity</dt><dd>${num(u.messages_sent)} sent · ${num(u.messages_received)} received · ${num(u.contacts)} contacts</dd><dt>Failed sign-ins</dt><dd>${u.failed_logins_7d} in the last 7 days</dd></dl>
+      <div class="row" style="margin-top:12px"><button class="btn btn-ghost btn-sm" data-act="all-events"><i class="fas fa-clipboard-list"></i> All activity</button>
+        ${u.is_admin ? '' : (u.is_active ? '<button class="btn btn-ghost btn-sm danger" data-act="disable"><i class="fas fa-ban"></i> Disable account</button>' : '<button class="btn btn-primary btn-sm" data-act="enable"><i class="fas fa-rotate-left"></i> Re-enable account</button>')}</div>
+      <h4>Send an email</h4>
+      <div class="kinds" id="dKinds">${[['guide', 'Guide'], ['notice', 'Notice'], ['warning', 'Warning'], ['security', 'Security alert'], ['custom', 'Write my own']].map(([k, l], i) => `<button data-kind="${k}" class="${i === 0 ? 'active' : ''}">${l}</button>`).join('')}</div>
+      <div class="field"><label for="dSub">Subject</label><input id="dSub" type="text" maxlength="120" /></div>
+      <div class="field"><label for="dMsg">Message <span class="faint">(use {{username}} to insert their name)</span></label><textarea id="dMsg" maxlength="5000"></textarea></div>
+      <button class="btn btn-primary" id="dSend"><i class="fas fa-paper-plane"></i> Send to ${esc(u.email)}</button>
+      <h4>Recent activity</h4>
+      ${d.events.length ? `<ul class="list">${d.events.slice(0, 20).map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b><div class="muted">${esc(e.description)}</div><div class="faint">${esc(fmt(e.time))} · ${esc(e.ip || '')} ${esc(e.location || '')}</div></div></li>`).join('')}</ul>` : '<div class="empty">No activity recorded.</div>'}
+      <h4>Where they sign in from</h4>${d.ips.length ? `<ul class="list">${d.ips.map(i => `<li><div class="grow"><button class="lnk" data-ip="${esc(i.ip)}">${esc(i.ip)}</button> · ${esc(i.location || '')}<div class="faint">${i.count} events · last ${esc(ago(i.last))}</div></div></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}
+      <h4>Devices</h4>${d.devices.length ? `<ul class="list">${d.devices.map(v => `<li><div class="grow">${esc(v.device)}</div><span class="faint">${v.count}</span></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}
+      <h4>Emails you sent them</h4>${d.emails.length ? `<ul class="list">${d.emails.map(m => `<li><div class="grow"><b>${esc(m.subject)}</b><div class="faint">${esc(m.kind)} · ${esc(fmt(m.time))} · ${esc(m.status)}</div></div></li>`).join('')}</ul>` : '<div class="empty">None yet.</div>'}`;
+    setKind('guide');
+    $('#dClose').onclick = closeDrawer;
+    $('#dKinds').onclick = e => { const b = e.target.closest('button'); if (b) setKind(b.dataset.kind); };
+    $('#dSend').onclick = async () => {
+      const btn = $('#dSend'); btn.disabled = true;
+      try { await post(`/users/${u.id}/email`, { kind: $('#dKinds .active').dataset.kind, subject: $('#dSub').value, message: $('#dMsg').value }); toast('Email sent', 'success'); openUser(u.id); }
+      catch (e) { toast(e.message, 'error'); btn.disabled = false; }
+    };
+    dr.onclick = async e => {
+      const a = e.target.closest('[data-act]'); if (!a) return;
+      if (a.dataset.act === 'all-events') return gotoAudit({ user_id: u.id });
+      const active = a.dataset.act === 'enable'; let reason = '';
+      if (!active) { reason = prompt(`Why disable ${u.username}? This reason is kept in the audit log.`); if (!reason) return; }
+      const notify = confirm(`Also email ${u.username} to let them know?`);
+      try { await post(`/users/${u.id}/status`, { active, reason, notify }); toast(active ? 'Account re-enabled' : 'Account disabled', 'success'); loaded.users = false; loaded.security = false; openUser(u.id); } catch (er) { toast(er.message, 'error'); }
+    };
+  }
+  function setKind(k) {
+    $$('#dKinds button').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
+    $('#dSub').value = TEMPLATES[k][0]; $('#dMsg').value = TEMPLATES[k][1];
   }
 
-  function esc(str) {
-    const d = document.createElement('div');
-    d.textContent = String(str ?? '');
-    return d.innerHTML;
+  /* ── email tab: broadcast + history ─────────────────── */
+  async function emails() {
+    const el = $('#p-emails'); el.innerHTML = '<div class="empty">Loading…</div>';
+    const [d] = await Promise.all([get('/emails?limit=50')]);
+    el.innerHTML = `
+      <div class="grid cols">
+        <div class="card"><h2>Send to many people</h2>
+          <div class="field"><label for="bAud">Who should get it?</label><select id="bAud"><option value="all_verified">All verified users</option><option value="active_7d">Active in the last 7 days</option><option value="no2fa">Users without 2FA</option></select><div class="faint" id="bCount"></div></div>
+          <div class="kinds" id="bKinds">${[['notice', 'Notice'], ['guide', 'Guide'], ['warning', 'Warning'], ['security', 'Security alert']].map(([k, l], i) => `<button data-kind="${k}" class="${i === 0 ? 'active' : ''}">${l}</button>`).join('')}</div>
+          <div class="field"><label for="bSub">Subject</label><input id="bSub" type="text" maxlength="120" /></div>
+          <div class="field"><label for="bMsg">Message <span class="faint">({{username}} becomes each person's name)</span></label><textarea id="bMsg" maxlength="5000"></textarea></div>
+          <label class="row" style="align-items:center;margin-bottom:10px"><input type="checkbox" id="bOk" /> <span>I checked the message and who will receive it</span></label>
+          <button class="btn btn-primary" id="bSend"><i class="fas fa-paper-plane"></i> Send</button>
+          <div class="faint" style="margin-top:8px">Sent in the background, up to 300 people, 5 broadcasts an hour. Every email is listed on the right.</div></div>
+        <div class="card"><h2>Sent emails <small>${num(d.total)} in total</small></h2>
+          ${d.emails.length ? `<ul class="list">${d.emails.map(m => `<li><span class="pill ${m.status === 'sent' ? 'on' : 'off'}">${esc(m.status)}</span><div class="grow"><b>${esc(m.subject)}</b><div class="faint">${esc(m.kind)} · to ${esc(m.user || m.to)} · by ${esc(m.admin || '?')} · ${esc(fmt(m.time))}</div></div></li>`).join('')}</ul>` : '<div class="empty">No emails sent yet. Open a user to send one.</div>'}</div>
+      </div>`;
+    const set = k => { $$('#bKinds button').forEach(b => b.classList.toggle('active', b.dataset.kind === k)); $('#bSub').value = TEMPLATES[k][0]; $('#bMsg').value = TEMPLATES[k][1]; };
+    set('notice'); $('#bKinds').onclick = e => { const b = e.target.closest('button'); if (b) set(b.dataset.kind); };
+    const count = async () => { try { const r = await post('/email/broadcast', { audience: $('#bAud').value, dry_run: true }); $('#bCount').textContent = `${r.count} people will receive it`; } catch (_) {} };
+    $('#bAud').onchange = count; count();
+    $('#bSend').onclick = async () => {
+      if (!$('#bOk').checked) return toast('Tick the box to confirm first', 'info');
+      const btn = $('#bSend'); btn.disabled = true;
+      try { const r = await post('/email/broadcast', { audience: $('#bAud').value, kind: $('#bKinds .active').dataset.kind, subject: $('#bSub').value, message: $('#bMsg').value, confirm: true }); toast(`Sending to ${r.queued} people`, 'success'); setTimeout(() => { loaded.emails = false; show('emails'); }, 4000); }
+      catch (e) { toast(e.message, 'error'); } btn.disabled = false;
+    };
   }
 
+  /* ── global click handlers ──────────────────────────── */
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-go]');
+    if (go) { const [t, v] = go.dataset.go.split(':'); if (t === 'audit') return gotoAudit(v === 'critical' ? { critical: 1 } : v === 'warning' ? { warning: 1 } : { event_type: v }); if (t === 'users') { U.status = v; U.offset = 0; loaded.users = false; return show('users'); } }
+    const clr = e.target.closest('[data-clear]'); if (clr) { A.f[clr.dataset.clear] = ''; return auditLoad(0); }
+    const ip = e.target.closest('[data-ip]'); if (ip) return gotoAudit({ ip: ip.dataset.ip });
+    const us = e.target.closest('[data-user]'); if (us) return openUser(us.dataset.user);
+  });
+
+  /* ── start ──────────────────────────────────────────── */
   async function init() {
-    try {
-      const profile = await window.GhostChatAPI.getProfile();
-      if (!profile?.user?.is_admin) {
-        document.getElementById('deniedView').style.display = 'block';
-        return;
-      }
-    } catch (_) {
-      document.getElementById('deniedView').style.display = 'block';
-      return;
-    }
-    document.getElementById('adminView').style.display = 'block';
-    await Promise.all([loadStats(), loadLogs(), loadUsers()]);
+    try { const p = await window.GhostChatAPI.getProfile(); if (!p?.user?.is_admin) throw new Error('no'); }
+    catch (_) { $('#deniedView').style.display = 'block'; return; }
+    $('#app').style.display = 'block';
+    const start = (location.hash || '#overview').slice(1);
+    show(['overview', 'audit', 'security', 'users', 'emails'].includes(start) ? start : 'overview');
+    get('/overview').then(d => { const c = $('#secCount'); c.hidden = !d.totals.critical_24h; c.textContent = d.totals.critical_24h; }).catch(() => {});
   }
-
-  async function loadUsers() {
-    const tbody = document.getElementById('usersTableBody');
-    try {
-      const data = await window.GhostChatAPI._get('/api/admin/users?limit=200');
-      renderUsers(data.users || []);
-    } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="8" class="admin-empty">Failed to load users: ${esc(err.message || 'unknown error')}</td></tr>`;
-    }
-  }
-
-  function renderUsers(users) {
-    const tbody = document.getElementById('usersTableBody');
-    if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="admin-empty">No users yet</td></tr>';
-      return;
-    }
-    tbody.innerHTML = users.map(u => `
-      <tr>
-        <td>${esc(u.username)}${u.is_admin ? ' <i class="fas fa-shield-halved" style="color:var(--primary);" title="Admin"></i>' : ''}</td>
-        <td>${esc(u.email)}</td>
-        <td><span class="status-dot ${u.is_online ? 'online' : 'offline'}"></span>${u.is_online ? 'Online' : 'Offline'}</td>
-        <td>${u.is_verified ? '<i class="fas fa-check" style="color:var(--green);"></i>' : '<i class="fas fa-xmark" style="color:var(--red);"></i>'}</td>
-        <td style="white-space:nowrap;">${fmtTime(u.last_login)}</td>
-        <td style="font-family:var(--mono);font-size:.75rem;color:var(--t3);">${esc(u.last_ip || '—')}</td>
-        <td style="white-space:nowrap;">${esc(u.last_location || '—')}</td>
-        <td style="white-space:nowrap;font-size:.75rem;color:var(--t2);">${esc(u.last_device || '—')}</td>
-      </tr>`).join('');
-  }
-
-  async function loadStats() {
-    try {
-      const data = await window.GhostChatAPI._get('/api/admin/stats');
-      renderStats(data);
-    } catch (err) {
-      document.getElementById('statGrid').innerHTML =
-        `<div class="admin-empty">Failed to load stats: ${esc(err.message || 'unknown error')}</div>`;
-    }
-  }
-
-  function renderStats(data) {
-    const cards = [
-      { label: 'Total users', value: data.total_users ?? 0, accent: true },
-      { label: 'Verified users', value: data.verified_users ?? 0 },
-      { label: 'Total messages', value: data.total_messages ?? 0 },
-      { label: 'Event types tracked', value: Object.keys(data.event_counts || {}).length },
-    ];
-    document.getElementById('statGrid').innerHTML = cards.map(c => `
-      <div class="stat-card">
-        <div class="stat-label">${esc(c.label)}</div>
-        <div class="stat-value${c.accent ? ' accent' : ''}">${c.value}</div>
-      </div>`).join('');
-
-    const counts = data.event_counts || {};
-    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const pillsHtml = [`<button class="event-pill${activeEventType === '' ? ' active' : ''}" data-type="">All events<span class="count">${Object.values(counts).reduce((a, b) => a + b, 0)}</span></button>`]
-      .concat(entries.map(([type, count]) => `
-        <button class="event-pill${activeEventType === type ? ' active' : ''}" data-type="${esc(type)}">
-          ${esc(EVENT_LABELS[type] || type)}<span class="count">${count}</span>
-        </button>`));
-    document.getElementById('eventBreakdown').innerHTML = pillsHtml.join('');
-
-    document.querySelectorAll('.event-pill').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activeEventType = btn.dataset.type || '';
-        offset = 0;
-        loadLogs();
-        document.querySelectorAll('.event-pill').forEach(b => b.classList.toggle('active', b === btn));
-      });
-    });
-  }
-
-  async function loadLogs() {
-    const tbody = document.getElementById('logTableBody');
-    tbody.innerHTML = '<tr><td colspan="7" class="admin-loading">Loading activity…</td></tr>';
-    try {
-      const qs = new URLSearchParams({ limit: PAGE_SIZE, offset });
-      if (activeEventType) qs.set('event_type', activeEventType);
-      const data = await window.GhostChatAPI._get(`/api/admin/activity-logs?${qs.toString()}`);
-      total = data.total || 0;
-      renderLogs(data.logs || []);
-      renderPagination();
-    } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="7" class="admin-empty">Failed to load activity: ${esc(err.message || 'unknown error')}</td></tr>`;
-    }
-  }
-
-  function renderLogs(logs) {
-    const tbody = document.getElementById('logTableBody');
-    if (!logs.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="admin-empty">No activity recorded yet</td></tr>';
-      return;
-    }
-    tbody.innerHTML = logs.map(l => `
-      <tr>
-        <td style="white-space:nowrap;">${fmtTime(l.created_at)}</td>
-        <td>${esc(l.username || '—')}</td>
-        <td><span class="event-badge ${esc(l.event_type)}">${esc(EVENT_LABELS[l.event_type] || l.event_type)}</span></td>
-        <td>${esc(l.description || '')}</td>
-        <td style="font-family:var(--mono);font-size:.75rem;color:var(--t3);">${esc(l.ip_address || '—')}</td>
-        <td style="white-space:nowrap;">${esc(l.location || '—')}</td>
-        <td style="white-space:nowrap;font-size:.75rem;color:var(--t2);">${esc(l.device || '—')}</td>
-      </tr>`).join('');
-  }
-
-  function renderPagination() {
-    const shown = total === 0 ? 0 : offset + 1;
-    const shownEnd = Math.min(offset + PAGE_SIZE, total);
-    document.getElementById('pageInfo').textContent = `Showing ${shown}–${shownEnd} of ${total}`;
-    document.getElementById('prevPageBtn').disabled = offset === 0;
-    document.getElementById('nextPageBtn').disabled = offset + PAGE_SIZE >= total;
-  }
-
-  document.getElementById('prevPageBtn').addEventListener('click', () => {
-    offset = Math.max(0, offset - PAGE_SIZE);
-    loadLogs();
-  });
-  document.getElementById('nextPageBtn').addEventListener('click', () => {
-    if (offset + PAGE_SIZE < total) { offset += PAGE_SIZE; loadLogs(); }
-  });
-  document.getElementById('refreshBtn').addEventListener('click', () => {
-    offset = 0;
-    loadStats();
-    loadLogs();
-    loadUsers();
-  });
-
-  // ── Clear Logs — two-step confirmation since this is irreversible ──
-  document.getElementById('clearLogsBtn').addEventListener('click', async () => {
-    const first = confirm(
-      'Clear ALL activity logs?\n\n' +
-      'This permanently deletes every login, registration, and message-count ' +
-      'log entry for every user. This cannot be undone.'
-    );
-    if (!first) return;
-
-    const typed = prompt('Type CLEAR to confirm this irreversible action:');
-    if (typed !== 'CLEAR') {
-      if (window.UI) UI.showToast('Clear logs cancelled', 'info');
-      return;
-    }
-
-    const btn = document.getElementById('clearLogsBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Clearing…';
-
-    try {
-      const data = await window.GhostChatAPI.adminClearActivityLogs();
-      if (data.success) {
-        if (window.UI) UI.showToast(`Cleared ${data.cleared} log entries`, 'success');
-        offset = 0;
-        activeEventType = '';
-        await Promise.all([loadStats(), loadLogs()]);
-      } else {
-        if (window.UI) UI.showToast(data.error || 'Failed to clear logs', 'error');
-      }
-    } catch (err) {
-      if (window.UI) UI.showToast(err.message || 'Failed to clear logs', 'error');
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-trash"></i> Clear Logs';
-    }
-  });
-
-  init();
+  document.addEventListener('DOMContentLoaded', init);
 })();
 </script>
 </body>

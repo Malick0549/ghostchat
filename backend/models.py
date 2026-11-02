@@ -241,6 +241,8 @@ class ActivityLog(db.Model):
     ip_address = db.Column(db.String(45), nullable=True)
     location = db.Column(db.String(200), nullable=True)
     device = db.Column(db.String(200), nullable=True)
+    severity = db.Column(db.String(10), nullable=True)
+    meta = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):

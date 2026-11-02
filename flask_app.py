@@ -85,6 +85,11 @@ try:
     DB_AVAILABLE = True
 except ImportError:
     DB_AVAILABLE = False
+    
+    try:
+        from backend.audit import install_audit
+    except Exception as _audit_err:
+        install_audit = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -257,6 +262,7 @@ def create_app(test_config=None):
                 'last_ip': 'VARCHAR(45)', 'last_location': 'VARCHAR(200)', 'last_device': 'VARCHAR(200)',
             })
             _migrate_columns(ActivityLog, {'location': 'VARCHAR(200)', 'device': 'VARCHAR(200)'})
+            _migrate_columns(ActivityLog, {'severity': 'VARCHAR(10)', 'meta': 'TEXT'})
             _migrate_columns(Message, {'deleted_at': 'DATETIME', 'deleted_by': 'VARCHAR(36)'})
             # ── 2FA columns ──
             _migrate_columns(User, {
@@ -2130,7 +2136,13 @@ def create_app(test_config=None):
             'limit': limit,
             'offset': offset,
         }), 200
-
+        
+    if install_audit:
+        _log_activity, _geolocate_ip, _client_ip = install_audit(
+            app, ActivityLog=ActivityLog, User=User, Message=Message, Contact=Contact,
+            send_email=_send_email, require_admin=_require_admin, limiter=limiter,
+            admin_limit=ADMIN_MUTATION_LIMIT, socketio=socketio, log=log, db_available=DB_AVAILABLE,
+        )
     @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
