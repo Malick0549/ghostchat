@@ -432,6 +432,9 @@
     const [d] = await Promise.all([get('/emails?limit=50')]);
     el.innerHTML = `
       <div class="grid cols">
+        <div class="card"><h2>Check email settings</h2>
+          <p class="muted" style="margin-bottom:10px">Sends a test message to your own address and shows the exact reason if it fails.</p>
+          <button class="btn btn-ghost" id="etest"><i class="fas fa-stethoscope"></i> Send a test email</button><div id="etestOut" style="margin-top:12px"></div></div>
         <div class="card"><h2>Send to many people</h2>
           <div class="field"><label for="bAud">Who should get it?</label><select id="bAud"><option value="all_verified">All verified users</option><option value="active_7d">Active in the last 7 days</option><option value="no2fa">Users without 2FA</option></select><div class="faint" id="bCount"></div></div>
           <div class="kinds" id="bKinds">${[['notice', 'Notice'], ['guide', 'Guide'], ['warning', 'Warning'], ['security', 'Security alert']].map(([k, l], i) => `<button data-kind="${k}" class="${i === 0 ? 'active' : ''}">${l}</button>`).join('')}</div>
@@ -443,6 +446,16 @@
         <div class="card"><h2>Sent emails <small>${num(d.total)} in total</small></h2>
           ${d.emails.length ? `<ul class="list">${d.emails.map(m => `<li><span class="pill ${m.status === 'sent' ? 'on' : 'off'}">${esc(m.status)}</span><div class="grow"><b>${esc(m.subject)}</b><div class="faint">${esc(m.kind)} · to ${esc(m.user || m.to)} · by ${esc(m.admin || '?')} · ${esc(fmt(m.time))}</div></div></li>`).join('')}</ul>` : '<div class="empty">No emails sent yet. Open a user to send one.</div>'}</div>
       </div>`;
+    $('#etest').onclick = async () => {
+      const out = $('#etestOut'); out.innerHTML = '<span class="faint">Testing…</span>'; $('#etest').disabled = true;
+      try {
+        const r = await post('/email/test', {});
+        out.innerHTML = `<div class="faint" style="margin-bottom:8px">Sender: ${esc(r.from || 'not set')} · test goes to ${esc(r.to)}</div>` + r.results.map(x => `
+          <div class="banner ${x.ok ? '' : 'bad'}" style="${x.ok ? 'background:rgba(111,220,174,.1);border:1px solid rgba(111,220,174,.3);color:var(--green)' : ''}"><i class="fas ${x.ok ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
+          <div><b>${esc(x.provider)}</b>: ${x.ok ? 'sent. Check your inbox (and spam).' : esc(x.detail)}${x.hint ? `<div style="margin-top:4px;color:var(--t1)">${esc(x.hint)}</div>` : ''}</div></div>`).join('');
+      } catch (e) { out.innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+      $('#etest').disabled = false;
+    };
     const set = k => { $$('#bKinds button').forEach(b => b.classList.toggle('active', b.dataset.kind === k)); $('#bSub').value = TEMPLATES[k][0]; $('#bMsg').value = TEMPLATES[k][1]; };
     set('notice'); $('#bKinds').onclick = e => { const b = e.target.closest('button'); if (b) set(b.dataset.kind); };
     const count = async () => { try { const r = await post('/email/broadcast', { audience: $('#bAud').value, dry_run: true }); $('#bCount').textContent = `${r.count} people will receive it`; } catch (_) {} };

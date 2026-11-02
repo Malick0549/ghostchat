@@ -20,6 +20,7 @@ import os
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta
@@ -805,6 +806,98 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         return jsonify({'success': True, 'total': q.count(), 'emails': [
             {'id': r.id, 'time': _iso(r.created_at), 'kind': r.kind, 'subject': r.subject, 'status': r.status,
              'to': r.to_email, 'user': names.get(r.user_id), 'admin': names.get(r.admin_id), 'body': r.body} for r in rows]})
+
+
+    # ── email settings check (shows the real error instead of "check settings") ──
+    def probe_email(to):
+        import smtplib, socket, ssl as _ssl
+        from email.message import EmailMessage
+        mail_from = os.environ.get('MAIL_FROM')
+        subject = 'GhostChat email test'
+        text = 'If you can read this, GhostChat can send email.'
+        html = '<p>If you can read this, GhostChat can send email.</p>'
+        out = []
+
+        def http(name, url, headers, body, ok_codes, hint_for):
+            try:
+                req = urllib.request.Request(url, data=json.dumps(body).encode('utf-8'), method='POST', headers=headers)
+                with urllib.request.urlopen(req, timeout=12) as r:
+                    good = r.status in ok_codes
+                    out.append({'provider': name, 'ok': good, 'detail': f'HTTP {r.status}', 'hint': '' if good else 'Unexpected answer from the provider.'})
+            except urllib.error.HTTPError as e:
+                try:
+                    msg = e.read().decode('utf-8', 'replace')[:300]
+                except Exception:
+                    msg = ''
+                out.append({'provider': name, 'ok': False, 'detail': f'HTTP {e.code}: {msg}', 'hint': hint_for(e.code, msg)})
+            except Exception as e:
+                out.append({'provider': name, 'ok': False, 'detail': str(e)[:300], 'hint': 'The server could not reach the provider.'})
+
+        if os.environ.get('RESEND_API_KEY'):
+            frm = mail_from or 'onboarding@resend.dev'
+            def rh(code, msg):
+                if code in (401, 403) and ('resend.dev' in frm or 'only send' in msg.lower() or 'verify' in msg.lower()):
+                    return ('Resend only lets the test sender (onboarding@resend.dev) email YOUR OWN Resend account address. '
+                            'Verify a domain at resend.com/domains, then set MAIL_FROM to an address on it, e.g. GhostChat <noreply@yourdomain.com>.')
+                if code == 401:
+                    return 'The RESEND_API_KEY is wrong or was revoked. Create a new key and update it on Render.'
+                if code == 422:
+                    return 'MAIL_FROM is not a valid sender. Use the form  GhostChat <noreply@yourdomain.com>  with a verified domain.'
+                return 'See the message above.'
+            http('Resend', 'https://api.resend.com/emails',
+                 {'Authorization': 'Bearer ' + os.environ['RESEND_API_KEY'], 'Content-Type': 'application/json'},
+                 {'from': frm, 'to': [to], 'subject': subject, 'html': html, 'text': text}, range(200, 300), rh)
+        if os.environ.get('SENDGRID_API_KEY'):
+            def sh(code, msg):
+                if not mail_from:
+                    return 'MAIL_FROM is missing. Set it to your verified SendGrid sender.'
+                if code in (401, 403):
+                    return 'The SendGrid key is wrong, or the sender in MAIL_FROM is not verified in SendGrid.'
+                return 'See the message above.'
+            if mail_from:
+                http('SendGrid', 'https://api.sendgrid.com/v3/mail/send',
+                     {'Authorization': 'Bearer ' + os.environ['SENDGRID_API_KEY'], 'Content-Type': 'application/json'},
+                     {'personalizations': [{'to': [{'email': to}]}], 'from': {'email': mail_from}, 'subject': subject,
+                      'content': [{'type': 'text/plain', 'value': text}, {'type': 'text/html', 'value': html}]}, (202,), sh)
+            else:
+                out.append({'provider': 'SendGrid', 'ok': False, 'detail': 'MAIL_FROM is not set', 'hint': sh(0, '')})
+        host = os.environ.get('SMTP_HOST')
+        if host:
+            port = int(os.environ.get('SMTP_PORT', '587') or 587)
+            try:
+                socket.create_connection((host, port), timeout=7).close()
+                try:
+                    msg = EmailMessage(); msg['Subject'] = subject; msg['From'] = mail_from or os.environ.get('SMTP_USER'); msg['To'] = to
+                    msg.set_content(text)
+                    if os.environ.get('SMTP_USE_SSL', '0').lower() in ('1', 'true', 'yes'):
+                        with smtplib.SMTP_SSL(host, port, context=_ssl.create_default_context(), timeout=10) as sm:
+                            sm.login(os.environ.get('SMTP_USER', ''), os.environ.get('SMTP_PASSWORD', '')); sm.send_message(msg)
+                    else:
+                        with smtplib.SMTP(host, port, timeout=10) as sm:
+                            if os.environ.get('SMTP_USE_TLS', '1').lower() in ('1', 'true', 'yes'):
+                                sm.starttls(context=_ssl.create_default_context())
+                            sm.login(os.environ.get('SMTP_USER', ''), os.environ.get('SMTP_PASSWORD', '')); sm.send_message(msg)
+                    out.append({'provider': f'SMTP {host}:{port}', 'ok': True, 'detail': 'sent', 'hint': ''})
+                except Exception as e:
+                    out.append({'provider': f'SMTP {host}:{port}', 'ok': False, 'detail': str(e)[:300],
+                                'hint': 'Connected, but the server refused the login or the message. Check SMTP_USER, SMTP_PASSWORD and MAIL_FROM.'})
+            except Exception as e:
+                out.append({'provider': f'SMTP {host}:{port}', 'ok': False, 'detail': str(e)[:300],
+                            'hint': 'Could not connect. Render free web services block outbound SMTP (ports 25, 465, 587). '
+                                    'Use Resend or SendGrid (they work over HTTPS), or upgrade the Render plan.'})
+        if not out:
+            out.append({'provider': 'none', 'ok': False, 'detail': 'No email provider is configured',
+                        'hint': 'Add RESEND_API_KEY and MAIL_FROM on Render (Environment tab), then redeploy.'})
+        return {'from': mail_from or ('onboarding@resend.dev' if os.environ.get('RESEND_API_KEY') else None), 'results': out}
+
+    @app.route(f'{P}/email/test', methods=['POST'])
+    @limiter.limit(admin_limit)
+    @admin_only
+    def audit_email_test(admin):
+        r = probe_email(admin.email)
+        log_activity(admin.id, 'admin_email_sent', f'{admin.username} ran an email settings test: ' +
+                     ('OK' if any(x['ok'] for x in r['results']) else 'FAILED'))
+        return jsonify({'success': True, 'to': admin.email, **r})
 
     # ── account on/off ──────────────────────────────────────────────────────
     @app.route(f'{P}/users/<uid>/status', methods=['POST'])
