@@ -67,9 +67,18 @@ def add_security_headers(response):
     """
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"]        = "SAMEORIGIN"
-    response.headers["X-XSS-Protection"]       = "1; mode=block"
+    response.headers["X-XSS-Protection"]       = "0"
     response.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
-    response.headers["Cache-Control"]          = "no-store"
+    # API answers are never cached; static files revalidate (cheap 304s on weak networks);
+    # media/avatars keep the private cache the route already set.
+    if "Cache-Control" not in response.headers or response.headers.get("Cache-Control") == "no-cache":
+        p = request.path
+        if p.startswith("/api/") or p == "/health":
+            response.headers["Cache-Control"] = "no-store"
+        elif p.endswith((".woff", ".woff2", ".ttf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".svg")):
+            response.headers["Cache-Control"] = "public, max-age=86400"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
 
     # ── Content Security Policy ───────────────────────────────────────────────
     # Must allow all CDNs used in HTML files and WebSocket for SocketIO
@@ -77,7 +86,7 @@ def add_security_headers(response):
         "default-src 'self'; "
 
         # Scripts: self + CDNs used in HTML files
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+        "script-src 'self' 'unsafe-inline' "
             "https://cdnjs.cloudflare.com "
             "https://cdn.socket.io "
             "https://cdn.jsdelivr.net; "
@@ -103,8 +112,14 @@ def add_security_headers(response):
         # No workers, iframes, objects
         "worker-src 'none'; "
         "frame-src 'none'; "
-        "object-src 'none'"
+        "object-src 'none'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+        + ("; upgrade-insecure-requests" if (request.is_secure or request.headers.get("X-Forwarded-Proto") == "https") else "")
     )
+    response.headers["Cross-Origin-Opener-Policy"]   = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
 
     # HSTS — only set on HTTPS responses to avoid breaking HTTP local dev
     if request.is_secure or request.headers.get("X-Forwarded-Proto") == "https":

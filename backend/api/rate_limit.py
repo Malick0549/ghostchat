@@ -52,13 +52,19 @@ def _storage_uri() -> str:
 
 def _key_func() -> str:
     """
-    Rate-limit key: client IP, honoring X-Forwarded-For behind Railway's proxy.
-    Falls back to flask-limiter's default remote-address logic.
+    Rate-limit key: the client IP. TRUSTED_PROXY_HOPS=N takes the Nth entry from the
+    right of X-Forwarded-For (the part our own proxies wrote, which a visitor cannot
+    forge). 0 keeps the old behaviour (leftmost entry, which CAN be forged).
     """
+    import os
     from flask import request
-    fwd = request.headers.get("X-Forwarded-For")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    parts = [p.strip() for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+    try:
+        hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0") or 0)
+    except ValueError:
+        hops = 0
+    if parts:
+        return (parts[-hops] if (hops > 0 and len(parts) >= hops) else parts[0])[:45]
     return get_remote_address()
 
 
