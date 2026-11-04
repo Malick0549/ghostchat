@@ -558,7 +558,7 @@ def create_app(test_config=None):
                     req = urllib.request.Request(
                         'https://api.sendgrid.com/v3/mail/send',
                         data=body, method='POST',
-                        headers={'Authorization': f'Bearer {sendgrid_api_key}', 'Content-Type': 'application/json'},
+                        headers={'Authorization': f'Bearer {sendgrid_api_key}', 'Content-Type': 'application/json', 'User-Agent': 'GhostChat/1.0'},
                     )
                     with urllib.request.urlopen(req, timeout=10) as resp:
                         if resp.status == 202:
@@ -580,7 +580,7 @@ def create_app(test_config=None):
                 req = urllib.request.Request(
                     'https://api.resend.com/emails',
                     data=body, method='POST',
-                    headers={'Authorization': f'Bearer {resend_api_key}', 'Content-Type': 'application/json'},
+                    headers={'Authorization': f'Bearer {resend_api_key}', 'Content-Type': 'application/json', 'User-Agent': 'GhostChat/1.0'},
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     if 200 <= resp.status < 300:

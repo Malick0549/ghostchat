@@ -820,6 +820,7 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
 
         def http(name, url, headers, body, ok_codes, hint_for):
             try:
+                headers = {**headers, 'User-Agent': 'GhostChat/1.0'}   # Cloudflare (1010) blocks Python's default User-Agent
                 req = urllib.request.Request(url, data=json.dumps(body).encode('utf-8'), method='POST', headers=headers)
                 with urllib.request.urlopen(req, timeout=12) as r:
                     good = r.status in ok_codes
@@ -851,6 +852,9 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
             def sh(code, msg):
                 if not mail_from:
                     return 'MAIL_FROM is missing. Set it to your verified SendGrid sender.'
+                if 'credit' in msg.lower() or 'quota' in msg.lower() or 'exceed' in msg.lower():
+                    return ('Your SendGrid account has no sending credits left. SendGrid ended its free plan in 2025, so this will not fix itself. '
+                            'Switch to Resend: delete SENDGRID_API_KEY on Render and add RESEND_API_KEY (the app then uses Resend automatically).')
                 if code in (401, 403):
                     return 'The SendGrid key is wrong, or the sender in MAIL_FROM is not verified in SendGrid.'
                 return 'See the message above.'
