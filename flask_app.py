@@ -92,6 +92,11 @@ except Exception as _mod_err:
     install_moderation = None
     print(f'[moderation] module failed to load: {_mod_err}')
 try:
+    from backend.hardening import install_hardening
+except Exception as _hard_err:
+    install_hardening = None
+    print(f'[security] hardening module failed to load: {_hard_err}')
+try:
     from backend.audit import install_audit
 except Exception as _audit_err:
     install_audit = None
@@ -2320,6 +2325,22 @@ def create_app(test_config=None):
     @socketio.on('ping')
     def handle_ping(data):
         emit('pong', {'timestamp': data.get('timestamp', 0)})
+
+    if install_hardening:
+        from backend.models import bcrypt as _bcrypt
+        install_hardening(
+            app, db=db, User=User, Contact=Contact, ActivityLog=ActivityLog, Message=Message,
+            socketio=socketio, log=log, log_activity=_log_activity, send_email=_send_email,
+            sid_to_user=sid_to_user, bcrypt=_bcrypt, db_available=DB_AVAILABLE,
+        )
+
+    if install_moderation:
+        install_moderation(
+            app, User=User, Message=Message, Contact=Contact, ActivityLog=ActivityLog,
+            send_email=_send_email, require_admin=_require_admin, require_auth=_require_auth,
+            limiter=limiter, admin_limit=ADMIN_MUTATION_LIMIT, socketio=socketio, log=log,
+            log_activity=_log_activity, sid_to_user=sid_to_user, db_available=DB_AVAILABLE,
+        )
 
     return app
 
