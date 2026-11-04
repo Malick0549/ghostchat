@@ -207,6 +207,9 @@
         <button onclick="window.chat?.blockContact()">
           <i class="fas fa-ban"></i> Block contact
         </button>
+        <button onclick="window.chat?.reportContact()">
+          <i class="fas fa-flag"></i> Report abuse
+        </button>
         <button onclick="window.chat?.exportChat()">
           <i class="fas fa-download"></i> Export chat
         </button>
@@ -405,6 +408,53 @@
     a.click();
     URL.revokeObjectURL(url);
     if (window.UI) UI.showToast('Chat exported', 'success');
+  };
+
+  // ── Report abuse: the admin reviews it. Messages are encrypted, so nothing is attached
+  // unless the person pastes it themselves. ──
+  GhostChatRealtime.prototype.reportContact = function () {
+    const c = this.currentContact; if (!c) return;
+    const chat = this;
+    const w = document.createElement('div');
+    w.setAttribute('style', 'position:fixed;inset:0;background:rgba(5,7,12,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;');
+    const reasons = [['harassment','Harassment or bullying'],['spam','Spam or unwanted messages'],['scam','Scam or fraud'],['hate','Hate or threats'],['inappropriate','Inappropriate or explicit content'],['impersonation','Pretending to be someone else'],['other','Something else']];
+    w.innerHTML = '<div role="dialog" aria-modal="true" aria-label="Report abuse" style="background:var(--bg2,#121620);color:var(--t1,#ecebf4);border:1px solid var(--border2,#2a3040);border-radius:16px;padding:20px;width:min(440px,100%);max-height:90vh;overflow-y:auto;">'
+      + '<h3 style="margin:0 0 4px;font-size:1.15rem;"></h3>'
+      + '<p style="margin:0 0 12px;color:var(--t2,#a9abc0);font-size:.9rem;">The admin will review this. Your messages are encrypted, so the admin cannot read them unless you paste text below.</p>'
+      + '<label style="display:block;margin-bottom:4px;">What happened?</label><select id="rpReason" style="width:100%;padding:10px 12px;margin-bottom:10px;"></select>'
+      + '<label style="display:block;margin-bottom:4px;">Tell the admin more (optional)</label><textarea id="rpDetails" maxlength="1000" style="width:100%;min-height:80px;padding:10px 12px;margin-bottom:10px;"></textarea>'
+      + '<label style="display:block;margin-bottom:4px;">Paste the message you are reporting (optional)</label><textarea id="rpEvidence" maxlength="2000" style="width:100%;min-height:60px;padding:10px 12px;margin-bottom:10px;"></textarea>'
+      + '<label style="display:flex;gap:8px;align-items:center;margin-bottom:6px;"><input type="checkbox" id="rpBlock" checked> <span>Also block this person</span></label>'
+      + '<div id="rpErr" role="alert" style="color:var(--red,#ff7385);font-size:.88rem;min-height:1.2em;"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;"><button type="button" class="btn btn-ghost" id="rpCancel">Cancel</button><button type="button" class="btn btn-primary" id="rpSend">Send report</button></div></div>';
+    w.querySelector('h3').textContent = 'Report ' + (c.display_name || c.username || 'this user');
+    const sel = w.querySelector('#rpReason');
+    reasons.forEach(([v, l]) => sel.add(new Option(l, v)));
+    document.body.appendChild(w);
+    const close = () => { document.removeEventListener('keydown', onKey); w.remove(); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    w.addEventListener('click', e => { if (e.target === w) close(); });
+    w.querySelector('#rpCancel').onclick = close;
+    w.querySelector('#rpSend').onclick = async () => {
+      const btn = w.querySelector('#rpSend'); btn.disabled = true; w.querySelector('#rpErr').textContent = '';
+      try {
+        const res = await fetch(`${chat._base()}/api/reports`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': chat._getCsrf() },
+          body: JSON.stringify({
+            reported_id: c.contact_id, reason: sel.value,
+            details: w.querySelector('#rpDetails').value, evidence: w.querySelector('#rpEvidence').value,
+            block: w.querySelector('#rpBlock').checked,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not send the report');
+        close();
+        if (window.UI) UI.showToast(data.message || 'Report sent', 'success');
+        if (data.blocked) { try { chat._loadContacts && chat._loadContacts(); } catch (_) {} }
+      } catch (err) { w.querySelector('#rpErr').textContent = err.message; btn.disabled = false; }
+    };
   };
 
   GhostChatRealtime.prototype.blockContact = async function () {

@@ -92,6 +92,20 @@
     .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 6px; }
     svg.chart { width: 100%; height: auto; display: block; }
 
+
+    /* Dialog + reports */
+    .modal-wrap { position: fixed; inset: 0; background: rgba(5,7,12,.7); z-index: 400; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .modal { background: var(--bg2); border: 1px solid var(--border2); border-radius: 16px; padding: 20px; width: min(460px, 100%); max-height: 90vh; overflow-y: auto; }
+    .modal h3 { font-size: 1.15rem; }
+    .modal .err { color: var(--red); font-size: .88rem; min-height: 1.2em; margin-top: 6px; }
+    .modal .ck { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 0; font-size: .92rem; }
+    .btn.danger, .btn-ghost.danger { color: var(--red); border-color: rgba(255,115,133,.4); }
+    .btn-solid-danger { background: var(--red); color: #1b0509; border: 0; font-weight: 700; }
+    .rep { border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 12px; background: var(--bg3); }
+    .rep .top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
+    .rep blockquote { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid var(--primary); background: rgba(255,255,255,.04); border-radius: 0 8px 8px 0; font-size: .9rem; word-break: break-word; white-space: pre-wrap; }
+    .rep .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
     /* Drawer */
     .scrim { position: fixed; inset: 0; background: rgba(5,7,12,.65); z-index: 300; display: none; }
     .scrim.open { display: block; }
@@ -155,6 +169,7 @@
     <button class="tab" data-tab="audit" role="tab"><i class="fas fa-clipboard-list"></i> Audit log</button>
     <button class="tab" data-tab="security" role="tab"><i class="fas fa-user-shield"></i> Security <span class="count" id="secCount" hidden></span></button>
     <button class="tab" data-tab="users" role="tab"><i class="fas fa-users"></i> Users</button>
+    <button class="tab" data-tab="reports" role="tab"><i class="fas fa-flag"></i> Reports <span class="count" id="repCount" hidden></span></button>
     <button class="tab" data-tab="emails" role="tab"><i class="fas fa-envelope"></i> Email</button>
   </nav>
 
@@ -162,6 +177,7 @@
   <section id="p-audit" hidden></section>
   <section id="p-security" hidden></section>
   <section id="p-users" hidden></section>
+  <section id="p-reports" hidden></section>
   <section id="p-emails" hidden></section>
 </div>
 
@@ -198,8 +214,8 @@
   /* ── tabs ───────────────────────────────────────────── */
   function show(tab) {
     $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    ['overview', 'audit', 'security', 'users', 'emails'].forEach(t => $('#p-' + t).hidden = t !== tab);
-    if (!loaded[tab]) { loaded[tab] = true; ({ overview, audit, security, users, emails })[tab](); }
+    ['overview', 'audit', 'security', 'users', 'reports', 'emails'].forEach(t => $('#p-' + t).hidden = t !== tab);
+    if (!loaded[tab]) { loaded[tab] = true; ({ overview, audit, security, users, reports, emails })[tab](); }
     try { history.replaceState(null, '', '#' + tab); } catch (_) {}
   }
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) show(b.dataset.tab); });
@@ -393,7 +409,9 @@
         <dt>From</dt><dd>${esc(u.location || '—')} · ${esc(u.last_ip || '—')}</dd><dt>Device</dt><dd>${esc(u.device || '—')}</dd>
         <dt>Activity</dt><dd>${num(u.messages_sent)} sent · ${num(u.messages_received)} received · ${num(u.contacts)} contacts</dd><dt>Failed sign-ins</dt><dd>${u.failed_logins_7d} in the last 7 days</dd></dl>
       <div class="row" style="margin-top:12px"><button class="btn btn-ghost btn-sm" data-act="all-events"><i class="fas fa-clipboard-list"></i> All activity</button>
-        ${u.is_admin ? '' : (u.is_active ? '<button class="btn btn-ghost btn-sm danger" data-act="disable"><i class="fas fa-ban"></i> Disable account</button>' : '<button class="btn btn-primary btn-sm" data-act="enable"><i class="fas fa-rotate-left"></i> Re-enable account</button>')}</div>
+        ${u.is_admin ? '' : `${u.is_verified ? '<button class="btn btn-ghost btn-sm" data-act="unverify"><i class="fas fa-circle-minus"></i> Mark unverified</button>' : '<button class="btn btn-ghost btn-sm" data-act="verify"><i class="fas fa-circle-check"></i> Mark verified</button>'}
+        ${u.is_active ? '<button class="btn btn-ghost btn-sm danger" data-act="suspend"><i class="fas fa-ban"></i> Suspend</button>' : '<button class="btn btn-primary btn-sm" data-act="unsuspend"><i class="fas fa-rotate-left"></i> Lift suspension</button>'}
+        <button class="btn btn-ghost btn-sm danger" data-act="delete"><i class="fas fa-trash"></i> Delete user</button>`}</div>
       <h4>Send an email</h4>
       <div class="kinds" id="dKinds">${[['guide', 'Guide'], ['notice', 'Notice'], ['warning', 'Warning'], ['security', 'Security alert'], ['custom', 'Write my own']].map(([k, l], i) => `<button data-kind="${k}" class="${i === 0 ? 'active' : ''}">${l}</button>`).join('')}</div>
       <div class="field"><label for="dSub">Subject</label><input id="dSub" type="text" maxlength="120" /></div>
@@ -414,16 +432,96 @@
     };
     dr.onclick = async e => {
       const a = e.target.closest('[data-act]'); if (!a) return;
-      if (a.dataset.act === 'all-events') return gotoAudit({ user_id: u.id });
-      const active = a.dataset.act === 'enable'; let reason = '';
-      if (!active) { reason = prompt(`Why disable ${u.username}? This reason is kept in the audit log.`); if (!reason) return; }
-      const notify = confirm(`Also email ${u.username} to let them know?`);
-      try { await post(`/users/${u.id}/status`, { active, reason, notify }); toast(active ? 'Account re-enabled' : 'Account disabled', 'success'); loaded.users = false; loaded.security = false; openUser(u.id); } catch (er) { toast(er.message, 'error'); }
+      const act = a.dataset.act;
+      if (act === 'all-events') return gotoAudit({ user_id: u.id });
+      const done = msg => { toast(msg, 'success'); loaded.users = false; loaded.security = false; loaded.reports = false; openUser(u.id); };
+      try {
+        if (act === 'verify') { const v = await ask({ title: `Mark ${u.username} as verified?`, fields: [{ name: 'notify', type: 'checkbox', label: 'Email them to say so' }], ok: 'Mark verified' }); if (!v) return; await post(`/users/${u.id}/verify`, { verified: true, notify: v.notify }); done('Marked verified'); }
+        else if (act === 'unverify') { const v = await ask({ title: `Mark ${u.username} as unverified?`, text: 'They are signed out and must confirm their email with a new code on their next sign-in.', fields: [{ name: 'reason', type: 'text', label: 'Reason (kept in the audit log)', required: true, min: 3 }, { name: 'notify', type: 'checkbox', label: 'Email them to say so' }], ok: 'Mark unverified' }); if (!v) return; await post(`/users/${u.id}/verify`, { verified: false, reason: v.reason, notify: v.notify }); done('Marked unverified'); }
+        else if (act === 'suspend') { const v = await ask({ title: `Suspend ${u.username}?`, text: 'They are signed out at once and cannot sign in until the suspension ends.', fields: [DAYS, { name: 'reason', type: 'text', label: 'Reason (shown to them and kept in the audit log)', required: true, min: 3 }, { name: 'notify', type: 'checkbox', label: 'Email them to say so', value: true }], ok: 'Suspend', danger: true }); if (!v) return; await post(`/users/${u.id}/suspend`, { days: +v.days, reason: v.reason, notify: v.notify }); done('Account suspended'); }
+        else if (act === 'unsuspend') { const v = await ask({ title: `Lift the suspension on ${u.username}?`, fields: [{ name: 'notify', type: 'checkbox', label: 'Email them to say so', value: true }], ok: 'Lift suspension' }); if (!v) return; await post(`/users/${u.id}/unsuspend`, { notify: v.notify }); done('Suspension lifted'); }
+        else if (act === 'delete') { const v = await ask({ title: `Delete ${u.username} permanently?`, text: 'Their account, contacts and every message they sent or received are erased. This cannot be undone. The audit log and any reports keep a record.', fields: [{ name: 'confirm', type: 'text', label: `Type ${u.username} to confirm`, required: true, equals: u.username }, { name: 'reason', type: 'text', label: 'Reason (kept in the audit log)' }, { name: 'notify', type: 'checkbox', label: 'Email them first' }], ok: 'Delete forever', danger: true }); if (!v) return; await post(`/users/${u.id}/delete`, { confirm: v.confirm, reason: v.reason, notify: v.notify }); toast('User deleted', 'success'); closeDrawer(); loaded.users = false; loaded.security = false; loaded.reports = false; if (!$('#p-users').hidden) show('users'); }
+      } catch (er) { toast(er.message, 'error'); }
     };
   }
   function setKind(k) {
     $$('#dKinds button').forEach(b => b.classList.toggle('active', b.dataset.kind === k));
     $('#dSub').value = TEMPLATES[k][0]; $('#dMsg').value = TEMPLATES[k][1];
+  }
+
+  /* ── small dialog (replaces prompt/confirm) ────────── */
+  const DAYS = { name: 'days', type: 'select', label: 'For how long?', options: [['1', '1 day'], ['3', '3 days'], ['7', '7 days'], ['30', '30 days'], ['0', 'Until I lift it']], value: '7' };
+  function ask({ title, text = '', fields = [], ok = 'Confirm', danger = false }) {
+    return new Promise(resolve => {
+      const w = document.createElement('div'); w.className = 'modal-wrap';
+      const f = fields.map((x, i) => {
+        const id = 'ask' + i;
+        if (x.type === 'checkbox') return `<label class="ck"><input type="checkbox" id="${id}" ${x.value ? 'checked' : ''}/> <span>${esc(x.label)}</span></label>`;
+        const inp = x.type === 'select' ? `<select id="${id}">${x.options.map(([v, l]) => `<option value="${esc(v)}" ${v === x.value ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`
+          : x.type === 'textarea' ? `<textarea id="${id}" maxlength="${x.max || 500}"></textarea>` : `<input type="text" id="${id}" maxlength="${x.max || 200}" autocomplete="off"/>`;
+        return `<div class="field"><label for="${id}">${esc(x.label)}</label>${inp}</div>`;
+      }).join('');
+      w.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h3>${esc(title)}</h3>${text ? `<p class="muted" style="margin:6px 0 12px">${esc(text)}</p>` : ''}
+        <form novalidate>${f}<div class="err" role="alert"></div><div class="row" style="justify-content:flex-end;margin-top:10px"><button type="button" class="btn btn-ghost" data-x>Cancel</button><button type="submit" class="btn ${danger ? 'btn-solid-danger' : 'btn-primary'}">${esc(ok)}</button></div></form></div>`;
+      document.body.appendChild(w);
+      const close = v => { document.removeEventListener('keydown', onKey); w.remove(); resolve(v); };
+      const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } };
+      document.addEventListener('keydown', onKey);
+      w.addEventListener('click', e => { if (e.target === w || e.target.closest('[data-x]')) close(null); });
+      w.querySelector('form').addEventListener('submit', e => {
+        e.preventDefault(); const out = {};
+        for (let i = 0; i < fields.length; i++) {
+          const x = fields[i], el = w.querySelector('#ask' + i);
+          const v = x.type === 'checkbox' ? el.checked : el.value.trim();
+          if (x.required && !v) return (w.querySelector('.err').textContent = `${x.label.split('(')[0].trim()} is required.`);
+          if (x.min && v.length < x.min) return (w.querySelector('.err').textContent = `${x.label.split('(')[0].trim()} needs at least ${x.min} characters.`);
+          if (x.equals && v !== x.equals) return (w.querySelector('.err').textContent = 'That does not match.');
+          out[x.name] = v;
+        }
+        close(out);
+      });
+      (w.querySelector('input:not([type=checkbox]),select,textarea') || w.querySelector('button[type=submit]')).focus();
+    });
+  }
+
+  /* ── reports tab ─────────────────────────────────────── */
+  const R = { status: 'open' };
+  async function refreshRepCount() {
+    try { const d = await get('/reports/summary'); const c = $('#repCount'); c.hidden = !d.open; c.textContent = d.open; } catch (_) {}
+  }
+  async function reports() {
+    const el = $('#p-reports');
+    el.innerHTML = `<div class="card"><div class="toolbar"><select id="rst" aria-label="Show">${[['open', 'Waiting for review'], ['actioned', 'Action taken'], ['dismissed', 'Dismissed'], ['all', 'All']].map(([v, l]) => `<option value="${v}" ${v === R.status ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="faint" id="rtotal"></span></div><div id="rbody"><div class="empty">Loading…</div></div></div>`;
+    $('#rst').onchange = e => { R.status = e.target.value; reports(); };
+    let d; try { d = await get('/reports?status=' + R.status); } catch (e) { $('#rbody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    $('#rtotal').textContent = `${num(d.total)} report${d.total === 1 ? '' : 's'}`;
+    $('#rbody').innerHTML = d.reports.length ? d.reports.map(r => {
+      const u = r.reported;
+      return `<div class="rep" data-rid="${esc(r.id)}">
+        <div class="top"><div><b>${esc(r.reporter.username || 'deleted user')}</b> reported <b>${u.exists ? `<button class="lnk" data-user="${esc(u.id)}">${esc(u.username)}</button>` : esc(u.username) + ' (deleted)'}</b>
+          <div class="faint">${esc(fmt(r.created_at))} · <span class="pill warn">${esc(r.reason_label)}</span>${r.status !== 'open' ? `<span class="pill ${r.status === 'actioned' ? 'on' : ''}">${esc(r.status)}${r.action && r.action !== 'dismiss' ? ': ' + esc(r.action) : ''}</span>` : ''}</div></div>
+          <div>${u.exists ? `${u.is_active ? '' : '<span class="pill off">suspended</span>'}${u.is_verified ? '' : '<span class="pill warn">unverified</span>'}<span class="pill">${u.reports_total} report${u.reports_total === 1 ? '' : 's'} in total</span>` : ''}</div></div>
+        ${r.details ? `<blockquote>${esc(r.details)}</blockquote>` : ''}
+        ${r.evidence ? `<div class="faint" style="margin-top:8px">Text the reporter pasted as evidence (the server cannot read messages):</div><blockquote>${esc(r.evidence)}</blockquote>` : ''}
+        ${r.admin_note ? `<div class="faint" style="margin-top:8px">Your note: ${esc(r.admin_note)}</div>` : ''}
+        ${r.status === 'open' ? `<div class="acts"><button class="btn btn-ghost btn-sm" data-ra="dismiss">Dismiss</button>${u.exists && !u.is_admin ? `<button class="btn btn-ghost btn-sm" data-ra="warn"><i class="fas fa-triangle-exclamation"></i> Warn</button><button class="btn btn-ghost btn-sm danger" data-ra="suspend"><i class="fas fa-ban"></i> Suspend</button><button class="btn btn-ghost btn-sm danger" data-ra="delete"><i class="fas fa-trash"></i> Delete user</button>` : ''}</div>` : ''}</div>`;
+    }).join('') : '<div class="empty">Nothing here. Reports from users appear in this list.</div>';
+    $('#rbody').onclick = async e => {
+      const b = e.target.closest('[data-ra]'); if (!b) return;
+      const card = b.closest('.rep'); const r = d.reports.find(x => x.id === card.dataset.rid); const act = b.dataset.ra;
+      const notifyF = { name: 'notify_reporter', type: 'checkbox', label: 'Tell the reporter we reviewed it', value: true };
+      const dlg = {
+        dismiss: { title: 'Dismiss this report?', fields: [{ name: 'note', type: 'text', label: 'Note for your records (optional)' }, notifyF], ok: 'Dismiss' },
+        warn: { title: `Warn ${r.reported.username}?`, text: 'They receive an email with your message.', fields: [{ name: 'note', type: 'textarea', label: 'Message to the user', required: true, min: 3 }, notifyF], ok: 'Send warning' },
+        suspend: { title: `Suspend ${r.reported.username}?`, text: 'They are signed out at once. They are told the reason by email.', fields: [DAYS, { name: 'note', type: 'text', label: 'Reason (shown to them)', required: true, min: 3 }, notifyF], ok: 'Suspend', danger: true },
+        delete: { title: `Delete ${r.reported.username} permanently?`, text: 'Their account and every message they sent or received are erased. This cannot be undone.', fields: [{ name: 'confirm', type: 'text', label: `Type ${r.reported.username} to confirm`, required: true, equals: r.reported.username }, { name: 'note', type: 'text', label: 'Reason (emailed to them, kept in the audit log)', required: true, min: 3 }, notifyF], ok: 'Delete forever', danger: true },
+      }[act];
+      const v = await ask(dlg); if (!v) return;
+      try {
+        await post(`/reports/${r.id}/resolve`, { action: act, note: v.note || '', days: v.days ? +v.days : 0, confirm: v.confirm, notify_reporter: v.notify_reporter });
+        toast('Report updated', 'success'); loaded.users = false; loaded.security = false; reports(); refreshRepCount();
+      } catch (er) { toast(er.message, 'error'); }
+    };
   }
 
   /* ── email tab: broadcast + history ─────────────────── */
@@ -483,7 +581,8 @@
     catch (_) { $('#deniedView').style.display = 'block'; return; }
     $('#app').style.display = 'block';
     const start = (location.hash || '#overview').slice(1);
-    show(['overview', 'audit', 'security', 'users', 'emails'].includes(start) ? start : 'overview');
+    show(['overview', 'audit', 'security', 'users', 'reports', 'emails'].includes(start) ? start : 'overview');
+    refreshRepCount();
     get('/overview').then(d => { const c = $('#secCount'); c.hidden = !d.totals.critical_24h; c.textContent = d.totals.critical_24h; }).catch(() => {});
   }
   document.addEventListener('DOMContentLoaded', init);

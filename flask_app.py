@@ -87,6 +87,11 @@ except ImportError:
     DB_AVAILABLE = False
 
 try:
+    from backend.moderation import install_moderation
+except Exception as _mod_err:
+    install_moderation = None
+    print(f'[moderation] module failed to load: {_mod_err}')
+try:
     from backend.audit import install_audit
 except Exception as _audit_err:
     install_audit = None
