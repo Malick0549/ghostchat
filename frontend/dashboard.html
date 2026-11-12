@@ -577,18 +577,26 @@
     if (e.key !== 'Enter') return;
     const active = document.activeElement;
 
-    if (active?.id === 'plaintext') {
-      e.preventDefault();
-      document.getElementById('encryptPassword')?.focus();
-    } else if (active?.id === 'encryptPassword') {
+    // In the message boxes Enter starts a new line, as in any text box.
+    // Ctrl+Enter (Cmd+Enter on Mac) is the shortcut to go on: it moves to the password box,
+    // or encrypts/decrypts straight away when the password is already filled in.
+    if (active?.id === 'plaintext' || active?.id === 'ciphertext') {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const isEnc = active.id === 'plaintext';
+        const pw = document.getElementById(isEnc ? 'encryptPassword' : 'decryptPassword');
+        if (pw && !pw.value.trim()) pw.focus();
+        else document.getElementById(isEnc ? 'encryptBtn' : 'decryptBtn')?.click();
+      }
+      return;
+    }
+
+    if (active?.id === 'encryptPassword') {
       e.preventDefault();
       document.getElementById('encryptBtn')?.click();
     }
 
-    if (active?.id === 'ciphertext') {
-      e.preventDefault();
-      document.getElementById('decryptPassword')?.focus();
-    } else if (active?.id === 'decryptPassword') {
+    if (active?.id === 'decryptPassword') {
       e.preventDefault();
       document.getElementById('decryptBtn')?.click();
     }
