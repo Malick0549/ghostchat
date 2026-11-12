@@ -43,6 +43,16 @@ MSG_BURST        = _int('MSG_RATE_LIMIT', 30)             # messages per user ..
 MSG_WINDOW_SEC   = _int('MSG_RATE_WINDOW', 10)            # ... per this many seconds
 MEDIA_PER_MIN    = _int('MEDIA_RATE_LIMIT', 10)
 
+
+def _float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+IDLE_SECONDS = int(_float('SESSION_IDLE_MINUTES', 30) * 60)     # no activity for this long -> signed out
+MAX_SECONDS  = int(_float('SESSION_MAX_HOURS', 12) * 3600)      # hard limit since sign-in, activity or not
+
 _USERNAME_RE = re.compile(r'^[A-Za-z0-9_.\-]{3,30}$')
 
 _COMMON = {
@@ -163,6 +173,12 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
                       log_activity, send_email, sid_to_user, bcrypt=None, db_available=True):
     """Wire everything. Call once, after the audit module is installed and before `return app`."""
 
+    try:                                           # label for the audit log
+        from backend import audit as _audit
+        _audit.EVENTS.setdefault('session_expired', ('Session timed out', 'info', 'auth'))
+    except Exception:
+        pass
+
     try:                                           # image bomb protection
         from PIL import Image
         Image.MAX_IMAGE_PIXELS = 40_000_000
@@ -175,6 +191,7 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
     msg_hits = _Counter()          # user id -> chat messages
     media_hits = _Counter()        # user id -> uploads
     typing_hits = _Counter()       # sid -> typing events
+    _clock = {}                    # user id -> (signed-in at, last real activity); shared with live sockets
 
     DUMMY_HASH = None
     if bcrypt is not None:
@@ -219,11 +236,13 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
                         ActivityLog.event_type == 'login_failed',
                         ActivityLog.created_at >= since).count())
 
-    def _drop_sockets(uid):
+    def _drop_sockets(uid, notify=False):
         try:
             for sid, u in list(sid_to_user.items()):
                 if u == uid:
                     sid_to_user.pop(sid, None)
+                    if notify:
+                        socketio.emit('session_expired', {}, to=sid)
                     socketio.server.disconnect(sid)
         except Exception as e:
             log.warning(f'[hardening] could not drop sockets for {uid}: {e}')
@@ -239,8 +258,34 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
             return None
         path, method = request.path, request.method
 
-        # ── sessions die when the password changes ──
         uid = session.get('user_id')
+
+        # ── session clock: idle timeout + absolute lifetime ──
+        if uid and not session.get('pending_2fa') and path.startswith('/api/'):
+            now = time.time()
+            login_at = session.get('login_at')
+            if login_at is None:                      # session from before this feature: start its clock now
+                session['login_at'] = login_at = now
+                session['last_active'] = now
+            mem = _clock.get(uid)
+            last = max(session.get('last_active') or login_at, mem[1] if mem else 0)
+            if now - login_at > MAX_SECONDS or now - last > IDLE_SECONDS:
+                why = 'lifetime' if now - login_at > MAX_SECONDS else 'idle'
+                try:
+                    log_activity(uid, 'session_expired', f'Session ended ({why} limit)')
+                except Exception:
+                    pass
+                _clock.pop(uid, None)
+                session.clear()
+                _drop_sockets(uid, notify=True)
+                return jsonify({'error': 'Your session expired. Please sign in again.', 'session_expired': True}), 401
+            # only real actions keep a session alive, not background polling
+            if (method != 'GET' and method != 'OPTIONS') and path != '/api/auth/logout':
+                session['last_active'] = now
+                last = now
+            _clock[uid] = (login_at, last)
+
+        # ── sessions die when the password changes ──
         if uid and not session.get('pending_2fa'):
             pv = session.get('pv')
             if pv:
@@ -384,6 +429,8 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
                 u = db.session.get(User, session['user_id'])
                 if u:
                     session['pv'] = _pv(u)
+            if session.get('user_id') and not session.get('pending_2fa') and 'login_at' not in session:
+                session['login_at'] = session['last_active'] = time.time()
 
             if method == 'POST' and path == '/api/auth/verify-email':
                 email = (_json().get('email') or '').strip().lower()
@@ -435,6 +482,38 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
             log.error(f'[hardening] email change notice failed: {e}')
         return resp
 
+    @app.route('/api/auth/activity', methods=['POST', 'OPTIONS'])
+    def session_activity():
+        """The page calls this about once a minute while the person is really using it."""
+        if request.method == 'OPTIONS':
+            return '', 200
+        if not session.get('user_id'):
+            return jsonify({'error': 'Not authenticated', 'session_expired': True}), 401
+        now = time.time()
+        session['last_active'] = now          # the guard already refused an expired session before this runs
+        left = max(0, int(MAX_SECONDS - (now - (session.get('login_at') or now))))
+        return jsonify({'ok': True, 'idle_seconds': IDLE_SECONDS, 'expires_in': left})
+
+    def _sweeper():
+        """Close live chat connections of people whose session has gone idle or reached its limit."""
+        while True:
+            socketio.sleep(max(1, min(20, IDLE_SECONDS // 3)))
+            try:
+                now = time.time()
+                for sid, uid in list(sid_to_user.items()):
+                    c = _clock.get(uid)
+                    if c and (now - c[0] > MAX_SECONDS or now - c[1] > IDLE_SECONDS):
+                        sid_to_user.pop(sid, None)
+                        socketio.emit('session_expired', {}, to=sid)
+                        socketio.server.disconnect(sid)
+            except Exception as e:
+                log.warning(f'[hardening] session sweeper: {e}')
+
+    try:
+        socketio.start_background_task(_sweeper)
+    except Exception as e:
+        log.warning(f'[hardening] could not start session sweeper: {e}')
+
     # ═══════════════════════════════════════════════════════════════════════════
     # SOCKETS — these replace the older handlers of the same name
     # ═══════════════════════════════════════════════════════════════════════════
@@ -470,6 +549,8 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
             return
         join_room(f'user_{u.id}')
         sid_to_user[request.sid] = u.id
+        _now = time.time()
+        _clock.setdefault(u.id, (session.get('login_at') or _now, session.get('last_active') or _now))
         emit('joined_room', {'room': f'user_{u.id}'})
         try:
             u.is_online = True
@@ -520,6 +601,9 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
             emit('message_failed', {'temp_id': temp_id, 'error': 'You are sending too fast. Slow down a little.'})
             return
         msg_hits.hit(u.id, MSG_WINDOW_SEC)
+        _c = _clock.get(u.id)
+        if _c:
+            _clock[u.id] = (_c[0], time.time())            # sending a message is real activity
         if not _may_message(u.id, receiver_id):
             emit('message_failed', {'temp_id': temp_id, 'error': 'You can only message people you are connected with'})
             return

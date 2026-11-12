@@ -128,7 +128,7 @@ class GhostChatAPI {
                 .some(p => window.location.pathname.endsWith(p));
             if (!isAuthPage) {
                 sessionStorage.clear();
-                window.location.href = 'login.html';
+                window.location.href = 'login.html?expired=1';
                 throw new Error('Session expired');
             }
         }
@@ -422,3 +422,41 @@ window.addEventListener('offline', () => {
 window.addEventListener('online', () => {
     if (window.UI) UI.showToast('Back online', 'success', 2000);
 });
+
+
+// ── Idle sign-out ─────────────────────────────────────────────────
+// The server is the judge (it ends idle sessions itself). This part tells the server when the
+// person is really using the page, and signs them out in the browser when they have walked away.
+(function () {
+    const page = (window.location.pathname.split('/').pop() || 'index.html').toLowerCase();
+    const publicPages = ['', 'index.html', 'login.html', 'register.html', 'forgot-password.html',
+        'reset-password.html', 'verify-email.html', 'privacy.html', 'terms.html'];
+    if (publicPages.includes(page)) return;
+
+    let idleMs = 30 * 60 * 1000;
+    let lastInput = Date.now(), lastPing = 0, dirty = true, gone = false;
+    const mark = () => { lastInput = Date.now(); dirty = true; };
+    ['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll', 'mousemove'].forEach(
+        ev => window.addEventListener(ev, mark, { passive: true, capture: true }));
+
+    async function leave() {
+        if (gone) return; gone = true;
+        try { await window.GhostChatAPI.logout(); } catch (_) {}
+        sessionStorage.clear();
+        window.location.href = 'login.html?expired=1';
+    }
+    async function ping() {
+        lastPing = Date.now(); dirty = false;
+        try {
+            const d = await window.GhostChatAPI._post('/api/auth/activity', {});
+            if (d && d.idle_seconds) idleMs = d.idle_seconds * 1000;
+        } catch (_) { /* a 401 is already turned into a redirect by the API layer */ }
+    }
+    function tick() {
+        if (gone) return;
+        if (Date.now() - lastInput >= idleMs) return leave();
+        if (dirty && Date.now() - lastPing >= Math.min(60000, idleMs / 3)) ping();
+    }
+    window.addEventListener('load', () => { if (window.GhostChatAPI) { ping(); setInterval(tick, 3000); } });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+})();

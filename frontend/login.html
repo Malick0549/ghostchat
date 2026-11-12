@@ -163,6 +163,10 @@
     .then(d => { if (d?.csrf_token) document.getElementById('csrfToken').value = d.csrf_token; })
     .catch(() => {});
 
+  if (new URLSearchParams(location.search).get('expired')) {
+    setTimeout(() => showErr('Your session timed out for your safety. Please sign in again.'), 0);
+  }
+
   function showErr(m) {
     document.getElementById('errMsg').textContent = m;
     document.getElementById('alertErr').classList.add('show');

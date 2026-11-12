@@ -917,6 +917,11 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
                 this._toast('Session issue — please refresh the page', 'error');
             });
 
+            this.socket.on('session_expired', () => {
+                try { sessionStorage.clear(); } catch (_) {}
+                window.location.href = 'login.html?expired=1';
+            });
+
             this.socket.on('disconnect', () => {
                 console.log('❌ Socket disconnected');
                 this.connected = false;
