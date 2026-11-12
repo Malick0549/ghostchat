@@ -271,7 +271,7 @@
 
       <div class="search-bar" role="search">
         <i class="fas fa-search" aria-hidden="true"></i>
-        <input type="search" id="globalSearch" placeholder="Search history…" aria-label="Search message history" />
+        <input type="search" id="globalSearch" name="gc-history-q" placeholder="Search history…" aria-label="Search message history" autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" />
       </div>
 
       <div class="user-menu">
@@ -501,7 +501,11 @@
   document.getElementById('logoutBtn')?.addEventListener('click',doLogout);
   document.getElementById('ddLogout')?.addEventListener('click',doLogout);
 
-  document.getElementById('globalSearch')?.addEventListener('input',function(){
+  // Only open History when the person is really typing in this box. Browsers (and password
+  // managers) can fill a search field with a saved username on the first click anywhere on the
+  // page, which fires an 'input' event and used to throw people into History.
+  document.getElementById('globalSearch')?.addEventListener('input',function(e){
+    if(!e.isTrusted || document.activeElement !== this) return;
     if(this.value.trim().length>1){ navigate('history'); }
   });
 
