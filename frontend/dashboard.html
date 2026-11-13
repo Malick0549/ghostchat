@@ -30,7 +30,7 @@
 <template id="encrypt-page">
   <div class="cyber-panel">
     <h2><i class="fas fa-lock"></i> Encrypt Message</h2>
-    <p class="section-desc text-muted" style="margin-bottom:24px;">Write your message → AES-256-GCM encryption → emoji obfuscation. Copy and share anywhere.</p>
+    <p class="section-desc text-muted" style="margin-bottom:24px;">Write your message → AES-256-GCM encryption in your browser → emoji encoding. Your message and password never leave this device. Copy and share anywhere.</p>
     <div class="input-section">
       <label for="plaintext">Your Message</label>
       <textarea id="plaintext" rows="5" placeholder="Type the message you want to encrypt…"></textarea>
@@ -38,12 +38,6 @@
     <div class="input-section">
       <label for="encryptPassword">Session Password (shared secret)</label>
       <input type="password" id="encryptPassword" placeholder="Password used to encrypt/decrypt" />
-    </div>
-    <div class="options-section">
-      <label class="checkbox">
-        <input type="checkbox" id="useDecoys" />
-        <span>Add decoy emoji camouflage (AI obfuscation)</span>
-      </label>
     </div>
     <button id="encryptBtn" class="btn btn-primary btn-lg">
       <i class="fas fa-ghost"></i> Encrypt &amp; Obfuscate

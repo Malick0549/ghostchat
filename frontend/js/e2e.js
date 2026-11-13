@@ -19,7 +19,7 @@
  * tell whether the other has the SAME key before a message is sent.
  */
 window.GhostE2E = (() => {
-    const P1 = '🔐E2E1:', P2 = '🔐E2E2:';
+    const P1 = '🔐E2E1:', P2 = '🔐E2E2:', P3 = '🔐E2E3:';
     const VAULT_ITER = 600000;
     const enc = new TextEncoder(), dec = new TextDecoder();
     const subtle = (globalThis.crypto || {}).subtle;
@@ -401,8 +401,41 @@ window.GhostE2E = (() => {
         return dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12), additionalData: k.aad }, k.key, raw.slice(12)));
     }
 
+
+    // ── Password mode for the main-page Encrypt / Decrypt tool ──────────────────
+    // Runs fully in the browser: the message and password never reach the server.
+    // AES-256-GCM, key from the password with PBKDF2-SHA256 (600,000 rounds, random salt).
+    // Packet = P3 + base64( iterations(4) | salt(16) | iv(12) | ciphertext+tag ), shown as emoji.
+    // The iteration count and a fixed label are bound into GCM as additional data, so a packet
+    // that was edited in any way fails to open instead of producing wrong text.
+    const PW_LABEL = enc.encode('GhostChat-E2E3');
+    const PW_MIN_ITER = 100000, PW_MAX_ITER = 2000000;
+    const pwAad = hdr => { const a = new Uint8Array(PW_LABEL.length + 4); a.set(PW_LABEL, 0); a.set(hdr, PW_LABEL.length); return a; };
+    async function pwEncrypt(text, pass) {
+        if (!subtle) throw new Error('This browser cannot do secure encryption');
+        if (typeof pass !== 'string' || !pass) throw new Error('A password is required');
+        const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+        const hdr = new Uint8Array(4); new DataView(hdr.buffer).setUint32(0, VAULT_ITER);
+        const key = await passKey(pass, salt, VAULT_ITER);
+        const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: pwAad(hdr) }, key, enc.encode(String(text))));
+        const out = new Uint8Array(32 + ct.length); out.set(hdr, 0); out.set(salt, 4); out.set(iv, 20); out.set(ct, 32);
+        return toEmoji(P3 + b64(out));
+    }
+    async function pwDecrypt(packet, pass) {
+        const p = unwrap(String(packet || '').trim());
+        if (!p.startsWith(P3)) throw new Error('not_pw_packet');
+        let raw; try { raw = unb64(p.slice(P3.length).replace(/\s+/g, '')); } catch (_) { throw new Error('damaged'); }
+        if (raw.length < 32 + 16) throw new Error('damaged');
+        const hdr = raw.slice(0, 4), iter = new DataView(hdr.buffer, hdr.byteOffset, 4).getUint32(0);
+        if (iter < PW_MIN_ITER || iter > PW_MAX_ITER) throw new Error('damaged');
+        try {
+            const key = await passKey(pass, raw.slice(4, 20), iter);
+            return dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(20, 32), additionalData: pwAad(hdr) }, key, raw.slice(32)));
+        } catch (_) { throw new Error('wrong_password'); }
+    }
+
     return {
-        P1, P2,
+        P1, P2, P3,
         wrap: s => toEmoji(String(s)),
         unwrap: s => unwrap(String(s)),
         toDisplay: s => (typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2))) ? toEmoji(s) : s,
@@ -419,6 +452,7 @@ window.GhostE2E = (() => {
         getMode, getDefault, getOverride, setDefault, setOverride,
         // send / receive
         encryptFor, decrypt,
+        pwEncrypt, pwDecrypt, isPw: s => { try { return unwrap(String(s || '').trim()).startsWith(P3); } catch (_) { return false; } },
         // status
         manualStatus, manualInfo, manualShare,
         async autoInfo(cid) { const k = await _convKey(cid).catch(() => null); return { ready: !!k, safety: k ? k.fp : null }; },

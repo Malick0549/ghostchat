@@ -1,7 +1,7 @@
 /**
  * GHOSTCHAT DECRYPTION MODULE  v3.2
- * Calls /api/decrypt (password-based AES-256 + emoji packet).
- * All crypto happens server-side.
+ * New packets (AES-256-GCM) are opened in the browser with GhostE2E.pwDecrypt.
+ * Older packets (made by the previous server-side tool) still open through /api/decrypt.
  *
  * FIX: same issue as encrypt.js — never dispatched the `ghostchat:decrypt` /
  * `ghostchat:error` events dashboard.js listens for, so notifications/sound
@@ -80,7 +80,8 @@ window.DecryptionModule = {
             return;
         }
 
-        if (!packet.includes('GHOST')) {
+        const isNew = !!window.GhostE2E?.isPw?.(packet);
+        if (!isNew && !packet.includes('GHOST')) {
             this._showError(
                 'Invalid packet format — make sure you pasted the <strong>complete</strong> ' +
                 'encrypted output including the GHOST separator parts.'
@@ -91,10 +92,22 @@ window.DecryptionModule = {
         this._setLoading(true);
 
         try {
-            const result = await window.GhostChatAPI.decryptSimple(packet, password);
+            let result;
+            if (isNew) {
+                try {
+                    result = { success: true, decrypted_message: await window.GhostE2E.pwDecrypt(packet, password), algorithm: 'AES-256-GCM' };
+                } catch (e) {
+                    result = { success: false, error: e.message === 'wrong_password'
+                        ? 'Wrong password, or the message was changed after it was encrypted.'
+                        : 'This packet looks damaged. Copy the complete message again.' };
+                }
+            } else {
+                result = await window.GhostChatAPI.decryptSimple(packet, password);
+                if (result.success) result.algorithm = 'AES-256-CBC (older message)';
+            }
 
             if (result.success) {
-                this._showResult(result.decrypted_message);
+                this._showResult(result.decrypted_message, result.algorithm);
                 if (window.UI) UI.showToast('Message decrypted!', 'success');
                 if (window.UI?.playSound) window.UI.playSound('success');
                 window.dispatchEvent(new CustomEvent('ghostchat:decrypt', {}));
@@ -122,7 +135,7 @@ window.DecryptionModule = {
         }
     },
 
-    _showResult(plaintext) {
+    _showResult(plaintext, algorithm) {
         const div = document.getElementById('decryptResult');
         if (!div) return;
         div.innerHTML = `
@@ -132,7 +145,7 @@ window.DecryptionModule = {
                         border-radius:var(--r2);">
                 <p style="font-family:var(--mono);font-size:.75rem;
                            color:var(--green);margin-bottom:12px;">
-                    ✓ DECRYPTION SUCCESSFUL — AES-256-CBC
+                    ✓ DECRYPTION SUCCESSFUL — ${this._esc(algorithm || 'AES-256')}
                 </p>
                 <label style="font-family:var(--mono);font-size:.7rem;
                               letter-spacing:.1em;text-transform:uppercase;

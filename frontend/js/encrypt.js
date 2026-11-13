@@ -1,7 +1,7 @@
 /**
  * GHOSTCHAT ENCRYPTION MODULE  v3.2
- * Calls /api/encrypt (password-based AES-256 + emoji packet).
- * All crypto happens server-side — this module only handles UI.
+ * Password-based AES-256-GCM + emoji packet, done entirely in the browser (GhostE2E.pwEncrypt):
+ * the message and the password are never sent to the server.
  *
  * FIX: this module never dispatched the `ghostchat:encrypt` / `ghostchat:error`
  * window events that dashboard.js listens for — meaning the notification
@@ -48,18 +48,22 @@ window.EncryptionModule = {
     async _encrypt() {
         const plaintext = (document.getElementById('plaintext')?.value || '').trim();
         const password  = (document.getElementById('encryptPassword')?.value || '').trim();
-        const useDecoys = document.getElementById('useDecoys')?.checked || false;
 
         if (!plaintext) { this._showError('Please enter a message to encrypt'); return; }
         if (!password)  { this._showError('Please enter an encryption password'); return; }
+        if (password.length < 8) { this._showError('Use a password of at least 8 characters. A short password can be guessed.'); return; }
 
         this._setLoading(true);
 
         try {
-            const result = await window.GhostChatAPI.encryptSimple(plaintext, password, useDecoys);
+            let result;
+            try {
+                result = { success: true, algorithm: 'AES-256-GCM', emoji_message: await window.GhostE2E.pwEncrypt(plaintext, password) };
+            } catch (e) {
+                result = { success: false, error: e.message || 'Encryption failed' };
+            }
 
             if (result.success) {
-                if (window.GhostE2E?.wrap) result.emoji_message = window.GhostE2E.wrap(result.emoji_message);
                 this._lastPacket = result.emoji_message;
                 this._showResult(result);
                 this._showExport(true);
@@ -98,7 +102,7 @@ window.EncryptionModule = {
             <div style="margin-top:20px;padding:16px;background:rgba(0,255,136,0.07);
                         border:1px solid rgba(0,255,136,0.2);border-radius:var(--r2);">
                 <p style="font-family:var(--mono);font-size:.75rem;color:var(--green);margin-bottom:12px;">
-                    ✓ ENCRYPTION COMPLETE — ${result.algorithm || 'AES-256-CBC'} + EMOJI OBFUSCATION
+                    ✓ ENCRYPTION COMPLETE — ${result.algorithm || 'AES-256-GCM'} + EMOJI ENCODING · DONE IN YOUR BROWSER
                 </p>
                 <label style="font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
                               text-transform:uppercase;color:var(--t2);display:block;margin-bottom:8px;">
