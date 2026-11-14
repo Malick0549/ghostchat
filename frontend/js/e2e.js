@@ -406,8 +406,25 @@ window.GhostE2E = (() => {
         const dev = await idbGet(devSlot());
         if (dev && deviceId && dev !== deviceId) { await wipeLocal(); _announceMoved(); }
     }
+    async function hasLocalKeys() { return !!(_me && await idbGet(`me:${_me}`)); }
+    // Put the keys (and backed-up manual + group keys) onto THIS device using the recovery passphrase, right here, no sign-out needed.
+    async function restoreHere(pass) {
+        if (!_me) throw new Error('Not signed in.');
+        if (await hasLocalKeys()) throw new Error('This device already has your keys.');
+        const v = await api('GET', '/api/keys/vault');
+        if (!v.ok) throw new Error('Could not reach the server. Check your connection and try again.');
+        if (!v.data.vault) throw new Error('No recovery passphrase was ever set for this account, so there is nothing to restore.');
+        let jwk; try { jwk = await openVault(v.data.vault, pass); } catch (_) { throw new Error('That is not your recovery passphrase.'); }
+        _priv = await importPrivate(jwk); _pubJwk = cleanJwk(jwk); _unlockPass = pass;
+        await idbPut(`me:${_me}`, { priv: _priv, pub: _pubJwk });
+        _autoP = Promise.resolve(true); _convKeys.clear();
+        const r = await _afterUnlock();
+        try { window.dispatchEvent(new CustomEvent('ghoste2e:changed')); } catch (_) {}
+        return { ok: true, moved: r === 'moved' };
+    }
     // Move: prove the passphrase, save everything to the encrypted backup, check it reads back, then erase it HERE.
     async function moveOut(pass) {
+        if (!(await hasLocalKeys())) throw new Error('This device does not have your keys, so there is nothing to move.');
         if (!(await ensureAuto())) throw new Error('Secure messaging is not unlocked on this device, so there is nothing to move.');
         const v = await api('GET', '/api/keys/vault');
         if (!v.ok) throw new Error('Could not reach the server. Check your connection and try again.');
@@ -544,6 +561,6 @@ window.GhostE2E = (() => {
         // manual setup
         dhStart, dhReset, importCode, randomCreate, passphrase, passStrength, manualRetire, manualWipe,
         backup, restore,
-        moveOut, handleMoved,
+        moveOut, handleMoved, restoreHere, hasLocalKeys,
     };
 })();

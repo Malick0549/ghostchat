@@ -4,8 +4,8 @@
  */
 window.GC_LEGAL = {
   operator:      'GhostChat',                 // your name, or your company's legal name
-  contactEmail:  '',                          // e.g. 'support@yourdomain.com'   <-- REQUIRED
-  securityEmail: '',                          // e.g. 'security@yourdomain.com'  (falls back to contactEmail)
+  contactEmail:  'abdulaiabdulmalick@gmail.com',                          // e.g. 'support@yourdomain.com'   <-- REQUIRED
+  securityEmail: 'abdulaiabdulmalick@gmail.com',                          // e.g. 'security@yourdomain.com'  (falls back to contactEmail)
   country:       'Ghana',                     // country whose law governs the Terms
   version:       '2026-11-13',                // must match TERMS_VERSION in flask_app.py
   effective:     '13 November 2026',

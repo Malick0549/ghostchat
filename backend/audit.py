@@ -85,6 +85,22 @@ EVENTS = {
     'message_received':         ('Message received',        'info',     'chat'),
     'message_deleted':          ('Message deleted',         'info',     'chat'),
     'message_restored':         ('Delete undone',           'info',     'chat'),
+    # groups
+    'group_created':            ('Group created',           'info',     'chat'),
+    'group_updated':            ('Group renamed / changed', 'info',     'chat'),
+    'group_deleted':            ('Group deleted',           'warning',  'chat'),
+    'group_member_added':       ('Group member added',      'info',     'chat'),
+    'group_member_removed':     ('Group member removed',    'info',     'chat'),
+    'group_left':               ('Left a group',            'info',     'chat'),
+    'group_message_sent':       ('Group message sent',      'info',     'chat'),
+    'group_file_sent':          ('Group file sent',         'info',     'chat'),
+    'group_message_deleted':    ('Group message deleted',   'info',     'chat'),
+    # keys and verification
+    'e2e_key_restore':          ('Recovery vault opened (new device unlocking keys)', 'warning', 'account'),
+    'e2e_key_release':          ('Keys released for a move', 'warning', 'account'),
+    'e2e_key_move':             ('Keys moved to a new device', 'warning', 'account'),
+    'verification_resent':      ('Verification email re-sent', 'info',  'auth'),
+    '2fa_resent':               ('2FA code re-sent',        'info',     'auth'),
     # admin actions
     'admin_email_sent':         ('Admin emailed a user',    'info',     'admin'),
     'admin_broadcast':          ('Admin sent a broadcast',  'info',     'admin'),
@@ -98,7 +114,8 @@ CATEGORIES = ['auth', 'security', 'account', 'chat', 'admin', 'system']
 SEVERITIES = ['info', 'warning', 'critical']
 # Events that justify a (slow) geo lookup; the rest only use the cache.
 _LOOKUP_EVENTS = {'login', 'login_failed', 'register', '2fa_failed', 'brute_force_suspected',
-                  'login_blocked_disabled', 'password_reset_requested', 'admin_denied'}
+                  'login_blocked_disabled', 'password_reset_requested', 'admin_denied',
+                  'e2e_key_restore', 'e2e_key_move', 'e2e_key_release', 'password_changed', 'group_created'}
 
 KINDS = {
     'guide':    ('Guide',          '#6d5bd0'),
@@ -108,7 +125,7 @@ KINDS = {
     'custom':   ('Message',        '#5a6073'),
 }
 
-CHAT_TYPES = ['chat', 'image', 'audio', 'video']
+CHAT_TYPES = ['chat', 'image', 'audio', 'video', 'document']
 
 
 def _iso(dt):
@@ -314,6 +331,18 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         ('POST', r'^/api/profile/avatar$', 'avatar_changed', 'Profile photo changed'),
         ('DELETE', r'^/api/contacts/[^/]+$', 'contact_removed', 'Removed a contact'),
         ('POST', r'^/api/contacts/[^/]+/block$', 'contact_blocked', 'Blocked a contact'),
+        ('POST', r'^/api/groups$', 'group_created', 'Created a group'),
+        ('PUT', r'^/api/groups/[^/]+$', 'group_updated', 'Changed a group'),
+        ('DELETE', r'^/api/groups/[^/]+$', 'group_deleted', 'Deleted a group'),
+        ('POST', r'^/api/groups/[^/]+/members$', 'group_member_added', 'Added people to a group'),
+        ('DELETE', r'^/api/groups/[^/]+/members/[^/]+$', 'group_member_removed', 'Removed someone from a group'),
+        ('POST', r'^/api/groups/[^/]+/leave$', 'group_left', 'Left a group'),
+        ('POST', r'^/api/groups/[^/]+/messages$', 'group_message_sent', 'Group message (content is end-to-end encrypted)'),
+        ('POST', r'^/api/groups/[^/]+/media$', 'group_file_sent', 'Encrypted file sent to a group'),
+        ('DELETE', r'^/api/groups/[^/]+/messages/[^/]+$', 'group_message_deleted', 'Deleted a group message'),
+        ('GET', r'^/api/keys/vault$', 'e2e_key_restore', 'Recovery vault fetched to unlock keys on a device'),
+        ('POST', r'^/api/auth/resend-verification$', 'verification_resent', 'Asked for the verification email again'),
+        ('POST', r'^/api/auth/2fa/resend$', '2fa_resent', 'Asked for a new 2FA code'),
         ('POST', r'^/api/admin/activity-logs/clear$', 'audit_cleared', 'Audit log cleared with the old Clear Logs button'),
     ]
 

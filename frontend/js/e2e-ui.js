@@ -435,7 +435,35 @@ window.GhostE2EUI = (() => {
             </div>
             <div class="setting-sub" style="margin-top:10px">Keep your recovery passphrase safe: without it, nobody (including GhostChat) can restore your keys. If this device is lost or broken, you can still sign in on a new one with the passphrase.</div>
           </div></div>`;
-        el.appendChild(box);
+        const rb = document.createElement('div'); rb.className = 'gc-restore';
+        rb.innerHTML = `<h3 style="margin-top:22px">Restore my keys on this device</h3>
+          <div class="setting-row"><div style="flex:1;min-width:0">
+            <div id="gcRsState" class="setting-sub" style="font-weight:600"></div>
+            <div id="gcRsForm" style="margin-top:10px;display:none;flex-direction:column;gap:8px;max-width:360px">
+              <div class="setting-sub">Type your recovery passphrase to put your keys on <b>this</b> device. They will be erased from any other device.</div>
+              <input type="password" id="gcRsPass" name="gc-restore-pass" placeholder="Your recovery passphrase" autocomplete="off" data-lpignore="true" data-1p-ignore aria-label="Recovery passphrase" style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg2,transparent);color:inherit;font:inherit" />
+              <button type="button" class="btn btn-primary" id="gcRsBtn" disabled>Restore keys here</button>
+              <div id="gcRsMsg" role="status" style="font-size:13px"></div>
+            </div></div></div>`;
+        el.appendChild(box); el.appendChild(rb);
+        const rs = { st: rb.querySelector('#gcRsState'), form: rb.querySelector('#gcRsForm'), pass: rb.querySelector('#gcRsPass'), btn: rb.querySelector('#gcRsBtn'), msg: rb.querySelector('#gcRsMsg') };
+        async function refreshRestore() {
+            const has = await E().hasLocalKeys();
+            rs.st.innerHTML = has ? '<i class="fas fa-circle-check" style="color:var(--green,#2fb36b)"></i> This device has your keys.' : '<i class="fas fa-triangle-exclamation" style="color:var(--amber,#d98a00)"></i> This device does not have your keys, so it cannot read secure messages.';
+            rs.form.style.display = has ? 'none' : 'flex';
+            box.style.display = (has || box.dataset.done) ? '' : 'none';
+        }
+        rs.pass.addEventListener('input', () => { rs.btn.disabled = rs.pass.value.length < 8; });
+        rs.btn.addEventListener('click', async () => {
+            rs.btn.disabled = true; rs.msg.style.color = ''; rs.msg.textContent = 'Checking your passphrase…';
+            try {
+                await E().restoreHere(rs.pass.value); rs.pass.value = '';
+                rs.msg.style.color = 'var(--green,#2fb36b)'; rs.msg.textContent = 'Done. Your keys are on this device and your old messages can be read here.';
+                await refreshRestore();
+            } catch (e) { rs.msg.style.color = 'var(--red,#e5484d)'; rs.msg.textContent = e.message || 'Could not restore the keys.'; rs.btn.disabled = false; }
+        });
+        window.addEventListener('ghoste2e:changed', refreshRestore);
+        refreshRestore();
         const pass = box.querySelector('#gcMovePass'), ok = box.querySelector('#gcMoveOk'), btn = box.querySelector('#gcMoveBtn'), msg = box.querySelector('#gcMoveMsg');
         const upd = () => { btn.disabled = !(pass.value.length >= 8 && ok.checked); };
         pass.addEventListener('input', upd); ok.addEventListener('change', upd);
@@ -443,9 +471,9 @@ window.GhostE2EUI = (() => {
             btn.disabled = true; msg.style.color = ''; msg.textContent = 'Saving and checking your backup…';
             try {
                 const r = await E().moveOut(pass.value);
-                pass.value = '';
+                pass.value = ''; box.dataset.done = '1'; refreshRestore();
                 box.querySelector('#gcMoveForm').innerHTML = `<div style="color:var(--green,#2fb36b);font-weight:600"><i class="fas fa-circle-check"></i> Your keys were moved off this device.</div>
-                  <div class="setting-sub">Saved: ${r.contacts} manual-key contact(s) and ${r.groups} group key(s), plus your automatic key. Now sign in on the new device and enter your recovery passphrase when asked.</div>
+                  <div class="setting-sub">Saved: ${r.contacts} manual-key contact(s) and ${r.groups} group key(s), plus your automatic key. Now sign in on the new device and enter your recovery passphrase when asked, or enter it in the box below to bring the keys back here.</div>
                   <button type="button" class="btn btn-primary" id="gcMoveOut" style="max-width:220px">Sign out here</button>`;
                 box.querySelector('#gcMoveOut').onclick = async () => { try { await window.GhostChatAPI?.logout(); } catch (_) {} window.location.href = 'login.html'; };
             } catch (e) { msg.style.color = 'var(--red,#e5484d)'; msg.textContent = e.message || 'Could not move the keys.'; upd(); }
