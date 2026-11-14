@@ -31,6 +31,7 @@ window.GhostE2E = (() => {
     const _convKeys = new Map();               // automatic conversation keys
     const _statusCache = new Map();            // manual readiness cache
     let onKeyChange = null;
+    let _unlockPass = null;                    // recovery passphrase just typed on this device (kept only until setup finishes)
     let _ttl = 5000;                           // how long a 'ready' answer is trusted (ms)
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -126,7 +127,7 @@ window.GhostE2E = (() => {
                     if (!pass) break;
                     try {
                         const privJwk = await openVault(v.data.vault, pass);
-                        _priv = await importPrivate(privJwk); _pubJwk = cleanJwk(privJwk);
+                        _priv = await importPrivate(privJwk); _pubJwk = cleanJwk(privJwk); _unlockPass = pass;
                     } catch (_) { alert('Wrong passphrase.'); }
                 }
                 if (!_priv && confirm('Create NEW secure-message keys instead?\n\nOld automatic-mode messages will no longer be readable.')) await _createAuto();
@@ -345,6 +346,83 @@ window.GhostE2E = (() => {
         return { hasKey: !!a, kid: a?.kid || null, method: a?.method || null, count: rec.keys.length };
     }
 
+
+    // ── group keys live in their own small store (see groups.js) ─────────────
+    const gStore = (() => {
+        let p = null;
+        const open = () => p || (p = new Promise((res, rej) => {
+            const r = indexedDB.open('ghostchat-groups', 1);
+            r.onupgradeneeded = () => r.result.createObjectStore('k');
+            r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+        }));
+        const run = (mode, fn) => open().then(db => new Promise((res, rej) => { const t = db.transaction('k', mode), q = fn(t.objectStore('k')); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }));
+        return {
+            async exportMine() {
+                const out = {}; const keys = (await run('readonly', s => s.getAllKeys())) || [];
+                for (const k of keys) if (typeof k === 'string' && k.startsWith(`${_me}|`)) out[k] = await run('readonly', s => s.get(k));
+                return out;
+            },
+            async importMine(obj) {
+                let n = 0;
+                for (const [k, v] of Object.entries(obj || {})) {
+                    if (typeof k !== 'string' || !k.startsWith(`${_me}|`) || typeof v !== 'string') continue;
+                    if (!(await run('readonly', s => s.get(k)))) { await run('readwrite', s => s.put(v, k)); n++; }
+                }
+                return n;
+            },
+            async wipeMine() {
+                const keys = (await run('readonly', s => s.getAllKeys())) || [];
+                for (const k of keys) if (typeof k === 'string' && k.startsWith(`${_me}|`)) await run('readwrite', s => s.delete(k));
+            },
+        };
+    })();
+
+    // ── one device at a time ────────────────────────────────────────────────
+    const devSlot = () => `device:${_me}`;
+    const newDeviceId = () => b64u(crypto.getRandomValues(new Uint8Array(18)));
+    async function wipeLocal() {
+        for (const k of await idbKeys()) {
+            if (typeof k !== 'string') continue;
+            if (k === `me:${_me}` || k === devSlot() || k.startsWith(`manual:${_me}:`)) await idbDel(k);
+        }
+        try { await gStore.wipeMine(); } catch (_) {}
+        _priv = null; _pubJwk = null; _autoP = null; _convKeys.clear(); _statusCache.clear();
+        try { localStorage.removeItem(prefKey()); } catch (_) {}
+    }
+    function _announceMoved() { try { window.dispatchEvent(new CustomEvent('ghoste2e:moved')); } catch (_) {} }
+    // After keys are unlocked on this device: bring over backed-up manual + group keys, then claim the keys.
+    async function _afterUnlock() {
+        if (_unlockPass) { try { await restore(_unlockPass); } catch (_) {} _unlockPass = null; }
+        let dev = await idbGet(devSlot());
+        const r = await api('GET', '/api/keys/device');
+        if (!r.ok) return;
+        const srv = r.data.device_id;
+        if (dev && srv && srv !== dev) { await wipeLocal(); _announceMoved(); return 'moved'; }   // keys were taken by another device
+        if (!dev) { dev = newDeviceId(); await idbPut(devSlot(), dev); }
+        if (srv !== dev) await api('POST', '/api/keys/device', { action: 'claim', device_id: dev });
+    }
+    // Live message from the server: another device just took the keys.
+    async function handleMoved(deviceId) {
+        const dev = await idbGet(devSlot());
+        if (dev && deviceId && dev !== deviceId) { await wipeLocal(); _announceMoved(); }
+    }
+    // Move: prove the passphrase, save everything to the encrypted backup, check it reads back, then erase it HERE.
+    async function moveOut(pass) {
+        if (!(await ensureAuto())) throw new Error('Secure messaging is not unlocked on this device, so there is nothing to move.');
+        const v = await api('GET', '/api/keys/vault');
+        if (!v.ok) throw new Error('Could not reach the server. Check your connection and try again.');
+        if (!v.data.vault) throw new Error('Your account has no recovery passphrase, so the keys cannot be moved. Set one first (see the note below).');
+        try { await openVault(v.data.vault, pass); } catch (_) { throw new Error('That is not your recovery passphrase.'); }
+        const res = await backup(pass);
+        const chk = await api('GET', '/api/keys/manual-vault');
+        try { await openVault(chk.data.vault, pass); } catch (_) { throw new Error('The backup could not be verified, so nothing was erased.'); }
+        let dev = await idbGet(devSlot());
+        const rel = await api('POST', '/api/keys/device', { action: 'release', device_id: dev || null });
+        if (!rel.ok) throw new Error(rel.data.error || 'Could not release the keys. Nothing was erased.');
+        await wipeLocal();
+        return res;
+    }
+
     // ── backup / restore of manual keys ─────────────────────────────────────
     async function backup(pass) {
         if (!pass || pass.length < 8) throw new Error('Use a backup passphrase of at least 8 characters.');
@@ -352,10 +430,11 @@ window.GhostE2E = (() => {
         for (const k of await idbKeys()) {
             if (typeof k === 'string' && k.startsWith(`manual:${_me}:`)) manual[k.split(':').slice(2).join(':')] = await idbGet(k);
         }
-        const vault = await makeVault({ v: 1, prefs: prefs(), manual }, pass);
+        const groups = await gStore.exportMine().catch(() => ({}));
+        const vault = await makeVault({ v: 1, prefs: prefs(), manual, groups }, pass);
         const r = await api('PUT', '/api/keys/manual-vault', { vault });
         if (!r.ok) throw new Error(r.data.error || 'Could not save the backup. Check your connection.');
-        return { contacts: Object.keys(manual).length };
+        return { contacts: Object.keys(manual).length, groups: Object.keys(groups).length };
     }
     async function restore(pass) {
         const r = await api('GET', '/api/keys/manual-vault');
@@ -370,11 +449,12 @@ window.GhostE2E = (() => {
             await saveManual(cid, rec);
             if (rec.active) await publishStatus(cid, rec.active);
         }
+        let g = 0; try { g = await gStore.importMine(data.groups); } catch (_) {}
         const p = prefs(), bp = data.prefs || {};
         for (const [cid, m] of Object.entries(bp.overrides || {})) if (!(cid in p.overrides)) p.overrides[cid] = m;
         savePrefs(p);
         emit(null);
-        return { keys: n, contacts: Object.keys(data.manual || {}).length };
+        return { keys: n, groups: g, contacts: Object.keys(data.manual || {}).length };
     }
 
     // ══ PUBLIC API ═══════════════════════════════════════════════════════════
@@ -443,11 +523,14 @@ window.GhostE2E = (() => {
         isE2E: s => { s = unwrap(s); return typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2)); },
         set onKeyChange(fn) { onKeyChange = fn; },
         setStatusTtl(ms) { _ttl = Math.max(0, +ms || 0); },
-        bindUser(userId) { _me = String(userId); },          // modes only, no key setup (Settings page)
+        bindUser(userId) {
+            _me = String(userId);
+            if (!_csrf || _csrf() === '') _csrf = () => ((document.cookie.match(/(?:^|;\s*)gc_csrf=([^;]+)/) || [])[1] || '');
+        },          // modes only, no key setup (Settings page)
         init(userId, baseUrl, csrfGetter) {
             _me = String(userId); _base = baseUrl || ''; _csrf = csrfGetter || (() => '');
             _autoP = null; _priv = null; _pubJwk = null; _convKeys.clear(); _statusCache.clear();
-            return getDefault() === 'auto' ? ensureAuto() : Promise.resolve(true);
+            return getDefault() === 'auto' ? ensureAuto().then(async ok => { if (ok) { try { await _afterUnlock(); } catch (e) { console.warn('device check', e); } } return ok; }) : Promise.resolve(true);
         },
         // mode
         getMode, getDefault, getOverride, setDefault, setOverride,
@@ -461,5 +544,6 @@ window.GhostE2E = (() => {
         // manual setup
         dhStart, dhReset, importCode, randomCreate, passphrase, passStrength, manualRetire, manualWipe,
         backup, restore,
+        moveOut, handleMoved,
     };
 })();

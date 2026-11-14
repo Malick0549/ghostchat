@@ -74,7 +74,7 @@
     }
   </style>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-</head>
+<style>.sidebar-legal{padding:10px 14px;font-size:12px;text-align:center;color:var(--t3,#889);border-top:1px solid var(--border,rgba(255,255,255,.1))}.sidebar-legal a{color:var(--t2,#9aa);text-decoration:underline}.sidebar-legal a:hover{color:var(--primary,#4dd)}</style></head>
 <body data-theme="dark">
 
 <div class="cyber-bg" aria-hidden="true"></div>
@@ -131,9 +131,11 @@
 
     <div class="contact-search-wrap">
       <i class="fas fa-search" aria-hidden="true"></i>
-      <input type="search" id="contactSearch"
+      <input type="search" id="contactSearch" name="gc-contact-filter"
              placeholder="Search contacts… (Ctrl+K)"
-             aria-label="Search contacts" autocomplete="off" />
+             aria-label="Search contacts" autocomplete="off" autocapitalize="off" spellcheck="false"
+             data-lpignore="true" data-1p-ignore data-form-type="other" readonly
+             onfocus="this.removeAttribute('readonly')" />
     </div>
 
     <div class="contacts-list" id="contactsList" role="list"
@@ -143,6 +145,7 @@
         <span>Loading contacts…</span>
       </div>
     </div>
+    <div class="sidebar-legal"><a href="terms.html" target="_blank" rel="noopener">Terms</a> · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · <a href="security.html" target="_blank" rel="noopener">Security</a> · <a href="status.html" target="_blank" rel="noopener">Status</a></div>
 
   </aside>
 

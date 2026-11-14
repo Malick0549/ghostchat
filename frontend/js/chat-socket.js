@@ -975,6 +975,7 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
                 path: '/socket.io',
             });
 
+            this.socket.on('keys_moved', d => { try { window.GhostE2E?.handleMoved(d && d.device_id); } catch (_) {} });
             this.socket.on('connect', () => {
                 console.log('✅ Socket connected');
                 this.connected = true;
@@ -1717,9 +1718,19 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
             this._searchDebounce = setTimeout(() => this.searchUsers(val), 250);
         });
 
-        document.getElementById('contactSearch')?.addEventListener('input', e => {
-            this._filterContacts(e.target.value.trim());
-        });
+        // Browsers / password managers can fill a saved username into a search box on the first
+        // click. Only react to real typing, and wipe anything that was filled in by itself.
+        (() => {
+            const cs = document.getElementById('contactSearch');
+            if (!cs) return;
+            cs.addEventListener('input', e => {
+                if (!e.isTrusted || document.activeElement !== cs) { cs.value = ''; this._filterContacts(''); return; }
+                this._filterContacts(cs.value.trim());
+            });
+            const wipe = () => { if (document.activeElement !== cs && cs.value) { cs.value = ''; this._filterContacts(''); } };
+            window.addEventListener('pageshow', wipe);
+            [300, 1000, 2500].forEach(t => setTimeout(wipe, t));
+        })();
 
         document.getElementById('chatLogout')?.addEventListener('click', async () => {
             await window.GhostChatAPI?.logout();

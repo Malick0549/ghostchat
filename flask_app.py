@@ -79,7 +79,7 @@ try:
         IntegrationToken,
         Contact,
         ContactRequest,   # ── FIX: use the existing dedicated request table instead of a Contact.status hack ──
-        ManualKeyStatus,
+        ManualKeyStatus, KeyDevice,
         ActivityLog,
     )
     DB_AVAILABLE = True
@@ -1290,6 +1290,54 @@ def create_app(test_config=None):
         db.session.commit()
         _log_activity(user.id, 'e2e_backup', 'Manual-key backup updated')
         return jsonify({'success': True}), 200
+
+    # ── One device at a time: who holds this account's secure-message keys ─────
+    _DEVID = re.compile(r'^[A-Za-z0-9_-]{16,64}$')
+
+    @app.route('/api/keys/device', methods=['GET', 'POST'])
+    @limiter.limit("60 per hour")
+    def key_device():
+        user, err = _require_auth()
+        if err:
+            return err
+        row = db.session.get(KeyDevice, user.id)
+        if request.method == 'GET':
+            return jsonify({'device_id': row.device_id if row else None,
+                            'has_row': bool(row)}), 200
+        data = request.get_json(silent=True) or {}
+        action = data.get('action')
+        if action not in ('claim', 'release'):
+            return jsonify({'error': 'Invalid action'}), 400
+        if action == 'release':
+            # only the device that holds the keys (or a first-time setup) may release them
+            dev = data.get('device_id')
+            if row and row.device_id and row.device_id != dev:
+                return jsonify({'error': 'These keys are not on this device'}), 409
+            if not row:
+                row = KeyDevice(user_id=user.id)
+                db.session.add(row)
+            row.device_id = None
+            row.claimed_at = datetime.utcnow()
+            db.session.commit()
+            _log_activity(user.id, 'e2e_key_release', 'Secure-message keys released for a move')
+            return jsonify({'success': True}), 200
+        dev = data.get('device_id')
+        if not isinstance(dev, str) or not _DEVID.match(dev):
+            return jsonify({'error': 'Invalid device id'}), 400
+        moved = bool(row and row.device_id and row.device_id != dev)
+        if not row:
+            row = KeyDevice(user_id=user.id)
+            db.session.add(row)
+        row.device_id = dev
+        row.claimed_at = datetime.utcnow()
+        db.session.commit()
+        if moved:
+            _log_activity(user.id, 'e2e_key_move', 'Secure-message keys moved to a new device')
+            try:
+                socketio.emit('keys_moved', {'device_id': dev}, room=f'user_{user.id}')
+            except Exception:
+                pass
+        return jsonify({'success': True, 'moved': moved}), 200
 
     @app.route('/api/keys/<user_id>', methods=['GET'])
     @limiter.limit("120 per minute")

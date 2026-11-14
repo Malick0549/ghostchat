@@ -33,7 +33,7 @@
     <p class="section-desc text-muted" style="margin-bottom:24px;">Write your message → AES-256-GCM encryption in your browser → emoji encoding. Your message and password never leave this device. Copy and share anywhere.</p>
     <div class="input-section">
       <label for="plaintext">Your Message</label>
-      <textarea id="plaintext" rows="5" placeholder="Type the message you want to encrypt…"></textarea>
+      <textarea id="plaintext" data-voice rows="5" placeholder="Type or speak the message you want to encrypt…"></textarea>
     </div>
     <div class="input-section">
       <label for="encryptPassword">Session Password (shared secret)</label>
@@ -290,6 +290,11 @@
         <button class="dropdown-item" role="menuitem" data-page-nav="profile"><i class="fas fa-user-circle"></i> Profile</button>
         <button class="dropdown-item" role="menuitem" data-page-nav="settings"><i class="fas fa-cog"></i> Settings</button>
         <div style="height:1px;background:var(--border);margin:6px 0;"></div>
+        <a class="dropdown-item" role="menuitem" href="terms.html" target="_blank" rel="noopener"><i class="fas fa-file-contract"></i> Terms &amp; Conditions</a>
+        <a class="dropdown-item" role="menuitem" href="privacy.html" target="_blank" rel="noopener"><i class="fas fa-user-shield"></i> Privacy Policy</a>
+        <a class="dropdown-item" role="menuitem" href="security.html" target="_blank" rel="noopener"><i class="fas fa-lock"></i> Security</a>
+        <a class="dropdown-item" role="menuitem" href="status.html" target="_blank" rel="noopener"><i class="fas fa-signal"></i> System status</a>
+        <div style="height:1px;background:var(--border);margin:6px 0;"></div>
         <button class="dropdown-item danger" role="menuitem" id="ddLogout"><i class="fas fa-sign-out-alt"></i> Sign Out</button>
       </div>
     </header>
@@ -303,7 +308,9 @@
 </div>
 
 <script src="js/ui.js"></script>
+<script src="js/network-status.js"></script>
 <script src="js/api.js"></script>
+<script src="js/voice.js"></script>
 <script src="js/encrypt.js"></script>
 <script src="js/decrypt.js"></script>
 <script src="js/history.js"></script>

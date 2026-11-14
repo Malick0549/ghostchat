@@ -416,7 +416,55 @@ window.GhostE2EUI = (() => {
         const sel = el.querySelector('#e2eDefaultMode');
         sel.value = E().getDefault();
         sel.addEventListener('change', () => { E().setDefault(sel.value); if (window.UI && UI.showToast) UI.showToast('Encryption default saved', 'success'); });
+        mountMove(el);
     }
+
+    // ── "Move my keys to another device" ─────────────────────────────────────
+    function mountMove(el) {
+        const box = document.createElement('div');
+        box.className = 'gc-move';
+        box.innerHTML = `<h3 style="margin-top:22px">Move my keys to another device</h3>
+          <div class="setting-row"><div style="flex:1;min-width:0">
+            <div class="setting-sub">Your secure-message keys can be on <b>one device at a time</b>. Moving them lets the new device read your old messages and groups, and <b>erases them from this device</b>.</div>
+            <div class="setting-sub" style="margin-top:8px"><b>1.</b> Enter your recovery passphrase here and press Move.<br><b>2.</b> On the new device, sign in. When it asks for your recovery passphrase, enter the same one.<br><b>3.</b> Done. If you sign in on a new device later, the old one is wiped automatically.</div>
+            <div id="gcMoveForm" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;max-width:360px">
+              <input type="password" id="gcMovePass" name="gc-move-pass" placeholder="Your recovery passphrase" autocomplete="off" data-lpignore="true" data-1p-ignore aria-label="Recovery passphrase" style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg2,transparent);color:inherit;font:inherit" />
+              <label style="font-size:13px;display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="gcMoveOk" style="margin-top:3px" /> <span>I understand my keys will be erased from this device.</span></label>
+              <button type="button" class="btn btn-primary" id="gcMoveBtn" disabled>Move keys off this device</button>
+              <div id="gcMoveMsg" role="status" style="font-size:13px"></div>
+            </div>
+            <div class="setting-sub" style="margin-top:10px">Keep your recovery passphrase safe: without it, nobody (including GhostChat) can restore your keys. If this device is lost or broken, you can still sign in on a new one with the passphrase.</div>
+          </div></div>`;
+        el.appendChild(box);
+        const pass = box.querySelector('#gcMovePass'), ok = box.querySelector('#gcMoveOk'), btn = box.querySelector('#gcMoveBtn'), msg = box.querySelector('#gcMoveMsg');
+        const upd = () => { btn.disabled = !(pass.value.length >= 8 && ok.checked); };
+        pass.addEventListener('input', upd); ok.addEventListener('change', upd);
+        btn.addEventListener('click', async () => {
+            btn.disabled = true; msg.style.color = ''; msg.textContent = 'Saving and checking your backup…';
+            try {
+                const r = await E().moveOut(pass.value);
+                pass.value = '';
+                box.querySelector('#gcMoveForm').innerHTML = `<div style="color:var(--green,#2fb36b);font-weight:600"><i class="fas fa-circle-check"></i> Your keys were moved off this device.</div>
+                  <div class="setting-sub">Saved: ${r.contacts} manual-key contact(s) and ${r.groups} group key(s), plus your automatic key. Now sign in on the new device and enter your recovery passphrase when asked.</div>
+                  <button type="button" class="btn btn-primary" id="gcMoveOut" style="max-width:220px">Sign out here</button>`;
+                box.querySelector('#gcMoveOut').onclick = async () => { try { await window.GhostChatAPI?.logout(); } catch (_) {} window.location.href = 'login.html'; };
+            } catch (e) { msg.style.color = 'var(--red,#e5484d)'; msg.textContent = e.message || 'Could not move the keys.'; upd(); }
+        });
+    }
+
+    // Shown when another device took the keys while this one was open / signed in.
+    window.addEventListener('ghoste2e:moved', () => {
+        if (document.getElementById('gcMovedOverlay')) return;
+        const o = document.createElement('div'); o.id = 'gcMovedOverlay'; o.setAttribute('role', 'alertdialog'); o.setAttribute('aria-modal', 'true');
+        o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+        o.innerHTML = `<div style="max-width:420px;width:100%;background:var(--bg1,#12151f);color:var(--t1,#eef);border:1px solid var(--border,rgba(255,255,255,.15));border-radius:16px;padding:22px">
+          <h3 style="margin:0 0 10px;font-size:17px"><i class="fas fa-key"></i> Your keys moved to another device</h3>
+          <p style="margin:0 0 10px;font-size:14px;line-height:1.5">You unlocked your secure messages on another device, so they were erased from this one. Your messages are safe; they just can't be read here.</p>
+          <p style="margin:0 0 14px;font-size:14px;line-height:1.5">To use this device again, reload and enter your recovery passphrase. That moves the keys back here and erases them from the other device.</p>
+          <div style="display:flex;gap:10px;justify-content:flex-end"><button type="button" id="gcMovedReload" style="padding:10px 16px;border-radius:10px;border:0;background:var(--primary,#4dd);color:#04060e;font-weight:600;cursor:pointer">Reload</button></div></div>`;
+        document.body.appendChild(o);
+        o.querySelector('#gcMovedReload').onclick = () => location.reload();
+    });
 
     return { open, close, attach, blocked, mountSettings, refreshBadge };
 })();

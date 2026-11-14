@@ -337,3 +337,16 @@ class ManualKeyStatus(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
  
     __table_args__ = (db.UniqueConstraint('user_id', 'contact_id', name='unique_manual_key_status'),)
+
+
+class KeyDevice(db.Model):
+    """Which device currently holds a user's secure-message keys (one at a time).
+
+    Holds only a random device id made by the browser. device_id is NULL right after the
+    keys were "released" for a move, so the next device that unlocks them claims them.
+    """
+    __tablename__ = 'key_devices'
+
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), primary_key=True)
+    device_id = db.Column(db.String(64), nullable=True)
+    claimed_at = db.Column(db.DateTime, default=datetime.utcnow)
