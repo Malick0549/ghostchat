@@ -168,6 +168,8 @@ def install_moderation(app, *, User, Message, Contact, ActivityLog, send_email, 
                             (f'\n\nReason: {reason}' if reason else ''))
         drop_sockets(uid)
         try:
+            _gc = app.extensions.get('gc_group_cleanup')
+            if _gc: _gc(uid)
             Message.query.filter(db.or_(Message.user_id == uid, Message.sender_id == uid,
                                         Message.receiver_id == uid)).delete(synchronize_session=False)
             for t in db.metadata.sorted_tables:                       # everything else that points at this user

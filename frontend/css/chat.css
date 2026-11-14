@@ -1225,3 +1225,17 @@
         margin: 10px;
     }
 }
+/* ── Encrypted documents ─────────────────────────────────────────────── */
+.msg-doc-card {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-width: 220px; max-width: 320px;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06); color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.msg-doc-card:hover { border-color: var(--primary); }
+.msg-doc-card.locked { cursor: default; opacity: .8; }
+.msg-doc-card > i:first-child { font-size: 26px; color: var(--primary); flex: none; }
+.msg-doc-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.msg-doc-info b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-doc-info small { opacity: .7; font-size: 11.5px; }
+@media (max-width: 768px) { .msg-doc-card { min-width: 0; max-width: 100%; } }
+.msg-enc-media{min-width:120px}.msg-enc-loading{display:inline-flex;gap:8px;align-items:center;padding:14px 12px;font-size:13px;opacity:.75}

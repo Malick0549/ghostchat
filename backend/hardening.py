@@ -42,6 +42,9 @@ VERIFY_FAILS     = _int('VERIFY_CODE_MAX_FAILS', 6)       # wrong codes per emai
 MSG_BURST        = _int('MSG_RATE_LIMIT', 30)             # messages per user ...
 MSG_WINDOW_SEC   = _int('MSG_RATE_WINDOW', 10)            # ... per this many seconds
 MEDIA_PER_MIN    = _int('MEDIA_RATE_LIMIT', 10)
+LOG_RETENTION_DAYS    = _int('LOG_RETENTION_DAYS', 180)       # security / activity log entries older than this are deleted
+REPORT_RETENTION_DAYS = _int('REPORT_RETENTION_DAYS', 365)    # closed abuse reports older than this are deleted
+RETENTION_EVERY_HOURS = _int('RETENTION_EVERY_HOURS', 6)
 
 
 def _float(name, default):
@@ -508,6 +511,59 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
                         socketio.server.disconnect(sid)
             except Exception as e:
                 log.warning(f'[hardening] session sweeper: {e}')
+
+    # ── data retention: delete what we no longer need, on a schedule ────────────
+    def prune_old_data():
+        """Deletes expired codes/tokens, old sessions and logs, and long-closed reports. Returns counts."""
+        out = {}
+        now = datetime.utcnow()
+        with app.app_context():
+            try:
+                from backend.models import UserSession, TypingStatus
+                def _del(name, q):
+                    out[name] = q.delete(synchronize_session=False)
+                if LOG_RETENTION_DAYS > 0:
+                    _del('activity_logs', ActivityLog.query.filter(ActivityLog.created_at < now - timedelta(days=LOG_RETENTION_DAYS)))
+                _del('old_sessions', UserSession.query.filter(UserSession.expires_at < now - timedelta(days=30)))
+                _del('typing_rows', TypingStatus.query.filter(TypingStatus.updated_at < now - timedelta(days=1)))
+                try:
+                    from backend.moderation import Report, Suspension
+                    if REPORT_RETENTION_DAYS > 0:
+                        _del('closed_reports', Report.query.filter(Report.status != 'open', Report.resolved_at < now - timedelta(days=REPORT_RETENTION_DAYS)))
+                    _del('expired_suspensions', Suspension.query.filter(Suspension.until.isnot(None), Suspension.until < now - timedelta(days=90)))
+                except Exception as e:
+                    log.warning(f'[retention] moderation tables: {e}')
+                # one-time codes and reset links are useless after they expire, so don't keep them
+                n = 0
+                for u in User.query.filter(User.verification_code.isnot(None), User.verification_code_expires < now).all():
+                    u.verification_code = None; n += 1
+                for u in User.query.filter(User.two_factor_code.isnot(None), User.two_factor_code_expires < now).all():
+                    u.two_factor_code = None; n += 1
+                for u in User.query.filter(User.reset_token.isnot(None), User.reset_token_expires < now).all():
+                    u.reset_token = None; n += 1
+                out['expired_codes'] = n
+                db.session.commit()
+                if any(out.values()):
+                    log.info('[retention] removed ' + ', '.join(f'{v} {k}' for k, v in out.items() if v))
+            except Exception as e:
+                db.session.rollback()
+                log.warning(f'[retention] failed: {e}')
+        return out
+    app.extensions['gc_prune'] = prune_old_data
+
+    def _retention_loop():
+        socketio.sleep(120)                                  # shortly after start-up, then every few hours
+        while True:
+            try:
+                prune_old_data()
+            except Exception as e:
+                log.warning(f'[retention] loop: {e}')
+            socketio.sleep(max(1, RETENTION_EVERY_HOURS) * 3600)
+
+    try:
+        socketio.start_background_task(_retention_loop)
+    except Exception as e:
+        log.warning(f'[hardening] could not start retention task: {e}')
 
     try:
         socketio.start_background_task(_sweeper)

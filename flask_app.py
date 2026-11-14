@@ -92,6 +92,11 @@ except Exception as _mod_err:
     install_moderation = None
     print(f'[moderation] module failed to load: {_mod_err}')
 try:
+    from backend.groups import install_groups
+except Exception as _ge:               # a problem here must never stop the rest of the app starting
+    install_groups = None
+    print(f'[groups] module failed to load: {_ge}')
+try:
     from backend.hardening import install_hardening
 except Exception as _hard_err:
     install_hardening = None
@@ -117,6 +122,8 @@ def _is_https():
         or bool(os.environ.get('RAILWAY'))
     )
 
+
+TERMS_VERSION = '2026-11-13'   # keep in sync with frontend/js/legal-config.js
 
 def create_app(test_config=None):
     global sid_to_user
@@ -666,6 +673,8 @@ def create_app(test_config=None):
 
             if not username or not email or not password:
                 return jsonify({'error': 'Username, email, and password are required'}), 400
+            if data.get('accepted_terms') is not True:
+                return jsonify({'error': 'Please accept the Terms of Service and Privacy Policy to create an account'}), 400
             if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
                 return jsonify({'error': 'Please enter a valid email address'}), 400
             if len(password) < 8:
@@ -687,6 +696,7 @@ def create_app(test_config=None):
             db.session.commit()
 
             _log_activity(user.id, 'register', f'New account: {username}')
+            _log_activity(user.id, 'terms_accepted', f'Terms and Privacy version {TERMS_VERSION}')
             log.info(f'User registered (pending verification): {username}')
 
             sent = _send_email(
@@ -1486,14 +1496,31 @@ def create_app(test_config=None):
     # ═══════════════════════════════════════════════════════════════════════════
 
     @app.route('/health')
+    @limiter.exempt            # status pages poll this; it must never be rate-limited into a false "down"
     def health():
-        return jsonify({
-            'status':      'ok',
+        db_state = 'disabled'
+        if DB_AVAILABLE:
+            try:
+                from sqlalchemy import text as _t
+                db.session.execute(_t('SELECT 1'))
+                db_state = 'connected'
+            except Exception:
+                try: db.session.rollback()
+                except Exception: pass
+                db_state = 'unreachable'
+        resp = jsonify({
+            'status':      'ok' if db_state in ('connected', 'disabled') else 'degraded',
             'service':     'GhostChat API',
             'environment': 'production' if IS_PROD else 'development',
-            'database':    'connected' if DB_AVAILABLE else 'disabled',
+            'database':    db_state,
             'version':     '3.1.0',
-        }), 200
+            'time':        datetime.utcnow().isoformat() + 'Z',
+        })
+        resp.headers['Cache-Control'] = 'no-store'
+        return resp, 200
+
+    for _page in ('terms', 'privacy', 'security', 'status'):
+        app.add_url_rule(f'/{_page}', f'legal_{_page}', (lambda p=_page: app.send_static_file(f'{p}.html')))
 
     @app.route('/')
     def index():
@@ -1525,7 +1552,7 @@ def create_app(test_config=None):
         user, err = _require_auth()
         if err: return err
         contacts = Contact.query.filter_by(user_id=user.id, is_blocked=False).all()
-        _chat_types = ['chat', 'image', 'audio', 'video']
+        _chat_types = ['chat', 'image', 'audio', 'video', 'document']
         result = []
         for c in contacts:
             cu = User.query.get(c.contact_id)
@@ -1731,7 +1758,7 @@ def create_app(test_config=None):
         if err: return err
         limit  = request.args.get('limit', 50, type=int)
         before = request.args.get('before', None)
-        _chat_types = ['chat', 'image', 'audio', 'video']
+        _chat_types = ['chat', 'image', 'audio', 'video', 'document']
         query  = Message.query.filter(
             Message.is_deleted == False, Message.message_type.in_(_chat_types),
             db.or_(
@@ -1788,11 +1815,15 @@ def create_app(test_config=None):
         'image': {'image/jpeg', 'image/png', 'image/gif', 'image/webp'},
         'audio': {'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a'},
         'video': {'video/mp4', 'video/webm', 'video/quicktime'},
+        # Documents are encrypted in the sender's browser before upload, so the
+        # server only ever receives opaque bytes and cannot inspect them.
+        'document': {'application/octet-stream'},
     }
     _MAX_MEDIA_BYTES = {
         'image': 8 * 1024 * 1024,
         'audio': 15 * 1024 * 1024,
         'video': 40 * 1024 * 1024,
+        'document': 41 * 1024 * 1024,   # encrypted photos/voice/video/files: 40 MB + overhead (the app enforces tighter per-kind limits)
     }
 
     @app.route('/api/chat/<contact_id>/media', methods=['POST', 'OPTIONS'])
@@ -1810,7 +1841,16 @@ def create_app(test_config=None):
         media_kind = (request.form.get('media_type') or '').strip().lower()
         caption    = (request.form.get('caption') or '').strip()
         if media_kind not in _ALLOWED_MEDIA_MIMES:
-            return jsonify({'error': "media_type must be 'image', 'audio', or 'video'"}), 400
+            return jsonify({'error': "media_type must be 'image', 'audio', 'video' or 'document'"}), 400
+        if media_kind == 'document':
+            # The note must be an end-to-end packet: every character is one of the 256 fixed
+            # packet emoji (see js/e2e.js), so a plaintext name or note can never slip through.
+            _emo = set()
+            for _a, _b in ((0x1F300,0x1F320),(0x1F330,0x1F335),(0x1F337,0x1F37C),(0x1F380,0x1F393),(0x1F3A0,0x1F3C4),
+                           (0x1F3E0,0x1F3F0),(0x1F400,0x1F43E),(0x1F440,0x1F440),(0x1F442,0x1F44A)):
+                _emo.update(chr(c) for c in range(_a, _b + 1))
+            if not (1 <= len(caption) <= 8000) or any(ch not in _emo for ch in caption):
+                return jsonify({'error': 'Documents must be end-to-end encrypted before sending'}), 400
 
         file = request.files.get('file')
         if not file or not file.filename:
@@ -1841,7 +1881,9 @@ def create_app(test_config=None):
             user_id=user.id, sender_id=user.id, receiver_id=contact_id,
             encrypted_content=caption, message_type=media_kind,
             media_data=data, media_type=mime,
-            file_name=(file.filename or media_kind)[:200], file_size=len(data),
+            # Documents: never store the real file name (it travels inside the encrypted packet).
+            file_name=('encrypted-document' if media_kind == 'document' else (file.filename or media_kind)[:200]),
+            file_size=len(data),
             is_delivered=True,
         )
         db.session.add(msg)
@@ -1870,12 +1912,18 @@ def create_app(test_config=None):
         msg = Message.query.get(message_id)
         if not msg or not msg.media_data:
             return jsonify({'error': 'Not found'}), 404
-        if user.id not in (msg.sender_id, msg.receiver_id):
+        if msg.group_id:                                    # group file: any current member of that group
+            from backend.models import GroupMember
+            if not GroupMember.query.filter_by(group_id=msg.group_id, user_id=user.id).first():
+                return jsonify({'error': 'Forbidden'}), 403
+        elif user.id not in (msg.sender_id, msg.receiver_id):
             return jsonify({'error': 'Forbidden'}), 403
 
-        resp = Response(msg.media_data, mimetype=msg.media_type or 'application/octet-stream')
+        is_doc = msg.message_type == 'document'
+        resp = Response(msg.media_data, mimetype='application/octet-stream' if is_doc else (msg.media_type or 'application/octet-stream'))
         safe_name = (msg.file_name or 'file').replace('"', '')
-        disposition = 'attachment' if request.args.get('download') else 'inline'
+        disposition = 'attachment' if (is_doc or request.args.get('download')) else 'inline'
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
         resp.headers['Content-Disposition'] = f'{disposition}; filename="{safe_name}"'
         resp.headers['Cache-Control'] = 'private, max-age=86400'
         return resp
@@ -1897,6 +1945,10 @@ def create_app(test_config=None):
             return jsonify({'error': 'Message not found'}), 404
         if user.id not in (original.sender_id, original.receiver_id):
             return jsonify({'error': 'Forbidden'}), 403
+        if original.group_id:
+            return jsonify({'error': 'Group messages cannot be forwarded'}), 400
+        if original.message_type == 'document':
+            return jsonify({'error': 'Encrypted documents cannot be forwarded. Send the file again to that person.'}), 400
 
         link = Contact.query.filter_by(user_id=user.id, contact_id=to_contact_id).first()
         if not link:
@@ -1985,7 +2037,7 @@ def create_app(test_config=None):
         if not DB_AVAILABLE:
             return jsonify({'success': True, 'cleared': 0}), 200
 
-        _chat_types = ['chat', 'image', 'audio', 'video']
+        _chat_types = ['chat', 'image', 'audio', 'video', 'document']
         messages = Message.query.filter(
             Message.is_deleted == False, Message.message_type.in_(_chat_types),
             db.or_(
@@ -2122,7 +2174,7 @@ def create_app(test_config=None):
             'total_users': User.query.count(),
             'verified_users': User.query.filter_by(is_verified=True).count(),
             'total_messages': Message.query.filter(
-                Message.message_type.in_(['chat', 'image', 'audio', 'video'])
+                Message.message_type.in_(['chat', 'image', 'audio', 'video', 'document'])
             ).count(),
             'event_counts': event_counts,
         }), 200
@@ -2232,7 +2284,7 @@ def create_app(test_config=None):
         if not contact_id or not user_id: return
         try:
             unread = Message.query.filter_by(sender_id=contact_id, receiver_id=user_id, is_read=False) \
-                .filter(Message.message_type.in_(['chat', 'image', 'audio', 'video'])).all()
+                .filter(Message.message_type.in_(['chat', 'image', 'audio', 'video', 'document'])).all()
             for m in unread:
                 m.is_read = True
                 m.read_at = datetime.utcnow()
@@ -2340,6 +2392,12 @@ def create_app(test_config=None):
             send_email=_send_email, require_admin=_require_admin, require_auth=_require_auth,
             limiter=limiter, admin_limit=ADMIN_MUTATION_LIMIT, socketio=socketio, log=log,
             log_activity=_log_activity, sid_to_user=sid_to_user, db_available=DB_AVAILABLE,
+        )
+
+    if install_groups:
+        install_groups(
+            app, User=User, Message=Message, Contact=Contact, socketio=socketio, log=log,
+            log_activity=_log_activity, require_auth=_require_auth, db_available=DB_AVAILABLE,
         )
 
     return app

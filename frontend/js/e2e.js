@@ -438,6 +438,7 @@ window.GhostE2E = (() => {
         P1, P2, P3,
         wrap: s => toEmoji(String(s)),
         unwrap: s => unwrap(String(s)),
+        toEmoji: s => toEmoji(String(s)),                    // used by group chats to show their packets as emoji
         toDisplay: s => (typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2))) ? toEmoji(s) : s,
         isE2E: s => { s = unwrap(s); return typeof s === 'string' && (s.startsWith(P1) || s.startsWith(P2)); },
         set onKeyChange(fn) { onKeyChange = fn; },

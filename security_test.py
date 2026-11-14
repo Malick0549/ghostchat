@@ -79,11 +79,11 @@ fails=[g for g in b_got if 'failed' in g]
 check('S17 socket message flood is throttled', len(fails)>0, (len(fails), round(time.time()-t0,1)))
 # ── S6 username validation
 c=C(); c.csrf()
-r=c.post('/api/auth/register',{'username':'<img src=x onerror=alert(1)>','email':'xss1@x.com','password':'Str0ng!Pass99'})
+r=c.post('/api/auth/register',{'username':'<img src=x onerror=alert(1)>','email':'xss1@x.com','password':'Str0ng!Pass99','accepted_terms':True})
 check('S6 username with HTML rejected', r.status_code==400, (r.status_code,r.text[:100]))
 # ── S7 password policy
 for pw,why in (('password','common'),('12345678','digits only'),('abcdefgh','letters only'),('x'*200+'A1','too long'),('Sam3user!!','contains username')):
-    c.csrf(); r=c.post('/api/auth/register',{'username':'samuser' if why=='contains username' else 'pwtest'+str(next(_n)),'email':f'pw{next(_n)}@x.com','password':pw if why!='contains username' else 'samuser1234'})
+    c.csrf(); r=c.post('/api/auth/register',{'username':'samuser' if why=='contains username' else 'pwtest'+str(next(_n)),'email':f'pw{next(_n)}@x.com','password':pw if why!='contains username' else 'samuser1234','accepted_terms':True})
     check(f'S7 weak password rejected ({why})', r.status_code==400, (r.status_code,r.text[:80]))
 # ── S8 per-account lockout, rotating IPs
 c=C(); c.csrf(); codes=[]
@@ -92,7 +92,7 @@ c2=C(); c2.csrf(); ok=c2.post('/api/auth/login',{'username':'dave','password':'P
 check('S8 account locks after repeated failures across rotating IPs', 429 in codes and ok.status_code==429, (codes, ok.status_code))
 # ── S9 verify-email brute force
 c=C(); c.csrf()
-reg=c.post('/api/auth/register',{'username':'victimv','email':'victimv@x.com','password':'Str0ng!Pass99'})
+reg=c.post('/api/auth/register',{'username':'victimv','email':'victimv@x.com','password':'Str0ng!Pass99','accepted_terms':True})
 codes=[c.post('/api/auth/verify-email',{'email':'victimv@x.com','code':f'{i:06d}'}).status_code for i in range(30)]
 check('S9 verification-code guessing capped per account', 429 in codes[:12], codes)
 # ── S10 session revoked after password change

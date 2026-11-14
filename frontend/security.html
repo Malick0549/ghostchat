@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#080b12" />
+<meta name="description" content="How GhostChat protects you, its honest limits, and how to report a vulnerability." />
+<title>Security — GhostChat</title>
+<link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+<link rel="stylesheet" href="css/legal.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body class="legal">
+<header class="lg-top"><div class="lg-top-in">
+  <a class="lg-brand" href="index.html"><i class="fas fa-ghost"></i> GhostChat</a>
+  <nav class="lg-nav" aria-label="Legal and status"><a href="terms.html">Terms</a><a href="privacy.html">Privacy</a><a href="security.html" aria-current="page">Security</a><a href="status.html">Status</a><a href="login.html">Sign in</a></nav>
+</div></header>
+<div class="lg-wrap">
+  <nav class="lg-toc" id="lgToc" aria-label="Page sections"></nav>
+  <main class="lg-main" id="main">
+<div class="lg-setup" id="lgSetup"><b>Site owner: setup needed.</b> Add your contact email in <code>js/legal-config.js</code>. Visitors see this box until it is filled in, then it disappears by itself.</div>
+<h1>Security at GhostChat</h1>
+<p class="lg-meta">Effective <span data-legal="effective"></span> · An honest description of what we do, and what we do not claim</p>
+
+<div class="lg-key"><h3>What we promise, and what we don’t</h3>
+<p>We build GhostChat so that we <b>cannot</b> read your text messages or documents, and so that a stolen database does not reveal them. We do <b>not</b> claim the system is unbreakable. No one can truthfully make that claim. This page tells you exactly how it works and where the limits are.</p></div>
+
+<h2>1. How your messages are protected</h2>
+<ul>
+<li><b>End-to-end encryption.</b> Text messages and documents are encrypted in your browser with AES-256-GCM, an authenticated cipher that also detects tampering. We receive only scrambled data.</li>
+<li><b>Automatic keys.</b> Each device makes an ECDH P-256 key pair. Only public keys go to the server. Both people derive the same key (with HKDF) without ever sending it.</li>
+<li><b>Manual keys (optional).</b> You and your contact can set your own key: a Diffie-Hellman exchange, a random key shared by QR or text, or a passphrase stretched with PBKDF2 (600,000 rounds). The key stays on your devices.</li>
+<li><b>Files, photos, voice notes and video.</b> Every file gets its own fresh random key. The file is encrypted before upload, and its name, type and key travel inside an end-to-end encrypted note. The server cannot tell what kind of file it is.</li>
+<li><b>Group chats.</b> A group has its own AES-256-GCM key, made on a member’s device and handed to each member encrypted with that member’s own one-to-one key. The key is versioned: when someone joins, leaves or is removed, a new one is made, so people who left cannot read what comes next and new people cannot read what came before. Each message is bound to its sender so the server cannot pass one member’s message off as another’s.</li>
+<li><b>Password encrypt/decrypt tool.</b> Runs entirely in your browser with AES-256-GCM and PBKDF2 (600,000 rounds, random salt). Your message and password are never sent to us.</li>
+<li><b>Emoji view.</b> Encrypted data can be shown as emoji. This is only a way of displaying it. The encryption is what protects you.</li>
+</ul>
+
+<h2>2. How your account is protected</h2>
+<ul>
+<li>Passwords are stored only as salted one-way hashes. Common and weak passwords are refused.</li>
+<li>Optional two-factor sign-in by email, and email verification for new accounts.</li>
+<li>Limits on sign-in attempts, with temporary lockout and alerts on suspicious activity.</li>
+<li>Sessions end after inactivity and after a maximum time, and are revoked when your password changes.</li>
+<li>Protection against cross-site request forgery, strict content-security rules, secure cookies, HTTPS only, and rate limits on messages and uploads.</li>
+<li>Uploads are checked for allowed type and size. Documents can only be of a short list of common types, are never opened inside GhostChat, and are saved as plain downloads.</li>
+<li>Administrators can suspend or remove abusive accounts. They <b>cannot</b> read end-to-end encrypted messages, files or group conversations.</li>
+<li>Old data is deleted automatically: security logs after 180 days, expired sessions, expired codes and reset links, and closed reports after a year.</li>
+</ul>
+
+<h2 id="limits">3. What we cannot protect you from</h2>
+<ul>
+<li><b>A compromised device.</b> Malware, a malicious browser extension, a stolen unlocked phone or someone looking over your shoulder can read what you can read.</li>
+<li><b>The person you talk to.</b> They can copy, screenshot or share what you send.</li>
+<li><b>Lost keys.</b> We cannot recover them. Back up manual keys using the built-in encrypted backup.</li>
+<li><b>Weak or shared passwords.</b> A guessable password gives little protection.</li>
+<li><b>Information outside the encryption.</b> Who talks to whom, when, message sizes and types, account details and IP addresses are visible to our systems.</li>
+<li><b>Older items.</b> Photos, voice notes and videos sent before end-to-end protection was added, or with encryption switched off, are readable by our servers. Group members can all read and copy what is shared in the group.</li>
+<li><b>Voice typing</b> is processed by your browser’s speech service.</li>
+<li><b>Phishing.</b> Only enter your GhostChat password on this site’s address.</li>
+</ul>
+
+<h2>4. Tips for staying safe</h2>
+<ul>
+<li>Use a long, unique password and turn on two-factor sign-in.</li>
+<li>For important chats, compare the <b>safety number</b> with your contact in person or on a call you trust.</li>
+<li>Keep your browser and device up to date, and remove browser extensions you do not need.</li>
+<li>Do not open documents from people you do not trust, even though they come from within GhostChat.</li>
+<li>Sign out on shared computers.</li>
+</ul>
+
+<h2 id="disclosure">5. Report a vulnerability (responsible disclosure)</h2>
+<p>If you find a security problem, please tell us at <span data-legal="securityEmail"></span> before telling anyone else. Include what you found, how to reproduce it, and how to reach you. In return:</p>
+<ul>
+<li>we will acknowledge your report promptly and keep you updated;</li>
+<li>we will not take legal action against you for good-faith research that follows these rules;</li>
+<li>we will credit you if you wish, once the issue is fixed.</li>
+</ul>
+<p><b>Please do:</b> test only with your own accounts, stop as soon as you have shown the problem, and give us reasonable time to fix it. <b>Please do not:</b> access, change or delete other people’s data, run denial-of-service or spam tests, use social engineering or physical attacks, or publish details before a fix.</p>
+
+<h2>6. If there is an incident</h2>
+<p>We keep logs that help us detect and investigate attacks. If personal data is affected, we will contain the problem, tell affected users and the authorities as the law requires and without undue delay, and explain what happened and what you should do.</p>
+
+<h2>7. Live status</h2>
+<p>See current availability on the <a href="status.html">System status page</a>.</p>
+
+  </main>
+</div>
+<footer class="lg-foot">
+  <a href="terms.html">Terms of Service</a><a href="privacy.html">Privacy Policy</a><a href="security.html">Security</a><a href="status.html">System status</a>
+  <p>© <span id="lgYear"></span> <span data-legal="operator"></span>. All rights reserved.</p>
+</footer>
+<script src="js/legal-config.js"></script>
+<script src="js/legal.js"></script>
+
+</body>
+</html>

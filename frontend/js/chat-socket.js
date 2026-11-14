@@ -371,11 +371,24 @@ class GhostChatRealtime {
             const menuOpen = this._openMenuId === msg.id;
 
             // ── Media messages (image/audio/video) render as their own bubble type ──
-            if (['image', 'audio', 'video'].includes(msg.message_type)) {
+            if (['image', 'audio', 'video', 'document'].includes(msg.message_type)) {
                 const url = msg.media_url || (msg.id ? `/api/media/${msg.id}` : '');
-                const caption = msg.encrypted_content ? `<div class="msg-content">${this._esc(msg.encrypted_content)}</div>` : '';
+                const isDoc = msg.message_type === 'document';
+                const caption = (!isDoc && msg.encrypted_content) ? `<div class="msg-content">${this._esc(msg.encrypted_content)}</div>` : '';
                 let mediaHtml = '';
-                if (msg.message_type === 'image') {
+                if (isDoc) {
+                    const note = window.GhostDocs?.readNote(this._plainData[msg.id]);
+                    mediaHtml = (note && note.kind !== 'file')
+                        ? `<div class="msg-enc-media" data-mid="${msg.id}" data-kind="${note.kind}"><span class="msg-enc-loading"><i class="fas fa-lock"></i> Decrypting ${note.kind === 'audio' ? 'voice note' : note.kind === 'image' ? 'photo' : 'video'}…</span></div>`
+                        : note
+                        ? `<button type="button" class="msg-doc-card" onclick="window.chat.downloadDocument('${msg.id}')" title="Decrypt and save">
+                               <i class="fas ${window.GhostDocs.iconFor(note.name)}"></i>
+                               <span class="msg-doc-info"><b>${this._esc(note.name)}</b><small>${window.GhostDocs.prettySize(note.size)} · tap to decrypt &amp; save</small></span>
+                               <i class="fas fa-download"></i>
+                           </button>`
+                        : `<div class="msg-doc-card locked"><i class="fas fa-lock"></i>
+                               <span class="msg-doc-info"><b>Encrypted document</b><small>This device does not have the key to open it</small></span></div>`;
+                } else if (msg.message_type === 'image') {
                     mediaHtml = `<img class="msg-media-image" src="${url}" alt="Shared image" onclick="window.open('${url}', '_blank')">`;
                 } else if (msg.message_type === 'audio') {
                     mediaHtml = `<audio class="msg-media-audio" controls src="${url}"></audio>`;
@@ -392,12 +405,14 @@ class GhostChatRealtime {
                             <i class="fas fa-ellipsis-vertical"></i>
                         </button>
                         <div class="msg-crypto-actions ${menuOpen ? 'menu-open' : ''}" id="crypto-actions-${msg.id}">
-                            <a class="msg-decrypt-btn msg-crypto-btn" href="${url}?download=1" download="${this._esc(msg.file_name || msg.message_type)}" title="Download">
+                            ${isDoc ? `<button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.downloadDocument('${msg.id}')" title="Decrypt and save">
+                                <i class="fas fa-download"></i> Save
+                            </button>` : `<a class="msg-decrypt-btn msg-crypto-btn" href="${url}?download=1" download="${this._esc(msg.file_name || msg.message_type)}" title="Download">
                                 <i class="fas fa-download"></i> Download
                             </a>
                             <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.openForwardPicker('${msg.id}')" title="Forward to another contact">
                                 <i class="fas fa-share"></i> Forward
-                            </button>
+                            </button>`}
                             <button class="msg-decrypt-btn msg-crypto-btn" onclick="window.chat.deleteMessage('${msg.id}', ${isMine})" title="Delete">
                                 <i class="fas fa-trash"></i> Delete
                             </button>
@@ -768,6 +783,76 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
 
     // ── Media sharing: images, video (file picker), voice notes (recorded) ──
 
+    _sendDocument(file) { return this._sendSealed(file, 'file'); }
+
+    async _sendSealed(file, kind) {
+        if (!this.currentContact) { this._toast('Open a chat first', 'error'); return; }
+        if (!this._isOnline) { this._toast('You are offline — cannot send right now', 'error'); return; }
+        const cid = this.currentContact.contact_id;
+        const label = { file: 'document', image: 'photo', audio: 'voice note', video: 'video' }[kind] || 'file';
+        this._toast(`Encrypting ${label}…`, 'info');
+        let sealed;
+        try { sealed = await window.GhostDocs.seal(file, cid, kind); }
+        catch (e) { console.warn('seal failed', e); sealed = { ok: false, error: 'Could not encrypt this file' }; }
+        if (!sealed.ok) {
+            if (sealed.reason && window.GhostE2EUI) window.GhostE2EUI.blocked(this.currentContact, sealed.reason, sealed.mode);
+            else this._toast(sealed.error || `Could not send the ${label}`, 'error');
+            return;
+        }
+        const form = new FormData();
+        form.append('file', sealed.file, 'document.bin');
+        form.append('media_type', 'document');
+        form.append('caption', sealed.packet);
+        try {
+            const res = await resilientFetch(`${this._base()}/api/chat/${cid}/media`, {
+                method: 'POST', credentials: 'include',
+                headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': this._getCsrf() },
+                body: form,
+            }, { retries: 0 });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) { this._toast(data.error || `Failed to send the ${label}`, 'error'); return; }
+            this._toast(`${label[0].toUpperCase()}${label.slice(1)} sent (encrypted)`, 'success');
+        } catch (err) {
+            console.error('Upload failed:', err);
+            this._toast(`Failed to send the ${label}`, 'error');
+        }
+    }
+
+    // Decrypt photos / voice notes / videos as they appear on screen, and show them.
+    async _hydrateMedia() {
+        const box = document.getElementById('chatMessages'); if (!box || !window.GhostDocs) return;
+        this._blobUrls = this._blobUrls || {};
+        for (const el of box.querySelectorAll('.msg-enc-media:not([data-done])')) {
+            const id = el.dataset.mid, kind = el.dataset.kind;
+            el.dataset.done = '1';
+            const note = window.GhostDocs.readNote(this._plainData[id]);
+            if (!note) continue;
+            try {
+                const url = this._blobUrls[id] || (this._blobUrls[id] = await window.GhostDocs.show(note, `${this._base()}/api/media/${id}`));
+                if (!el.isConnected) { el.removeAttribute('data-done'); continue; }
+                el.textContent = '';
+                const m = document.createElement(kind === 'image' ? 'img' : kind);
+                m.src = url;
+                if (kind === 'image') { m.className = 'msg-media-image'; m.alt = 'Shared photo'; m.addEventListener('click', () => window.open(url, '_blank', 'noopener')); }
+                else { m.className = kind === 'audio' ? 'msg-media-audio' : 'msg-media-video'; m.controls = true; m.preload = 'metadata'; }
+                el.appendChild(m);
+            } catch (e) {
+                el.innerHTML = '<span class="msg-enc-loading"><i class="fas fa-triangle-exclamation"></i> </span>';
+                el.firstChild.append(e.message || 'Could not open this file');
+            }
+        }
+    }
+
+    async downloadDocument(msgId) {
+        const note = window.GhostDocs?.readNote(this._plainData[msgId]);
+        if (!note) { this._toast('This device does not have the key to open this document', 'error'); return; }
+        try {
+            this._toast('Decrypting…', 'info');
+            await window.GhostDocs.open(note, `${this._base()}/api/media/${msgId}`);
+            this._toast('Saved to your downloads', 'success');
+        } catch (e) { this._toast(e.message || 'Could not open the document', 'error'); }
+    }
+
     _mediaLimits() {
         return { image: 8 * 1024 * 1024, audio: 15 * 1024 * 1024, video: 40 * 1024 * 1024 };
     }
@@ -781,6 +866,9 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
             this._toast('You are offline — cannot send media right now', 'error');
             return;
         }
+        // With end-to-end encryption on, photos, voice notes and video are sealed in the browser
+        // exactly like documents: the server only ever receives scrambled bytes.
+        if (this.encryptMessages && window.GhostE2E && window.GhostDocs) return this._sendSealed(file, mediaType);
         const limit = this._mediaLimits()[mediaType];
         if (file.size > limit) {
             this._toast(`${mediaType} must be under ${Math.round(limit / (1024 * 1024))}MB`, 'error');
@@ -1061,7 +1149,7 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
         if (data.sender_id !== this.user.id) {
             const contact = this.contacts.find(c => c.contact_id === data.sender_id);
             if (contact) {
-                const mediaLabels = { image: '📷 Photo', audio: '🎤 Voice note', video: '🎥 Video' };
+                const mediaLabels = { image: '📷 Photo', audio: '🎤 Voice note', video: '🎥 Video', document: '🔒 Attachment' };
                 contact.last_message = {
                     content: mediaLabels[data.message_type] || data.content,
                     created_at: data.created_at,
@@ -1532,6 +1620,9 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
             }
         });
 
+        const _mc = document.getElementById('chatMessages');
+        if (_mc) new MutationObserver(() => this._hydrateMedia()).observe(_mc, { childList: true, subtree: true });
+
         document.getElementById('attachBtn')?.addEventListener('click', e => {
             e.stopPropagation();
             const menu = document.getElementById('attachMenu');
@@ -1559,6 +1650,15 @@ if (sentE2E) {   // sender sees plain text at once; the server only ever holds c
         document.getElementById('attachSongBtn')?.addEventListener('click', () => {
             document.getElementById('attachMenu').style.display = 'none';
             document.getElementById('songFileInput')?.click();
+        });
+        document.getElementById('attachDocBtn')?.addEventListener('click', () => {
+            document.getElementById('attachMenu').style.display = 'none';
+            document.getElementById('docFileInput')?.click();
+        });
+        document.getElementById('docFileInput')?.addEventListener('change', e => {
+            const file = e.target.files?.[0];
+            if (file) this._sendDocument(file);
+            e.target.value = '';
         });
         document.getElementById('songFileInput')?.addEventListener('change', e => {
             const file = e.target.files?.[0];

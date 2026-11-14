@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#080b12" />
+<meta name="description" content="The rules for using GhostChat, and what we are and are not responsible for." />
+<title>Terms of Service — GhostChat</title>
+<link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
+<link rel="stylesheet" href="css/legal.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+</head>
+<body class="legal">
+<header class="lg-top"><div class="lg-top-in">
+  <a class="lg-brand" href="index.html"><i class="fas fa-ghost"></i> GhostChat</a>
+  <nav class="lg-nav" aria-label="Legal and status"><a href="terms.html" aria-current="page">Terms</a><a href="privacy.html">Privacy</a><a href="security.html">Security</a><a href="status.html">Status</a><a href="login.html">Sign in</a></nav>
+</div></header>
+<div class="lg-wrap">
+  <nav class="lg-toc" id="lgToc" aria-label="Page sections"></nav>
+  <main class="lg-main" id="main">
+<div class="lg-setup" id="lgSetup"><b>Site owner: setup needed.</b> Add your contact email in <code>js/legal-config.js</code>. Visitors see this box until it is filled in, then it disappears by itself.</div>
+<h1>Terms of Service</h1>
+<p class="lg-meta">Version <span data-legal="version"></span> · Effective <span data-legal="effective"></span></p>
+
+<div class="lg-key"><h3>The short version</h3>
+<ul>
+<li>GhostChat is a private messaging and encryption service. Be decent, follow the law, and do not abuse it.</li>
+<li>Your text messages and documents are encrypted on your device. <b>We cannot read them, and we cannot recover them if you lose your keys.</b></li>
+<li>No system is perfectly secure. We work hard to protect you, but we cannot promise that nothing will ever go wrong, and these Terms explain what we are and are not responsible for.</li>
+</ul></div>
+
+<h2>1. Who we are and what these Terms are</h2>
+<p>GhostChat (the “Service”) is operated by <b data-legal="operator"></b> (“we”, “us”). By creating an account or using the Service you agree to these Terms and to our <a href="privacy.html">Privacy Policy</a>. If you do not agree, do not use the Service. You can reach us at <span data-legal="contactEmail"></span>.</p>
+
+<h2>2. Who can use GhostChat</h2>
+<p>You must be at least <span data-legal="minAge"></span> years old (or the age at which you can lawfully agree to these Terms where you live), and you must not be barred from using the Service by law. If you use GhostChat for an organisation, you confirm you may bind it to these Terms.</p>
+
+<h2>3. Your account</h2>
+<ul>
+<li>Give accurate information and keep your email address current, because we use it for verification and security messages.</li>
+<li>Keep your password, verification codes and encryption keys private. You are responsible for activity on your account unless it was caused by our failure to apply reasonable security.</li>
+<li>Tell us promptly if you think your account has been accessed by someone else.</li>
+<li>Use a strong, unique password. We may force a sign-out after inactivity or a password change to protect you.</li>
+</ul>
+
+<h2>4. Acceptable use</h2>
+<p>You must not use the Service to:</p>
+<ul>
+<li>break the law, or help anyone else do so;</li>
+<li>use groups to spam, harass or recruit people into harmful activity;</li>
+<li>share sexual content involving children, or any content that exploits or endangers a child. We have <b>zero tolerance</b>, will remove accounts immediately, and may report to the authorities;</li>
+<li>harass, threaten, stalk, defraud, impersonate or abuse other people, or send spam or unwanted bulk messages;</li>
+<li>upload or send malware, or try to damage, probe, overload or gain unauthorised access to the Service, other accounts or other people’s devices;</li>
+<li>try to bypass limits, security features, suspensions or bans, or create accounts to avoid a ban;</li>
+<li>use the Service to commit or plan violence, or to infringe other people’s rights.</li>
+</ul>
+<p>Security researchers acting in good faith are welcome. See our <a href="security.html#disclosure">responsible disclosure policy</a>.</p>
+
+<h2>5. Reports, moderation and suspension</h2>
+<p>Group admins can remove people from their groups, and you can leave any group at any time. You can report an account from inside a chat. Reports go to our administrators. Because messages, files and groups are end-to-end encrypted, <b>we cannot read them and a report does not send them to us</b>. We act on the reason you give, account details and activity records. We may warn, suspend or delete accounts, remove content we can access, and cooperate with lawful requests from authorities. We may do this without notice where needed to protect people or the Service.</p>
+
+<h2 id="e2e">6. How encryption works, and what it cannot do</h2>
+<p>When end-to-end encryption is on (the default), text messages and documents are encrypted in your browser before they leave your device and can only be opened by you and the person you are talking to. We do not hold the keys. This is a strong protection, but you should understand its limits:</p>
+<ul>
+<li><b>Lost keys cannot be recovered.</b> If you clear your browser data, change device, or lose a manual key or backup password, old messages may become unreadable. We cannot help, because we never had your keys.</li>
+<li><b>Your device and the other person’s device are the weak points.</b> If either has malware, a keylogger, a malicious browser extension, or is used by someone else, the messages can be read there. Screenshots and copies are always possible.</li>
+<li><b>Text, documents, photos, voice notes and videos are end-to-end encrypted</b> when end-to-end encryption is on. Items sent <i>before</i> this protection existed, or with encryption switched off, are not end-to-end encrypted: they are protected in transit (HTTPS) and by access controls on our servers, but our systems can technically access them.</li>
+<li><b>Groups:</b> a group has its own key, made on a member’s device and given to each member encrypted for them. Everyone who is in the group can read what is sent while they are in it, and can copy or share it. We cannot read group messages. When someone leaves or is removed, a new key is made so they cannot read what is sent afterwards, but they keep anything they already received. If a person joins, they cannot read what was sent before they joined.</li>
+<li><b>If you turn encryption off for a chat, or use an older password mode, that chat is not end-to-end encrypted.</b> Group chats cannot be sent unencrypted.</li>
+<li><b>Some information is not hidden:</b> who talks to whom, when, file sizes, who is in each group and the group name, your account details, and IP addresses. See the Privacy Policy.</li>
+<li><b>Voice typing is done by your browser’s speech service</b> (in Chrome and Edge, by Google or Microsoft), not by us. Words you say are not covered by our encryption until they are typed.</li>
+<li><b>Shared passwords and keys are your responsibility.</b> A weak password protects very little, and anyone who knows it can decrypt what it protects.</li>
+<li><b>We cannot scan encrypted documents for viruses.</b> We only allow a short list of common file types and you should only open files from people you trust.</li>
+<li>The emoji view is a way of displaying encrypted data. It is not what protects your message. The encryption does.</li>
+</ul>
+
+<h2>7. Your content</h2>
+<p>You keep ownership of what you send. You give us only the limited permission needed to store, transmit and deliver it to the people you choose, and to run the Service. You are responsible for what you send and for having the right to send it.</p>
+
+<h2>8. Our service, changes and availability</h2>
+<p>We aim to keep GhostChat available and improving, but it is provided without any promise of uninterrupted or error-free operation. We may change, pause or stop features, and may carry out maintenance. Check <a href="status.html">system status</a> for current availability. Do not rely on GhostChat as your only copy of important information or for emergencies or life-critical communication.</p>
+
+<h2>9. Security incidents</h2>
+<p>We use reasonable technical and organisational measures to protect the Service (see <a href="security.html">Security</a>). If we discover a security incident that affects your personal data, we will investigate, take steps to contain it, and notify affected users and the relevant authorities where the law requires and as soon as reasonably possible. Notices may be sent to your account email or shown in the app.</p>
+
+<h2>10. No warranty</h2>
+<p>To the fullest extent permitted by law, the Service is provided <b>“as is” and “as available”</b>, without warranties of any kind, whether express or implied, including merchantability, fitness for a particular purpose, security, accuracy, and non-infringement. We do not warrant that the Service will be secure from every attack, that messages can never be intercepted, accessed, lost or altered by third parties, or that encryption will always be unbreakable. Security is an ongoing effort and no system can guarantee absolute protection.</p>
+
+<h2>11. Limits on our liability</h2>
+<p>To the fullest extent permitted by law:</p>
+<ul>
+<li>we are not liable for indirect, incidental, special, consequential or punitive losses, or for loss of profits, data, goodwill or business;</li>
+<li>we are not liable for loss or harm caused by things outside our reasonable control, including attacks by criminals, compromised devices or accounts, weak or shared passwords, lost keys, the actions of other users, failures of internet, hosting, email, speech-recognition or other third-party providers, or acts of nature;</li>
+<li>our total liability to you for all claims relating to the Service is limited to the greater of the amount you paid us in the 12 months before the claim (which may be zero) or US$50.</li>
+</ul>
+<p>Nothing in these Terms limits liability that cannot lawfully be limited, including for fraud, for death or personal injury caused by negligence, for our own gross negligence or wilful misconduct, or any rights you have under consumer or data-protection law that cannot be waived.</p>
+
+<h2>12. You agree to cover us if you misuse the Service</h2>
+<p>You agree to compensate us for losses, claims and reasonable costs that arise from your breach of these Terms, your unlawful use of the Service, or content you send in breach of other people’s rights, except where we caused the loss.</p>
+
+<h2>13. Ending your account</h2>
+<p>You can stop using GhostChat at any time and ask us to delete your account at <span data-legal="contactEmail"></span>. We can suspend or end your access if you break these Terms, if the law requires, or to protect others. Sections that by their nature should continue (such as 7, 10, 11, 12 and 15) continue after your account ends.</p>
+
+<h2>14. Changes to these Terms</h2>
+<p>We may update these Terms. For important changes we will give notice in the app or by email before they take effect. If you keep using the Service after the effective date, you accept the updated Terms. The version and date are at the top of this page.</p>
+
+<h2>15. Governing law and disputes</h2>
+<p>These Terms are governed by the laws of <b data-legal="country"></b>, without regard to conflict-of-law rules. Please contact us first at <span data-legal="contactEmail"></span> so we can try to resolve a problem informally. If that fails, the courts of <span data-legal="country"></span> have jurisdiction, except that nothing removes any right you have under mandatory consumer-protection law in the place where you live.</p>
+
+<h2>16. Everything else</h2>
+<p>If part of these Terms is found unenforceable, the rest stays in force. Our not enforcing a right is not a waiver of it. You may not transfer your account or rights without our consent. These Terms and the Privacy Policy are the whole agreement between you and us about the Service.</p>
+
+<h2>17. Contact</h2>
+<p>Questions about these Terms: <span data-legal="contactEmail"></span>. Security issues: <span data-legal="securityEmail"></span>.</p>
+
+  </main>
+</div>
+<footer class="lg-foot">
+  <a href="terms.html">Terms of Service</a><a href="privacy.html">Privacy Policy</a><a href="security.html">Security</a><a href="status.html">System status</a>
+  <p>© <span id="lgYear"></span> <span data-legal="operator"></span>. All rights reserved.</p>
+</footer>
+<script src="js/legal-config.js"></script>
+<script src="js/legal.js"></script>
+
+</body>
+</html>

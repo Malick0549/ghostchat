@@ -106,6 +106,9 @@ def add_security_headers(response):
         # Images: self + data URIs (avatars) + any HTTPS
         "img-src 'self' data: blob: https:; "
 
+        # Audio/video: our own files, plus decrypted-in-browser blobs (end-to-end encrypted media)
+        "media-src 'self' blob:; "
+
         # Connections: self + WebSockets for SocketIO (wss: and ws:)
         "connect-src 'self' wss: ws: https:; "
 

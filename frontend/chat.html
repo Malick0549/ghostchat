@@ -250,11 +250,16 @@
             <i class="fas fa-music"></i>
             <span>Song</span>
           </button>
+          <button class="attach-option" id="attachDocBtn">
+            <i class="fas fa-file-lines"></i>
+            <span>Document</span>
+          </button>
         </div>
       </div>
 
       <input type="file" id="imageFileInput" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none;">
       <input type="file" id="videoFileInput" accept="video/mp4,video/webm,video/quicktime" style="display:none;">
+      <input type="file" id="docFileInput" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.txt,.csv,.rtf,.md,.json,.xml,.zip,.7z,.rar,.tar,.gz,.epub" style="display:none;">
       <input type="file" id="songFileInput" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/*" style="display:none;">
 
       <div class="recording-bar" id="recordingBar" style="display:none;">
@@ -270,7 +275,7 @@
       </div>
 
       <div class="chat-input-bar" id="chatInputBar">
-        <button class="input-btn" id="attachBtn" title="Attach photo, video, or voice note" aria-label="Attach media">
+        <button class="input-btn" id="attachBtn" title="Attach photo, video, document or voice note" aria-label="Attach media">
           <i class="fas fa-paperclip"></i>
         </button>
         <div class="chat-input-wrap">
@@ -279,6 +284,9 @@
                     rows="1" aria-label="Message input"
                     autocomplete="off"></textarea>
         </div>
+        <button class="input-btn" id="micBtn" type="button" hidden title="Voice typing" aria-label="Voice typing">
+          <i class="fas fa-microphone-lines"></i>
+        </button>
         <button class="send-btn" id="sendBtn"
                 aria-label="Send message">
           <i class="fas fa-paper-plane"></i>
@@ -354,10 +362,20 @@
 </div>
 
 <script src="js/ui.js"></script>
+<script src="js/network-status.js"></script>
 <script src="js/api.js"></script>
 <script src="js/e2e.js"></script>
 <script src="js/e2e-ui.js"></script>
+<script src="js/docs.js"></script>
+<script src="js/voice.js"></script>
 <script src="js/chat-socket.js"></script>
+<script src="js/groups.js"></script>
+<script>
+  // Voice typing into the message box (button stays hidden if the browser cannot do it)
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.GhostVoice) GhostVoice.attach(document.getElementById('chatInput'), document.getElementById('micBtn'));
+  });
+</script>
 <script>
 
   document.getElementById('chatMenuBtn')?.addEventListener('click', function (e) {
