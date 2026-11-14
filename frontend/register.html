@@ -148,7 +148,7 @@
           <div class="form-group" style="margin-bottom:24px;">
             <label class="form-check" for="terms">
               <input type="checkbox" id="terms" required tabindex="7" />
-              <span>I understand this is an academic project and agree to responsible use of encryption tools.</span>
+              <span>I am at least 16 and I agree to the <a href="terms.html" target="_blank" rel="noopener">Terms of Service</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span>
             </label>
           </div>
 
@@ -164,6 +164,7 @@
 </div>
 
 <script src="js/ui.js"></script>
+<script src="js/network-status.js"></script>
 <script src="js/api.js"></script>
 <script>
 (function () {
@@ -301,7 +302,7 @@
     btn.disabled = true;
 
     try {
-      const payload = { first_name: fn, last_name: ln, username: un, email: em, password: pw };
+      const payload = { first_name: fn, last_name: ln, username: un, email: em, password: pw, accepted_terms: true };
       const av = document.getElementById('avatarData').value;
       if (av) payload.avatar_data = av;
 
