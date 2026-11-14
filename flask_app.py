@@ -1041,7 +1041,7 @@ def create_app(test_config=None):
             if len(new_password) < 8:
                 return jsonify({'error': 'Password must be at least 8 characters'}), 400
 
-            user = User.query.filter_by(reset_token=token).first()
+            user = User.query.filter_by(reset_token=User.hash_reset_token(token)).first()
             if not user or not user.verify_reset_token(token):
                 return jsonify({'error': 'Invalid or expired reset link'}), 400
 

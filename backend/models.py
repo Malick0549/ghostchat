@@ -83,14 +83,21 @@ class User(db.Model):
         return bcrypt.check_password_hash(self.password_hash, password)
     
     def generate_reset_token(self):
-        self.reset_token = secrets.token_urlsafe(32)
+        raw = secrets.token_urlsafe(32)
+        self.reset_token = self.hash_reset_token(raw)      # only a hash is stored; the raw token exists only in the email link
         self.reset_token_expires = datetime.utcnow() + timedelta(hours=24)
-        return self.reset_token
+        return raw
+
+    @staticmethod
+    def hash_reset_token(raw):
+        import hashlib
+        return hashlib.sha256((raw or '').encode('utf-8')).hexdigest()
     
     def verify_reset_token(self, token):
         if not self.reset_token or not self.reset_token_expires:
             return False
-        return (self.reset_token == token and 
+        import hmac
+        return (hmac.compare_digest(self.reset_token, self.hash_reset_token(token)) and
                 datetime.utcnow() < self.reset_token_expires)
     
     def to_dict(self):

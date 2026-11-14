@@ -339,7 +339,7 @@ def install_hardening(app, *, db, User, Contact, ActivityLog, Message, socketio,
 
         if method == 'POST' and path == '/api/auth/reset-password':
             tok = (_json().get('token') or '').strip()
-            ru = User.query.filter_by(reset_token=tok).first() if tok else None
+            ru = User.query.filter_by(reset_token=User.hash_reset_token(tok)).first() if tok else None
             g._pw_uid = ru.id if ru else None
             bad = password_problem(_json().get('new_password') or '')
             if bad and _json().get('new_password'):
