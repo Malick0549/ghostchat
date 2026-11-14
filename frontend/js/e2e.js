@@ -31,6 +31,7 @@ window.GhostE2E = (() => {
     const _convKeys = new Map();               // automatic conversation keys
     const _statusCache = new Map();            // manual readiness cache
     let onKeyChange = null;
+    let _locked = false, _hasVault = null, _lastAct = Date.now(), _lockTimer = null;
     let _unlockPass = null;                    // recovery passphrase just typed on this device (kept only until setup finishes)
     let _ttl = 5000;                           // how long a 'ready' answer is trusted (ms)
 
@@ -153,7 +154,7 @@ window.GhostE2E = (() => {
         const vault = pass ? await makeVault(privJwk, pass) : null;
         await api('PUT', '/api/keys/public', { public_key: _pubJwk, vault, reset: true });
     }
-    const ensureAuto = () => (_autoP || (_autoP = _setupAuto().catch(e => { console.warn('E2E auto setup failed', e); return false; })));
+    const ensureAuto = () => _locked ? Promise.resolve(false) : (_autoP || (_autoP = _setupAuto().catch(e => { console.warn('E2E auto setup failed', e); return false; })));
 
     async function _fingerprint(jwkA, jwkB) {
         const parts = [jwkA, jwkB].map(j => j.x + j.y).sort().join('|');
@@ -377,6 +378,48 @@ window.GhostE2E = (() => {
         };
     })();
 
+
+    // ── auto-lock: keys leave memory after a period of inactivity ───────────
+    // The key stays in this browser's protected storage; what expires is the right to USE it.
+    // Coming back needs the recovery passphrase. Only possible when a recovery passphrase exists.
+    const lockPrefKey = () => `gc_e2e_autolock_${_me}`;
+    function getAutoLock() {
+        try { const v = localStorage.getItem(lockPrefKey()); if (v !== null && !isNaN(+v)) return +v; } catch (_) {}
+        return 15;                                           // minutes (0 = never)
+    }
+    function setAutoLock(min) { try { localStorage.setItem(lockPrefKey(), String(+min || 0)); } catch (_) {} _lastAct = Date.now(); }
+    const lockFlag = () => `gc_e2e_locked_${_me}`;
+    const isLocked = () => _locked;
+    async function lockNow() {
+        if (_locked || !_priv) return false;
+        if (_hasVault === null) { const r = await api('GET', '/api/keys/vault/status'); _hasVault = !!(r.ok && r.data.has_vault); }
+        if (!_hasVault) return false;                        // nothing to unlock with: never lock people out
+        _locked = true; _priv = null; _autoP = null; _convKeys.clear(); _statusCache.clear();
+        try { localStorage.setItem(lockFlag(), '1'); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('ghoste2e:locked')); } catch (_) {}
+        return true;
+    }
+    async function unlock(pass) {
+        const v = await api('GET', '/api/keys/vault');
+        if (!v.ok) throw new Error('Could not reach the server. Check your connection and try again.');
+        if (!v.data.vault) throw new Error('No recovery passphrase exists for this account.');
+        try { await openVault(v.data.vault, pass); } catch (_) { throw new Error('That is not your recovery passphrase.'); }
+        _locked = false; _autoP = null; _lastAct = Date.now();
+        try { localStorage.removeItem(lockFlag()); } catch (_) {}
+        if (!(await ensureAuto())) { _locked = true; try { localStorage.setItem(lockFlag(), '1'); } catch (_) {} throw new Error('Could not unlock on this device.'); }
+        try { window.dispatchEvent(new CustomEvent('ghoste2e:unlocked')); window.dispatchEvent(new CustomEvent('ghoste2e:changed')); } catch (_) {}
+        return true;
+    }
+    function _startLockWatch() {
+        if (_lockTimer) return;
+        window.addEventListener('storage', e => { if (e.key === lockFlag() && e.newValue === '1' && !_locked) lockNow(); else if (e.key === lockFlag() && e.newValue === null && _locked) { _locked = false; _autoP = null; ensureAuto().then(() => { try { window.dispatchEvent(new CustomEvent('ghoste2e:unlocked')); window.dispatchEvent(new CustomEvent('ghoste2e:changed')); } catch (_) {} }); } });
+        const touch = () => { if (!_locked) _lastAct = Date.now(); };
+        ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(ev => window.addEventListener(ev, touch, { passive: true, capture: true }));
+        const tick = () => { const m = getAutoLock(); if (m > 0 && !_locked && _priv && Date.now() - _lastAct > m * 60000) lockNow(); };
+        _lockTimer = setInterval(tick, 15000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+    }
+
     // ── one device at a time ────────────────────────────────────────────────
     const devSlot = () => `device:${_me}`;
     const newDeviceId = () => b64u(crypto.getRandomValues(new Uint8Array(18)));
@@ -476,11 +519,13 @@ window.GhostE2E = (() => {
 
     // ══ PUBLIC API ═══════════════════════════════════════════════════════════
     async function encryptFor(cid, text) {
+        if (_locked) return { ok: false, reason: 'locked', mode: getMode(cid) };
         const mode = getMode(cid);
         try { return mode === 'manual' ? await encManual(cid, text) : await encAuto(cid, text); }
         catch (e) { console.warn('encrypt failed', e); return { ok: false, reason: 'error', mode }; }
     }
     async function decrypt(cid, packet) {
+        if (_locked) throw new Error('locked');
         packet = unwrap(packet);
         if (packet.startsWith(P2)) {
             const rest = packet.slice(P2.length), i = rest.indexOf(':');
@@ -547,7 +592,13 @@ window.GhostE2E = (() => {
         init(userId, baseUrl, csrfGetter) {
             _me = String(userId); _base = baseUrl || ''; _csrf = csrfGetter || (() => '');
             _autoP = null; _priv = null; _pubJwk = null; _convKeys.clear(); _statusCache.clear();
-            return getDefault() === 'auto' ? ensureAuto().then(async ok => { if (ok) { try { await _afterUnlock(); } catch (e) { console.warn('device check', e); } } return ok; }) : Promise.resolve(true);
+            let wasLocked = false; try { wasLocked = localStorage.getItem(lockFlag()) === '1'; } catch (_) {}
+            if (wasLocked && getAutoLock() >= 0) {            // locked earlier: reloading or opening another tab must not skip the lock
+                _locked = true; _startLockWatch();
+                setTimeout(() => { try { window.dispatchEvent(new CustomEvent('ghoste2e:locked')); } catch (_) {} }, 400);
+                return Promise.resolve(true);
+            }
+            return getDefault() === 'auto' ? ensureAuto().then(async ok => { if (ok) { _startLockWatch(); try { await _afterUnlock(); } catch (e) { console.warn('device check', e); } } return ok; }) : Promise.resolve(true);
         },
         // mode
         getMode, getDefault, getOverride, setDefault, setOverride,
@@ -562,5 +613,6 @@ window.GhostE2E = (() => {
         dhStart, dhReset, importCode, randomCreate, passphrase, passStrength, manualRetire, manualWipe,
         backup, restore,
         moveOut, handleMoved, restoreHere, hasLocalKeys,
+        isLocked, lockNow, unlock, getAutoLock, setAutoLock,
     };
 })();

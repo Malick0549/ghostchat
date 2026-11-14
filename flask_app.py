@@ -543,12 +543,16 @@ def create_app(test_config=None):
         scheme = 'https' if _is_https() else 'http'
         return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
 
+    _DEV_SECRETS = bool(app.debug) or os.environ.get('GC_LOG_SECRETS') == '1'   # codes in logs: local development only
+
     def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
         log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
         os.makedirs(log_dir, exist_ok=True)
         fallback_path = os.path.join(log_dir, 'reset_links.log')
 
         def write_debug_link():
+            if not _DEV_SECRETS:        # never write codes / reset links to disk in production
+                return
             try:
                 with open(fallback_path, 'a', encoding='utf-8') as f:
                     f.write(f"{datetime.utcnow().isoformat()} | {recipient} | {text_body}\n")
@@ -617,7 +621,7 @@ def create_app(test_config=None):
 
         if not smtp_host or not smtp_user or not smtp_password:
             log.warning('No RESEND_API_KEY and no SMTP settings; email not sent.')
-            log.info('Email body (fallback log): %s', text_body)
+            log.info('Email body (fallback log): %s', text_body if _DEV_SECRETS else '[hidden: not logged in production]')
             write_debug_link()
             return False
 
@@ -644,7 +648,7 @@ def create_app(test_config=None):
             return True
         except Exception as exc:
             log.error('Failed to send email to %s: %s', recipient, exc)
-            log.info('Email body (fallback log): %s', text_body)
+            log.info('Email body (fallback log): %s', text_body if _DEV_SECRETS else '[hidden: not logged in production]')
             write_debug_link()
             return False
 
@@ -711,7 +715,7 @@ def create_app(test_config=None):
                 text_body=f'Your GhostChat verification code is: {code_str}\nIt expires in 15 minutes.',
             )
             if not sent:
-                log.info(f'Verification code for {email}: {code_str}')
+                log.info(f'Verification code for {email}: ' + (code_str if _DEV_SECRETS else '[hidden]'))
 
             return jsonify({
                 'success': True,
@@ -787,7 +791,7 @@ def create_app(test_config=None):
                 text_body=f'Your new GhostChat verification code is: {code_str}\nExpires in 15 minutes.',
             )
             if not sent:
-                log.info(f'Verification code for {email}: {code_str}')
+                log.info(f'Verification code for {email}: ' + (code_str if _DEV_SECRETS else '[hidden]'))
 
         return jsonify({'success': True, 'message': 'If that email needs verification, a new code has been sent.'}), 200
 
@@ -847,7 +851,7 @@ def create_app(test_config=None):
                 sent = _send_email(subject='Your GhostChat sign-in code', recipient=user.email,
                                     html_body=html, text_body=text)
                 if not sent:
-                    log.info(f'2FA code for {user.email}: {code_str}')
+                    log.info(f'2FA code for {user.email}: ' + (code_str if _DEV_SECRETS else '[hidden]'))
 
                 resp = jsonify({
                     'success': True,
@@ -941,7 +945,7 @@ def create_app(test_config=None):
         sent = _send_email(subject='Your GhostChat sign-in code', recipient=user.email,
                             html_body=html, text_body=text)
         if not sent:
-            log.info(f'2FA code for {user.email}: {code_str}')
+            log.info(f'2FA code for {user.email}: ' + (code_str if _DEV_SECRETS else '[hidden]'))
 
         return jsonify({'success': True, 'message': 'A new code has been sent.'}), 200
 
@@ -1228,6 +1232,14 @@ def create_app(test_config=None):
         if err:
             return err
         return jsonify({'vault': json.loads(user.key_vault) if user.key_vault else None}), 200
+
+    @app.route('/api/keys/vault/status', methods=['GET'])
+    @limiter.limit("120 per hour")
+    def key_vault_status():
+        user, err = _require_auth()
+        if err:
+            return err
+        return jsonify({'has_vault': bool(user.key_vault)}), 200
 
     # ── Manual-mode key checks (the server only ever sees a short key ID) ──────
     def _is_contact(user_id, other_id):

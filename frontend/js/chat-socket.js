@@ -101,6 +101,12 @@ class GhostChatRealtime {
             if (this.currentContact) this._renderMessages();
         });
         // keys restored / changed from the encryption screen: unlock what can now be read
+        // auto-lock: forget every decrypted message held in memory, show the locked view
+        window.addEventListener('ghoste2e:locked', () => {
+            this._plainData = {};
+            for (const id of Object.keys(this._msgViewState || {})) this._msgViewState[id] = 'encrypted';
+            if (this.currentContact) this._renderMessages();
+        });
         window.addEventListener('ghoste2e:changed', async () => {
             await this._e2eReveal();
             if (this.currentContact) this._renderMessages();

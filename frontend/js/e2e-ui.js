@@ -416,8 +416,47 @@ window.GhostE2EUI = (() => {
         const sel = el.querySelector('#e2eDefaultMode');
         sel.value = E().getDefault();
         sel.addEventListener('change', () => { E().setDefault(sel.value); if (window.UI && UI.showToast) UI.showToast('Encryption default saved', 'success'); });
+        mountLockSetting(el);
         mountMove(el);
     }
+
+    function mountLockSetting(el) {
+        const d = document.createElement('div');
+        d.innerHTML = `<h3 style="margin-top:22px">Auto-lock</h3><div class="setting-row"><div style="flex:1;min-width:0">
+          <div class="setting-sub">After this much time without you using GhostChat, your keys leave this browser's memory and you must enter your recovery passphrase to read or send secure messages again.</div>
+          <select id="gcAutoLock" aria-label="Auto-lock after" style="margin-top:8px;padding:9px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg2,transparent);color:inherit;font:inherit">
+            <option value="5">After 5 minutes</option><option value="15">After 15 minutes (recommended)</option><option value="30">After 30 minutes</option><option value="60">After 1 hour</option><option value="0">Never</option></select>
+          <div class="setting-sub" style="margin-top:6px">Auto-lock needs a recovery passphrase on your account. Without one, it stays off so you are never locked out.</div></div></div>`;
+        el.appendChild(d);
+        const sel = d.querySelector('#gcAutoLock'); sel.value = String(E().getAutoLock());
+        sel.addEventListener('change', () => { E().setAutoLock(sel.value); if (window.UI && UI.showToast) UI.showToast('Auto-lock saved', 'success'); });
+    }
+
+    window.addEventListener('ghoste2e:unlocked', () => document.getElementById('gcLockOverlay')?.remove());
+    // Lock screen
+    window.addEventListener('ghoste2e:locked', () => {
+        if (document.getElementById('gcLockOverlay')) return;
+        const o = document.createElement('div'); o.id = 'gcLockOverlay'; o.setAttribute('role', 'dialog'); o.setAttribute('aria-modal', 'true'); o.setAttribute('aria-labelledby', 'gcLockT');
+        o.style.cssText = 'position:fixed;inset:0;background:rgba(5,7,14,.92);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px';
+        o.innerHTML = `<div style="max-width:400px;width:100%;background:var(--bg1,#12151f);color:var(--t1,#eef);border:1px solid var(--border,rgba(255,255,255,.15));border-radius:16px;padding:22px">
+          <h3 id="gcLockT" style="margin:0 0 8px;font-size:17px"><i class="fas fa-lock"></i> Secure messages locked</h3>
+          <p style="margin:0 0 12px;font-size:14px;line-height:1.5">You were away for a while, so your keys were locked. Enter your recovery passphrase to continue.</p>
+          <input type="password" id="gcLockPass" name="gc-lock-pass" placeholder="Recovery passphrase" autocomplete="off" data-lpignore="true" data-1p-ignore aria-label="Recovery passphrase" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid var(--border,rgba(255,255,255,.2));background:transparent;color:inherit;font:inherit" />
+          <div id="gcLockMsg" role="status" style="font-size:13px;margin-top:8px;min-height:18px;color:var(--red,#e5484d)"></div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap">
+            <button type="button" id="gcLockOut" style="padding:10px 14px;border-radius:10px;border:1px solid var(--border,rgba(255,255,255,.2));background:transparent;color:inherit;cursor:pointer;font:inherit">Sign out</button>
+            <button type="button" id="gcLockGo" style="padding:10px 16px;border-radius:10px;border:0;background:var(--primary,#4dd);color:#04060e;font-weight:600;cursor:pointer;font:inherit;font-weight:600">Unlock</button></div></div>`;
+        document.body.appendChild(o);
+        const pass = o.querySelector('#gcLockPass'), msg = o.querySelector('#gcLockMsg'), go = o.querySelector('#gcLockGo');
+        pass.focus();
+        const doit = async () => {
+            if (!pass.value) return; go.disabled = true; msg.textContent = '';
+            try { await E().unlock(pass.value); o.remove(); }
+            catch (e) { msg.textContent = e.message || 'Could not unlock.'; go.disabled = false; pass.select(); }
+        };
+        go.onclick = doit; pass.addEventListener('keydown', e => { if (e.key === 'Enter') doit(); });
+        o.querySelector('#gcLockOut').onclick = async () => { try { await window.GhostChatAPI?.logout(); } catch (_) {} window.location.href = 'login.html'; };
+    });
 
     // ── "Move my keys to another device" ─────────────────────────────────────
     function mountMove(el) {

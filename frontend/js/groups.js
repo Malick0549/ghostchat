@@ -41,8 +41,10 @@
         const run = (mode, fn) => open().then(db => new Promise((res, rej) => { const t = db.transaction('k', mode), q = fn(t.objectStore('k')); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }));
         return { get: k => run('readonly', s => s.get(k)), put: (k, v) => run('readwrite', s => s.put(v, k)) };
     })();
+    window.addEventListener('ghoste2e:locked', () => { S.keys.clear(); S.plain = {}; try { if (S.cur) render(); } catch (_) {} });
     const kid = (gid, ver) => `${me}|${gid}|${ver}`;
     async function keyFor(gid, ver) {
+        if (window.GhostE2E && GhostE2E.isLocked && GhostE2E.isLocked()) return null;     // auto-locked
         const ck = `${gid}|${ver}`;
         if (S.keys.has(ck)) return S.keys.get(ck);
         let raw = null; try { raw = await idb.get(kid(gid, ver)); } catch (_) {}
