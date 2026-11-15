@@ -249,18 +249,6 @@ class GhostChatAPI {
 
     // ── Encrypt / Decrypt (password-based) ───────────────────────
 
-    async encryptSimple(message, password, useDecoys = false) {
-        try {
-            return await this._post('/api/encrypt', {
-                message,
-                password,
-                use_decoys: useDecoys,
-            });
-        } catch (err) {
-            return { success: false, error: err.message || 'Encryption failed' };
-        }
-    }
-
     async decryptSimple(emojiMessage, password) {
         try {
             return await this._post('/api/decrypt', {

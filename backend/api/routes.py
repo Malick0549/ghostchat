@@ -39,6 +39,9 @@ def encrypt_message():
         "use_decoys": true/false
     }
     """
+    # Retired: server-side encryption exposed the message and password to the server. Use the browser (GhostE2E.pwEncrypt).
+    return jsonify({'success': False, 'error': 'Server-side encryption was retired. Reload the page to encrypt in your browser.'}), 410
+
     try:
         data = request.get_json()
         

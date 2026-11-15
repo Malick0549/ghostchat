@@ -1388,34 +1388,10 @@ def create_app(test_config=None):
     def encrypt_message():
         if request.method == 'OPTIONS':
             return '', 200
-        try:
-            data    = request.get_json() or {}
-            message = (data.get('message')  or '').strip()
-            password= (data.get('password') or '').strip()
-            decoys  = bool(data.get('use_decoys', False))
-
-            if not message:
-                return jsonify({'success': False, 'error': 'Message is required'}), 400
-            if not password:
-                return jsonify({'success': False, 'error': 'Password is required'}), 400
-            if len(message) > 20000:
-                return jsonify({'success': False, 'error': 'Message too long (max 20,000 characters)'}), 400
-
-            from backend.ghostchat import GhostChat, GhostChatError
-            ghost  = GhostChat(password)
-            packet = ghost.send_message(message, use_decoy_emojis=decoys)
-
-            return jsonify({
-                'success':       True,
-                'emoji_message': packet,
-                'emoji_count':   len(packet),
-                'algorithm':     'AES-256-CBC',
-                'key_derivation':'PBKDF2-HMAC-SHA256',
-            }), 200
-
-        except Exception as exc:
-            log.error(f'Encrypt error: {exc}')
-            return jsonify({'success': False, 'error': str(exc)}), 500
+        # Switched off: encrypting on the server meant the server saw your message AND your password.
+        # Encryption now happens in the browser (GhostE2E.pwEncrypt). /api/decrypt stays only so that
+        # messages made in the old format can still be opened.
+        return jsonify({'success': False, 'error': 'Server-side encryption was retired. Update the page (reload) to encrypt in your browser.'}), 410
 
     @app.route('/api/decrypt', methods=['POST', 'OPTIONS'])
     @limiter.limit(DECRYPT_LIMIT)

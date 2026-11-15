@@ -41,7 +41,7 @@ Verification codes, 2FA codes and reset links are never written to logs in produ
 - **Voice typing** uses your browser's speech service (Google/Microsoft in Chrome/Edge); spoken words are not protected until typed.
 - There is **no forward secrecy** yet: someone who gets a private key can read past messages encrypted to it.
 - **Safety numbers** are shown in the chat encryption screen so two people can compare them in person or on a call, but checking is optional and not enforced.
-- The legacy **password chat mode** is server-side AES-256-CBC, not end-to-end. Prefer automatic or manual E2E.
+- **Shared-password messages** (the password tool) are encrypted in the browser with AES-256-GCM and PBKDF2 (600,000 rounds). Their strength is the password's strength: a weak shared password can be guessed offline. The old server-side encryption (AES-256-CBC) was retired: `/api/encrypt` returns 410. `/api/decrypt` remains only so that messages made in the old format can still be opened; doing so sends the password to the server, and the app says so.
 - Files cannot be virus-scanned by the server because it cannot read them. Dangerous file types are blocked.
 - Group rekeying waits until an admin is online.
 

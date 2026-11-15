@@ -105,3 +105,5 @@ All writes (POST, PUT, DELETE) need the `X-CSRF-Token` header (value from `GET /
 | GET | `/terms` |
 
 Admin routes (`/api/admin/...`) require an admin account. Group routes are in `backend/groups.py`, the admin console in `backend/moderation.py` and `backend/audit.py`.
+
+Retired: `POST /api/encrypt` and `POST /encrypt` return 410 (encryption happens in the browser). `POST /api/decrypt` and `/decrypt` are kept only for messages in the old format.

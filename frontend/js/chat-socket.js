@@ -527,6 +527,16 @@ class GhostChatRealtime {
         const encryptedContent = this.decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '').trim();
 
         try {
+            if (window.GhostE2E?.isPw?.(encryptedContent)) {
+                const plain = await window.GhostE2E.pwDecrypt(encryptedContent, password);     // in the browser
+                this._plainData[msgId] = plain;
+                this._msgViewState[msgId] = 'plain';
+                contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(plain)}</span>`;
+                this._swapCryptoButton(msgId, 'plain');
+                this._toast('Message decrypted!', 'success');
+                return;
+            }
+            // Older messages (made before this update) can only be opened by the server.
             const res = await resilientFetch(`${this._base()}/api/decrypt`, {
                 method: 'POST',
                 credentials: 'include',
@@ -548,12 +558,13 @@ class GhostChatRealtime {
 
                 contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(data.decrypted_message)}</span>`;
                 this._swapCryptoButton(msgId, 'plain');
-                this._toast('Message decrypted!', 'success');
+                this._toast('Opened. This is an old-format message, so the server handled your password. New messages never do.', 'info');
             } else {
                 this._toast('Wrong password or invalid message', 'error');
             }
-        } catch (_) {
-            this._toast(this._isOnline ? 'Decryption failed' : 'You are offline', 'error');
+        } catch (e) {
+            if (e && (e.message === 'wrong_password' || e.message === 'damaged')) this._toast('Wrong password or invalid message', 'error');
+            else this._toast(this._isOnline ? 'Decryption failed' : 'You are offline', 'error');
         }
     }
 
@@ -577,30 +588,15 @@ class GhostChatRealtime {
         }
 
         try {
-            const res = await resilientFetch(`${this._base()}/api/encrypt`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-Token': this._getCsrf(),
-                },
-                body: JSON.stringify({ message: plainText, password: password, use_decoys: false }),
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                this.decryptData[msgId] = data.emoji_message;
-                this._msgViewState[msgId] = 'encrypted';
-
-                contentEl.innerHTML = `🔒 ${this._esc(data.emoji_message)}`;
-                this._swapCryptoButton(msgId, 'encrypted');
-                this._toast('Message encrypted', 'success');
-            } else {
-                this._toast(data.error || 'Encryption failed', 'error');
-            }
+            if (!window.GhostE2E?.pwEncrypt) throw new Error('unavailable');
+            const emoji = await window.GhostE2E.pwEncrypt(plainText, password);      // runs in this browser; password never leaves it
+            this.decryptData[msgId] = emoji;
+            this._msgViewState[msgId] = 'encrypted';
+            contentEl.innerHTML = `🔒 ${this._esc(emoji)}`;
+            this._swapCryptoButton(msgId, 'encrypted');
+            this._toast('Message encrypted', 'success');
         } catch (_) {
-            this._toast(this._isOnline ? 'Encryption failed' : 'You are offline', 'error');
+            this._toast('Encryption failed', 'error');
         }
     }
 
@@ -674,28 +670,10 @@ class GhostChatRealtime {
 
         if (this.encryptMessages && this.password && !sentE2E) {
             try {
-                const encResult = await resilientFetch(`${this._base()}/api/encrypt`, {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'X-CSRF-Token': this._getCsrf(),
-                    },
-                    body: JSON.stringify({
-                        message: text,
-                        password: this.password,
-                        use_decoys: false,
-                    }),
-                }, { retries: 1 }); // encryption itself shouldn't hang the send flow long
-                const encData = await encResult.json();
-                if (encData.success) {
-                    content = encData.emoji_message;
-                } else {
-                    this._toast('Encryption failed — sending as plain text', 'info');
-                }
+                content = await window.GhostE2E.pwEncrypt(text, this.password);      // in the browser; the password never reaches the server
             } catch (_) {
-                this._toast('Encryption unavailable — sending as plain text', 'info');
+                this._toast('Not sent: password encryption is unavailable, so the message was not sent as plain text', 'error');
+                return;
             }
         }
 
