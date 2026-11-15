@@ -141,7 +141,8 @@ window.HistoryModule = {
             const fullEncrypted = this._emoji(msg.encrypted_content || msg.emoji_content || '');
             const fullEncryptedEscaped = this._esc(fullEncrypted);
 
-            const preview = msg.plaintext_preview
+            // Encrypted entries show the emoji packet; decrypted entries show the readable text.
+            const preview = (!isEnc && msg.plaintext_preview)
                 ? this._esc(msg.plaintext_preview) + (msg.plaintext_preview.length >= 80 ? '…' : '')
                 : this._esc(fullEncrypted.substring(0, 60)) + (fullEncrypted.length > 60 ? '…' : '');
 

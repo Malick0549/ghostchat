@@ -71,18 +71,18 @@ window.UI = {
     });
   },
 
-  // Soft bell: two-partial tone, quick fade-in and long fade-out, so there is no click.
-  _tone(freq, start, dur, vol) {
+  // Phone-style notification chime: bright, short "glockenspiel" notes that ring and fade quickly.
+  _tone(freq, start, dur, vol, partials) {
     const ctx = this._audio, t = ctx.currentTime + start;
     const out = ctx.createGain();
     out.gain.setValueAtTime(0.0001, t);
-    out.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+    out.gain.exponentialRampToValueAtTime(vol, t + 0.006);          // instant "tap"
     out.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     out.connect(ctx.destination);
-    [[1, 1], [2, 0.18]].forEach(([mult, amp]) => {
+    (partials || [[1, 1], [2.76, 0.32], [5.4, 0.1]]).forEach(([mult, amp]) => {
       const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = freq * mult; g.gain.value = amp;
-      o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.05);
+      o.type = 'sine'; o.frequency.value = freq * mult;
+      g.gain.value = amp; o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.05);
     });
   },
 
@@ -97,12 +97,17 @@ window.UI = {
         this._audio = new C();
       }
       const go = () => {
-        if (type === 'success')      { this._tone(659.25, 0, 0.45, 0.12); this._tone(880.00, 0.11, 0.6, 0.11); }   // E5 then A5, friendly
-        else if (type === 'error')   { this._tone(392.00, 0, 0.4, 0.10); this._tone(311.13, 0.13, 0.55, 0.09); }  // soft falling pair
-        else                         { this._tone(783.99, 0, 0.35, 0.10); this._tone(1046.5, 0.09, 0.5, 0.09); }  // new message: gentle ding
+        if (type === 'error') {           // two short low blips
+          const sq = [[1, 1], [2, 0.25]];
+          this._tone(330, 0, 0.22, 0.28, sq); this._tone(262, 0.17, 0.32, 0.28, sq);
+        } else if (type === 'success') {  // quick up-ding
+          this._tone(1318.5, 0, 0.55, 0.30); this._tone(1760, 0.11, 0.7, 0.28);
+        } else {                          // new message: three rising notes, like a phone tri-tone
+          this._tone(1046.5, 0, 0.5, 0.32); this._tone(1318.5, 0.13, 0.5, 0.32); this._tone(1568, 0.26, 0.9, 0.32);
+        }
       };
       if (this._audio.state === 'suspended') this._audio.resume().then(go).catch(() => {}); else go();
-      if (type !== 'error' && navigator.vibrate) { try { navigator.vibrate(type === 'info' ? [60] : [30]); } catch (_) {} }
+      if (type !== 'error' && navigator.vibrate) { try { navigator.vibrate(type === 'info' ? [70, 40, 70] : [30]); } catch (_) {} }
     } catch (_) {}
   },
 
