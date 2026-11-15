@@ -113,7 +113,7 @@ def add_security_headers(response):
         "connect-src 'self' wss: ws: https:; "
 
         # No workers, iframes, objects
-        "worker-src 'none'; "
+        "worker-src 'self'; "
         "frame-src 'none'; "
         "object-src 'none'; "
         "frame-ancestors 'self'; "

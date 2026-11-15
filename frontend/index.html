@@ -14,7 +14,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
   <meta name="theme-color" content="#080b12" />
-  <meta name="description" content="GhostChat — AES-256-GCM encrypted messaging disguised as emoji. Military-grade security." />
+  <meta name="description" content="GhostChat — private messaging with end-to-end encryption (AES-256-GCM), done in your browser." />
   <title>GhostChat | Encrypted Communication Platform</title>
   <link id="theme-stylesheet" rel="stylesheet" href="themes/dark.theme.css" />
   <link rel="stylesheet" href="css/ghostchat.css" />
@@ -71,7 +71,7 @@
     <div class="hero-badge animate-in animate-delay1">
       <span class="badge badge-cyan">
         <i class="fas fa-shield-halved" aria-hidden="true"></i>
-        AES-256-GCM &nbsp;·&nbsp; Zero-Trust Architecture
+        AES-256-GCM &nbsp;·&nbsp; End-to-end encrypted
       </span>
     </div>
     <h1 id="hero-title" class="hero-title animate-in animate-delay1">
@@ -79,7 +79,7 @@
       <span class="hero-title-2">communication<br/>for the modern world</span>
     </h1>
     <p class="hero-subtitle animate-in animate-delay2">
-      Military-grade AES-256 encryption meets emoji obfuscation. Your messages vanish into innocent emoji streams — readable only by the intended recipient.
+      Strong AES-256 encryption meets emoji disguise. Your messages are locked on your device and shown as innocent emoji streams — readable only by the person you send them to.
     </p>
     <div class="hero-actions animate-in animate-delay3">
       <a href="register.html" class="btn btn-primary btn-lg">
@@ -92,7 +92,7 @@
     <div class="hero-stats animate-in animate-delay4">
       <div class="hero-stat"><i class="fas fa-shield"></i><span>AES-256-GCM</span></div>
       <div class="hero-stat"><i class="fas fa-key"></i><span>End-to-End Encrypted</span></div>
-      <div class="hero-stat"><i class="fas fa-ghost"></i><span>Zero-Knowledge</span></div>
+      <div class="hero-stat"><i class="fas fa-ghost"></i><span>Keys stay on your device</span></div>
     </div>
   </div>
 
@@ -194,8 +194,8 @@
       </article>
       <article class="feature-card" role="listitem">
         <div class="feature-icon"><i class="fas fa-eye-slash"></i></div>
-        <h3>Zero-Knowledge Design</h3>
-        <p>Messages are encrypted before transmission. The server never sees your plaintext — not even in transit.</p>
+        <h3>Encrypted on your device</h3>
+        <p>Messages are encrypted before transmission. For end-to-end chats the server stores only ciphertext and cannot read your messages. It can still see who talks to whom and when.</p>
       </article>
       <article class="feature-card" role="listitem">
         <div class="feature-icon"><i class="fas fa-shield-halved"></i></div>
@@ -339,5 +339,6 @@
   });
 })();
 </script>
+<script src="js/pwa.js" defer></script>
 </body>
 </html>

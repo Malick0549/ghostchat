@@ -74,7 +74,15 @@
     }
   </style>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<style>.sidebar-legal{padding:10px 14px;font-size:12px;text-align:center;color:var(--t3,#889);border-top:1px solid var(--border,rgba(255,255,255,.1))}.sidebar-legal a{color:var(--t2,#9aa);text-decoration:underline}.sidebar-legal a:hover{color:var(--primary,#4dd)}</style></head>
+<style>.sidebar-legal{padding:10px 14px;font-size:12px;text-align:center;color:var(--t3,#889);border-top:1px solid var(--border,rgba(255,255,255,.1))}.sidebar-legal a{color:var(--t2,#9aa);text-decoration:underline}.sidebar-legal a:hover{color:var(--primary,#4dd)}</style>  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0b0d14" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="GhostChat" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/icons/icon-192.png" />
+</head>
 <body data-theme="dark">
 
 <div class="cyber-bg" aria-hidden="true"></div>
@@ -509,5 +517,6 @@
   window.addEventListener('offline', _syncOfflineBanner);
   document.addEventListener('DOMContentLoaded', _syncOfflineBanner);
 </script>
+<script src="js/pwa.js" defer></script>
 </body>
 </html>

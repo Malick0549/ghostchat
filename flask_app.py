@@ -543,6 +543,9 @@ def create_app(test_config=None):
         scheme = 'https' if _is_https() else 'http'
         return f"{scheme}://{host.rstrip('/')}/forgot-password.html?token={token}"
 
+    # Admin accounts must always pass an emailed code at sign-in. Set ADMIN_2FA_REQUIRED=0 only as a break-glass
+    # if email delivery is broken and an admin is locked out.
+    _ADMIN_2FA_REQUIRED = os.environ.get('ADMIN_2FA_REQUIRED', '1') != '0'
     _DEV_SECRETS = bool(app.debug) or os.environ.get('GC_LOG_SECRETS') == '1'   # codes in logs: local development only
 
     def _send_email(subject: str, recipient: str, html_body: str, text_body: str) -> bool:
@@ -840,7 +843,7 @@ def create_app(test_config=None):
             # user in yet — issue an OTP, mark the session as pending-2FA
             # (which _require_auth blocks on), and tell the client to prompt
             # for the code. Only /api/auth/2fa/verify can lift pending_2fa.
-            if user.two_factor_enabled:
+            if user.two_factor_enabled or (user.is_admin and _ADMIN_2FA_REQUIRED):
                 code_str = issue_otp(user, db)
                 db.session.commit()
                 session.clear()
@@ -1101,6 +1104,8 @@ def create_app(test_config=None):
         # (the user is already authenticated in this session); turning it OFF
         # is also allowed here. The next LOGIN is what actually enforces it. ──
         if 'two_factor_enabled' in data:
+            if user.is_admin and _ADMIN_2FA_REQUIRED and not bool(data['two_factor_enabled']):
+                return jsonify({'error': 'Two-factor sign-in is required for admin accounts and cannot be turned off.'}), 400
             user.two_factor_enabled = bool(data['two_factor_enabled'])
 
         db.session.commit()

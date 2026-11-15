@@ -13,7 +13,7 @@ import json, os, subprocess, sys, tempfile, time, socket, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERE = os.path.join(ROOT, 'tests')
-SUITES = ['test_security.py', 'test_moderation.py', 'test_groups.py', 'test_password_reset.py']
+SUITES = ['test_security.py', 'test_moderation.py', 'test_groups.py', 'test_password_reset.py', 'test_admin_2fa.py']
 STANDALONE = ['test_retention.py']          # builds its own app and database
 
 SEED = r'''
@@ -48,7 +48,7 @@ def run_suite(name):
     env = dict(os.environ, GC_ROOT=ROOT, GC_TEST_DB=os.path.join(tmp, 'test.db'), GC_IDS=os.path.join(tmp, 'ids.json'),
                DATABASE_URL='sqlite:///' + os.path.join(tmp, 'test.db'), FLASK_SECRET='x' * 40, ADMIN_EMAILS='alice@x.com',
                PORT=str(port), GC_BASE=f'http://127.0.0.1:{port}', EXTRA_CORS_ORIGINS=f'http://127.0.0.1:{port}',
-               TRUSTED_PROXY_HOPS='1', GC_LOG_SECRETS='')
+               TRUSTED_PROXY_HOPS='1', GC_LOG_SECRETS='', ADMIN_2FA_REQUIRED='1' if name == 'test_admin_2fa.py' else '0')
     subprocess.run([sys.executable, '-c', SEED], env=env, cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     srv = subprocess.Popen([sys.executable, '-c', SERVE], env=env, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:

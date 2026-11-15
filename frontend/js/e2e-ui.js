@@ -109,16 +109,22 @@ window.GhostE2EUI = (() => {
     async function gather() {
         const e = E(), id = cid();
         const g = { mode: e.getMode(id), override: e.getOverride(id), def: e.getDefault() };
-        if (g.mode === 'auto') g.auto = await e.autoInfo(id);
+        if (g.mode === 'auto') { g.auto = await e.autoInfo(id); g.ver = await e.verification(id); }
         else { g.info = await e.manualInfo(id); g.st = await e.manualStatus(id, true); }
         return g;
+    }
+    function verBlock(v) {
+        if (!v || v.state === 'none') return '';
+        if (v.state === 'verified') return `<div class="ge2e-sm" style="margin-top:10px;color:var(--green,#2fb36b)"><i class="fas fa-circle-check"></i> <b>Verified.</b> You checked this number with ${esc(nm())}. You will be warned if it ever changes.</div><div class="ge2e-row"><button class="ge2e-btn" data-act="unverify">Remove verified mark</button></div>`;
+        if (v.state === 'changed') return `<div class="ge2e-sm" style="margin-top:10px;color:var(--red,#e5484d)"><i class="fas fa-triangle-exclamation"></i> <b>The safety number CHANGED</b> since you verified it. ${esc(nm())} may have a new device or reset their keys, or someone may be intercepting. Check the new number with them before sharing anything sensitive.</div><div class="ge2e-row"><button class="ge2e-btn" data-act="verify">The new number matches, mark verified</button></div>`;
+        return `<div class="ge2e-sm" style="margin-top:10px">Not checked yet.</div><div class="ge2e-row"><button class="ge2e-btn" data-act="verify">The numbers match, mark verified</button></div>`;
     }
     function statusBlock(g) {
         let cls = '', head = '', body = '';
         if (g.mode === 'auto') {
             if (g.auto.ready) {
                 cls = 'ok'; head = 'Automatic encryption is active';
-                body = `Keys were created and shared for you. To be sure nobody is intercepting, compare this <b>safety number</b> with ${esc(nm())} (in person or on a call):<div class="ge2e-mono" style="margin-top:6px;font-size:.95rem">${esc(g.auto.safety)}</div>`;
+                body = `Keys were created and shared for you. To be sure nobody is intercepting, compare this <b>safety number</b> with ${esc(nm())} (in person or on a call):<div class="ge2e-mono" style="margin-top:6px;font-size:.95rem">${esc(g.auto.safety)}</div>${verBlock(g.ver)}`;
             } else {
                 head = `Waiting for ${esc(nm())}`;
                 body = `${esc(nm())} has not opened GhostChat since secure messaging was added, so there is no key to use yet. Ask them to open the chat once. Until then messages to them are not sent.`;
@@ -240,6 +246,8 @@ window.GhostE2EUI = (() => {
         if (act === 'close') return close();
         if (act === 'copy') return copyText(b.dataset.t);
         if (act === 'showpass') { const p = ov.querySelector('#ge2ePass'); if (p) p.type = p.type === 'password' ? 'text' : 'password'; return; }
+        if (act === 'verify') return guarded(b, async () => { await e.markVerified(id); setMsg(); shown = null; await render(); window.dispatchEvent(new CustomEvent('ghoste2e:verified', { detail: { cid: id } })); });
+        if (act === 'unverify') { e.clearVerified(id); setMsg(); shown = null; return render(); }
         if (act === 'scan') return scan();
         if (act === 'scan-stop') { if (scanner) scanner.stop(); return; }
         if (act === 'mode') { keepDrafts(); e.setOverride(id, b.dataset.v === 'default' ? null : b.dataset.v); setMsg(); shown = null; return render(); }

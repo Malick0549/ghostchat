@@ -608,6 +608,16 @@ window.GhostE2E = (() => {
         // status
         manualStatus, manualInfo, manualShare,
         async autoInfo(cid) { const k = await _convKey(cid).catch(() => null); return { ready: !!k, safety: k ? k.fp : null }; },
+        // Safety-number verification: remember that YOU compared the number with this contact.
+        // If their key later changes, the mark turns into a warning.
+        async verification(cid) {
+            const k = await _convKey(cid).catch(() => null); if (!k) return { state: 'none' };
+            let st = null; try { st = localStorage.getItem(`gc_e2e_ver_${_me}_${cid}`); } catch (_) {}
+            if (!st) return { state: 'unverified', fp: k.fp };
+            return st === k.fp ? { state: 'verified', fp: k.fp } : { state: 'changed', fp: k.fp, was: st };
+        },
+        async markVerified(cid) { const k = await _convKey(cid); if (!k) throw new Error('No key yet'); try { localStorage.setItem(`gc_e2e_ver_${_me}_${cid}`, k.fp); } catch (_) {} return true; },
+        clearVerified(cid) { try { localStorage.removeItem(`gc_e2e_ver_${_me}_${cid}`); } catch (_) {} },
         async safetyNumber(cid) { const k = await _convKey(cid); return k ? k.fp : null; },
         // manual setup
         dhStart, dhReset, importCode, randomCreate, passphrase, passStrength, manualRetire, manualWipe,

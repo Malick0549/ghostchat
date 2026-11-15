@@ -10,6 +10,14 @@
   <link rel="stylesheet" href="css/mobile-responsive.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="stylesheet" href="css/ghost-ui.css" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0b0d14" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="GhostChat" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/icons/icon-192.png" />
 </head>
 <body data-theme="dark">
 
@@ -35,7 +43,7 @@
         <div class="session-previews">
           <div class="session-preview"><i class="fas fa-shield-halved"></i><span>AES-256-CBC + PBKDF2 encryption</span></div>
           <div class="session-preview"><i class="fas fa-rotate"></i><span>Auto-rotating session keys</span></div>
-          <div class="session-preview"><i class="fas fa-eye-slash"></i><span>Zero-knowledge server architecture</span></div>
+          <div class="session-preview"><i class="fas fa-eye-slash"></i><span>End-to-end encrypted messages</span></div>
         </div>
       </div>
       <div class="brand-trust">
@@ -345,5 +353,6 @@
   });
 })();
 </script>
+<script src="js/pwa.js" defer></script>
 </body>
 </html>

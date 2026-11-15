@@ -94,7 +94,10 @@ class GhostChatRealtime {
         if (!window.GhostE2E || !this.user?.id) return;
         window.GhostE2E.onKeyChange = (cid) => {
             const c = this.contacts.find(x => x.contact_id === cid);
-            this._toast(`${c?.display_name || 'A contact'}'s security key changed. Compare safety numbers before sharing anything sensitive.`, 'error');
+            let was = false; try { was = !!localStorage.getItem(`gc_e2e_ver_${this.user.id}_${cid}`); } catch (_) {}
+            this._toast(was
+                ? `WARNING: ${c?.display_name || 'A contact'}'s safety number changed, and you had verified it. Open the key screen and check it with them before sharing anything sensitive.`
+                : `${c?.display_name || 'A contact'}'s security key changed. Compare safety numbers before sharing anything sensitive.`, 'error');
         };
         window.GhostE2E.init(this.user.id, this._base(), () => this._getCsrf()).then(async () => {
             await this._e2eReveal();
