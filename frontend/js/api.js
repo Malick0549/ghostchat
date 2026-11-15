@@ -35,13 +35,22 @@ class GhostChatAPI {
     // ── CSRF ──────────────────────────────────────────────────────
 
     async fetchCsrfToken() {
-        try {
-            const d = await this._get('/api/csrf-token');
-            this._csrfToken = d.csrf_token || null;
-            return this._csrfToken;
-        } catch (_) {
-            return null;
-        }
+        // One request at a time. On a first visit two parallel requests would each be
+        // given a different token, and only the last cookie written would match.
+        if (this._csrfInflight) return this._csrfInflight;
+        this._csrfInflight = (async () => {
+            try {
+                const d = await this._get('/api/csrf-token');
+                // The cookie is what the server compares against, so it wins.
+                this._csrfToken = this._getCsrfFromCookie() || d.csrf_token || null;
+                return this._csrfToken;
+            } catch (_) {
+                return null;
+            } finally {
+                this._csrfInflight = null;
+            }
+        })();
+        return this._csrfInflight;
     }
 
     _getCsrfFromCookie() {
@@ -78,11 +87,11 @@ class GhostChatAPI {
     async _request(path, options = {}) {
         const url = `${this.baseURL}${path}`;
 
-        let csrf = this._csrfToken || this._getCsrfFromCookie();
+        let csrf = this._getCsrfFromCookie() || this._csrfToken;
 
         if (options.method && options.method !== 'GET' && !csrf) {
             await this.fetchCsrfToken();
-            csrf = this._csrfToken || this._getCsrfFromCookie();
+            csrf = this._getCsrfFromCookie() || this._csrfToken;
         }
 
         const headers = {
@@ -154,7 +163,7 @@ class GhostChatAPI {
     _del(path)       { return this._request(path, { method: 'DELETE' }); }
 
     getCsrfToken() {
-        return this._csrfToken || this._getCsrfFromCookie();
+        return this._getCsrfFromCookie() || this._csrfToken;
     }
 
     // ── Health ────────────────────────────────────────────────────
