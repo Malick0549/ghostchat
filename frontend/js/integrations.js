@@ -49,77 +49,45 @@ window.IntegrationsModule = {
     },
     
     async whatsappIntegration() {
-        const phone = prompt('Enter WhatsApp phone number (with country code):');
-        if (!phone) return;
-        
-        const message = prompt('Enter the message to send:');
-        if (!message) return;
-        
-        const encodedMessage = encodeURIComponent(message);
-        const whatsappUrl = `https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encodedMessage}`;
-        
-        window.open(whatsappUrl, '_blank');
-        this.logActivity(`WhatsApp integration used`, 'success');
-        this.showToast('Opening WhatsApp...', 'success');
+        const r = await GhostShare.ask({ title: 'Send on WhatsApp', label: 'Phone number with country code (e.g. +233…)', placeholder: '+233…', message: GhostShare.latest() });
+        if (!r) return;
+        await GhostShare.whatsapp(r.target, r.message);
+        this.logActivity('WhatsApp integration used', 'success');
     },
     
     async telegramIntegration() {
-        const username = prompt('Enter Telegram username (without @):');
-        if (!username) return;
-        
-        const message = prompt('Enter the message to send:');
-        if (!message) return;
-        
-        const telegramUrl = `https://t.me/${username}?text=${encodeURIComponent(message)}`;
-        window.open(telegramUrl, '_blank');
-        this.logActivity(`Telegram integration used`, 'success');
-        this.showToast('Opening Telegram...', 'success');
+        const r = await GhostShare.ask({ title: 'Send on Telegram', label: 'Telegram username (without @)', message: GhostShare.latest() });
+        if (!r) return;
+        await GhostShare.telegram(r.target, r.message);
+        this.logActivity('Telegram integration used', 'success');
     },
     
     async discordIntegration() {
-        const webhookUrl = prompt('Enter Discord Webhook URL:');
-        if (!webhookUrl) return;
-        
-        const message = prompt('Enter the message to send:');
-        if (!message) return;
-        
+        const r = await GhostShare.ask({ title: 'Post to Discord', label: 'Discord webhook URL', message: GhostShare.latest() });
+        if (!r) return;
         try {
-            await fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: message })
-            });
+            const res = await fetch(r.target, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: r.message }) });
+            if (!res.ok) throw new Error('bad status');
             this.showToast('Message sent to Discord!', 'success');
-            this.logActivity(`Discord integration used`, 'success');
+            this.logActivity('Discord integration used', 'success');
         } catch (error) {
-            this.showToast('Failed to send to Discord', 'error');
+            await GhostShare.copy(r.message);
+            this.showToast('Could not post to Discord. The message is copied, so paste it there.', 'error');
         }
     },
     
     async emailIntegration() {
-        const email = prompt('Enter email address:');
-        if (!email) return;
-        
-        const message = prompt('Enter the message to send:');
-        if (!message) return;
-        
-        const mailtoUrl = `mailto:${email}?subject=Encrypted Message from GhostChat&body=${encodeURIComponent(message)}`;
-        window.open(mailtoUrl, '_blank');
-        this.showToast('Opening email client...', 'success');
-        this.logActivity(`Email integration used`, 'success');
+        const r = await GhostShare.ask({ title: 'Send by email', label: 'Recipient email address', message: GhostShare.latest() });
+        if (!r) return;
+        await GhostShare.email(r.target, r.message);
+        this.logActivity('Email integration used', 'success');
     },
     
     async smsIntegration() {
-        const phone = prompt('Enter phone number (with country code):');
-        if (!phone) return;
-        
-        const message = prompt('Enter the message to send:');
-        if (!message) return;
-        
-        const smsUrl = `sms:${phone}?body=${encodeURIComponent(message)}`;
-        window.location.href = smsUrl;
-        this.logActivity(`SMS integration used`, 'success');
-        this.showToast('Opening SMS...', 'success');
+        const r = await GhostShare.ask({ title: 'Send by SMS', label: 'Phone number with country code', message: GhostShare.latest() });
+        if (!r) return;
+        await GhostShare.sms(r.target, r.message);
+        this.logActivity('SMS integration used', 'success');
     },
     
     async googleIntegration() {
@@ -128,12 +96,11 @@ window.IntegrationsModule = {
     },
     
     async clipboardIntegration() {
-        const text = prompt('Enter text to share via encrypted clipboard:');
-        if (!text) return;
-        
-        await navigator.clipboard.writeText(text);
-        this.showToast('Copied to clipboard! Share securely.', 'success');
-        this.logActivity(`Clipboard integration used`, 'success');
+        const r = await GhostShare.ask({ title: 'Copy encrypted message', needTarget: false, message: GhostShare.latest() });
+        if (!r) return;
+        await GhostShare.copy(r.message);
+        this.showToast('Copied exactly as it is. Paste it where you like.', 'success');
+        this.logActivity('Clipboard integration used', 'success');
     },
     
     showToast(message, type) {

@@ -164,53 +164,16 @@ window.EncryptionModule = {
             .then(() => { if (window.UI) UI.showToast('Copied!', 'success'); });
     },
 
-    _exportWhatsApp() {
+    async _exportWhatsApp() {
         if (!this._lastPacket) return;
-        const phone = prompt('WhatsApp phone number (with country code, e.g. +233…):');
-        if (phone) {
-            const cleanPhone = phone.replace(/\D/g, '');
-            const message = this._lastPacket;
-            const encodedMessage = encodeURIComponent(message);
-            const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedMessage}`;
-
-            try {
-                const win = window.open(url, '_blank');
-                if (!win) {
-                    navigator.clipboard.writeText(message)
-                        .then(() => {
-                            if (window.UI) UI.showToast('Message copied! Open WhatsApp and paste it.', 'success');
-                            window.open(`https://wa.me/${cleanPhone}`, '_blank');
-                        })
-                        .catch(() => {
-                            if (window.UI) UI.showToast('Please copy the message manually.', 'info');
-                        });
-                } else {
-                    if (window.UI) UI.showToast('Opening WhatsApp...', 'success');
-                }
-            } catch (err) {
-                navigator.clipboard.writeText(message)
-                    .then(() => {
-                        if (window.UI) UI.showToast('Message copied! Open WhatsApp and paste it.', 'success');
-                        window.open(`https://wa.me/${cleanPhone}`, '_blank');
-                    })
-                    .catch(() => {
-                        if (window.UI) UI.showToast('Could not open WhatsApp. Please copy the message manually.', 'info');
-                    });
-            }
-        }
+        const r = await GhostShare.ask({ title: 'Send on WhatsApp', label: 'Phone number with country code (e.g. +233…)', placeholder: '+233…', message: this._lastPacket });
+        if (r) GhostShare.whatsapp(r.target, r.message);
     },
 
-    _exportTelegram() {
+    async _exportTelegram() {
         if (!this._lastPacket) return;
-        const user = prompt('Telegram username (without @):');
-        if (user) {
-            const message = this._lastPacket;
-            const encodedMessage = encodeURIComponent(message);
-            window.open(
-                `https://t.me/${user.replace('@','')}?text=${encodedMessage}`,
-                '_blank'
-            );
-        }
+        const r = await GhostShare.ask({ title: 'Send on Telegram', label: 'Telegram username (without @)', message: this._lastPacket });
+        if (r) GhostShare.telegram(r.target, r.message);
     },
 
     _exportDiscord() {
@@ -219,25 +182,16 @@ window.EncryptionModule = {
         if (window.UI) UI.showToast('Copied! Paste it in Discord.', 'success');
     },
 
-    _exportEmail() {
+    async _exportEmail() {
         if (!this._lastPacket) return;
-        const email = prompt('Recipient email address:');
-        if (email) {
-            const message = this._lastPacket;
-            window.location.href =
-                `mailto:${email}?subject=${encodeURIComponent('Encrypted GhostChat Message')}`
-                + `&body=${encodeURIComponent(message)}`;
-        }
+        const r = await GhostShare.ask({ title: 'Send by email', label: 'Recipient email address', message: this._lastPacket });
+        if (r) GhostShare.email(r.target, r.message);
     },
 
-    _exportSMS() {
+    async _exportSMS() {
         if (!this._lastPacket) return;
-        const phone = prompt('Phone number:');
-        if (phone) {
-            const message = this._lastPacket;
-            window.location.href =
-                `sms:${phone}?body=${encodeURIComponent(message)}`;
-        }
+        const r = await GhostShare.ask({ title: 'Send by SMS', label: 'Phone number', message: this._lastPacket });
+        if (r) GhostShare.sms(r.target, r.message);
     },
 
     _saveFile() {

@@ -40,8 +40,11 @@ window.GhostE2E = (() => {
     const EMO = []; for (const [a, b] of [[0x1F300,0x1F320],[0x1F330,0x1F335],[0x1F337,0x1F37C],[0x1F380,0x1F393],[0x1F3A0,0x1F3C4],[0x1F3E0,0x1F3F0],[0x1F400,0x1F43E],[0x1F440,0x1F440],[0x1F442,0x1F44A]]) for (let c = a; c <= b; c++) EMO.push(String.fromCodePoint(c));
     const EMO_IDX = new Map(EMO.map((e, i) => [e, i]));
     const toEmoji = str => Array.from(new TextEncoder().encode(str), x => EMO[x]).join('');
-    const fromEmoji = s => { const a = []; for (const ch of s) { const i = EMO_IDX.get(ch); if (i === undefined) return null; a.push(i); } return new TextDecoder().decode(Uint8Array.from(a)); };
-    const unwrap = s => { if (typeof s !== 'string' || s.startsWith('🔐')) return s; const full = fromEmoji(s); return full === null ? s : full; };
+    // Chat apps sometimes add invisible marks (variation selectors, joiners, spaces, line breaks) around emoji.
+    // They carry no data, so they are dropped before decoding. The 256 data emoji themselves are never touched.
+    const INVISIBLE = /[\uFE0E\uFE0F\u200B-\u200D\u2060\uFEFF\u00A0\s]/g;
+    const fromEmoji = s => { const a = []; s = String(s).replace(INVISIBLE, ''); for (const ch of s) { const i = EMO_IDX.get(ch); if (i === undefined) return null; a.push(i); } return new TextDecoder().decode(Uint8Array.from(a)); };
+    const unwrap = s => { if (typeof s !== 'string') return s; s = s.trim(); if (s.startsWith('🔐')) return s; const full = fromEmoji(s); return full === null ? s : full; };
     const b64 = buf => { let s = ''; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s); };
     const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
     const b64u = buf => b64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
