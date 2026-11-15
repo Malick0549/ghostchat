@@ -1,0 +1,55 @@
+/* Admin console polish: loaded after the page's own styles. */
+body { background: radial-gradient(1200px 500px at 10% -10%, rgba(185,167,255,.10), transparent 60%), var(--bg); }
+.shell { padding-top: 0; }
+
+/* Sticky header with the tabs under it */
+.topbar { position: sticky; top: 0; z-index: 30; margin: 0 -20px 0; padding: 14px 20px 10px;
+  background: rgba(11,13,20,.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.topbar h1 { font-size: 1.25rem; letter-spacing: -.01em; }
+.topbar h1 i { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px; font-size: 1rem;
+  background: linear-gradient(135deg, rgba(185,167,255,.28), rgba(185,167,255,.08)); border: 1px solid rgba(185,167,255,.3); }
+.tabs { position: sticky; top: 63px; z-index: 29; margin: 0 -20px 18px; padding: 6px 20px 0; gap: 4px;
+  background: rgba(11,13,20,.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.tab { border-radius: 10px 10px 0 0; transition: color .15s, background .15s; }
+.tab:hover { background: rgba(255,255,255,.04); }
+.tab.active { background: rgba(185,167,255,.08); }
+
+/* Stat tiles: colour-keyed, compact */
+.stats { gap: 10px; }
+.stat { position: relative; overflow: hidden; padding: 14px 16px 12px; border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01)), var(--bg2); transition: transform .15s, border-color .15s; }
+.stat::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--primary); opacity: .75; }
+.stat.good::before { background: var(--green); } .stat.warn::before { background: var(--amber); } .stat.bad::before { background: var(--red); }
+button.stat:hover { transform: translateY(-2px); }
+.stat .l { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--t3); font-weight: 600; }
+.stat .v { font-size: 1.9rem; margin: 2px 0; }
+.stat .s { font-size: .78rem; }
+
+/* Cards, banners, tables */
+.card { border-radius: 16px; padding: 18px; background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0)), var(--bg2); }
+.card h2 { font-size: 1rem; letter-spacing: -.005em; }
+.banner { border-radius: 12px; align-items: center; }
+table.t th { text-transform: uppercase; letter-spacing: .06em; font-size: .7rem; position: sticky; top: 0; background: var(--bg2); }
+table.t tbody tr { transition: background .12s; }
+table.t tbody tr:hover { background: rgba(185,167,255,.06); }
+.toolbar input, .toolbar select { border-radius: 10px; }
+.btn { border-radius: 10px; font-weight: 600; }
+.btn-sm { border-radius: 8px; }
+
+/* Phones */
+@media (max-width: 760px) {
+  .shell { padding: 0 14px 60px; }
+  .topbar { margin: 0 -14px; padding: 10px 14px 8px; flex-wrap: nowrap; }
+  .topbar h1 { font-size: 1.05rem; min-width: 0; } .topbar h1 i { width: 32px; height: 32px; }
+  .topbar .btn, .topbar a.btn { padding: 8px 12px; font-size: .82rem; white-space: nowrap; }
+  .tabs { top: 52px; margin: 0 -14px 14px; padding: 4px 14px 0; }
+  .tab { padding: 9px 12px; font-size: .88rem; }
+  .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .stat { padding: 11px 12px; } .stat .v { font-size: 1.55rem; } .stat .l { font-size: .68rem; }
+  .card { padding: 14px; border-radius: 14px; }
+  /* table rows become tidy cards */
+  table.t tr { border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+  table.t td { padding: 3px 0 !important; border: 0 !important; font-size: .88rem; }
+  table.t td::before { flex: 0 0 70px; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+  .banner { font-size: .85rem; }
+}

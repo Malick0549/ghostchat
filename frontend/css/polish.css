@@ -70,3 +70,13 @@ input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:foc
 /* Softer focus ring everywhere */
 :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 8px; }
 button, .btn { -webkit-tap-highlight-color: transparent; }
+
+/* ── Unread sign on the Chat button ────────────────────────────────── */
+.gc-unread { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+  background: #ff5d73; color: #fff; font: 700 .72rem/1 var(--font, system-ui); box-shadow: 0 0 0 2px var(--bg, #0b0d14); animation: gcPop .35s cubic-bezier(.2,1.4,.4,1); }
+.gc-unread.on-nav { margin-left: auto; }
+.hamburger-menu { position: relative; overflow: visible !important; }
+.hamburger-menu.has-unread::after { content: ""; position: absolute; top: -6px; right: -8px; width: 13px; height: 13px; border-radius: 50%; background: #ff5d73; box-shadow: 0 0 0 2px var(--bg, #0b0d14); animation: gcPop .35s cubic-bezier(.2,1.4,.4,1); }
+.gc-unread.on-link { margin-left: 8px; }
+@keyframes gcPop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .gc-unread { animation: none; } }
