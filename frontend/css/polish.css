@@ -1,0 +1,72 @@
+/* GhostChat visual polish. Loaded last, so it refines the older stylesheets without rewriting them. */
+
+/* ── Chat: message bubbles ─────────────────────────────────────────── */
+.chat-messages { gap: 6px; padding-inline: clamp(12px, 4vw, 40px); }
+.msg-wrapper { max-width: min(640px, 78%); }
+.msg-wrapper.mine + .msg-wrapper.theirs, .msg-wrapper.theirs + .msg-wrapper.mine { margin-top: 8px; }
+.msg-bubble { padding: 8px 12px 6px; min-width: 76px; }
+.msg-content { font-size: .95rem; line-height: 1.45; overflow-wrap: anywhere; }
+.msg-meta { margin-top: 2px; min-height: 18px; gap: 6px; }
+.msg-time { font-size: .68rem; letter-spacing: .02em; }
+
+/* Encrypted bubbles: a tidy preview instead of a wall of emoji */
+.msg-content.is-cipher { cursor: pointer; font-size: .85rem; line-height: 1.55; letter-spacing: .5px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.msg-content.is-cipher.open { display: block; -webkit-line-clamp: unset; }
+.cipher-tag { display: block; font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--primary); margin-bottom: 3px; letter-spacing: .06em; }
+.cipher-tag i { margin-right: 5px; }
+
+/* ⋮ button sits inside the bubble corner, never outside it */
+.msg-menu-toggle, .bubble-mine .msg-menu-toggle, .bubble-theirs .msg-menu-toggle {
+  top: auto !important; bottom: 4px !important; right: 6px !important; left: auto !important;
+  width: 22px !important; height: 22px !important; font-size: 11px !important; opacity: 0;
+  background: rgba(255,255,255,.08) !important; border: 0 !important; color: var(--t2) !important; }
+.msg-bubble:hover .msg-menu-toggle, .msg-bubble:focus-within .msg-menu-toggle { opacity: .9; }
+.msg-meta { padding-right: 28px; }
+@media (hover: none) { .msg-menu-toggle { opacity: .55 !important; } }
+
+/* Message action row */
+.msg-crypto-actions { gap: 6px; margin-top: 6px; padding-top: 6px; }
+.msg-crypto-actions .msg-crypto-btn { padding: 5px 11px; border-radius: 999px; font-size: .75rem; }
+
+/* ── Chat: composer ────────────────────────────────────────────────── */
+#chatInput { padding: 12px 16px; line-height: 1.35; }
+#chatInput::placeholder { color: var(--t3); }
+
+/* ── Chat: sidebar header ──────────────────────────────────────────── */
+.chat-sidebar-header { flex-wrap: nowrap; }
+.chat-user-info { min-width: 0; flex: 1 1 auto; }
+.chat-user-info .chat-username, .chat-user-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-actions { flex: 0 0 auto; gap: 2px; }
+.sidebar-actions .icon-btn { width: 34px; height: 34px; }
+
+/* Phones: the contact list uses the whole screen, header stays on one row */
+@media (max-width: 768px) {
+  .chat-sidebar { width: 100% !important; max-width: none !important; }
+  .chat-sidebar-header { flex-direction: row !important; align-items: center !important; gap: 8px !important; padding: 12px 14px !important; }
+  .chat-user-info { width: auto !important; }
+  .sidebar-actions { width: auto !important; justify-content: flex-end !important; }
+  .msg-wrapper { max-width: 88%; }
+  .msg-bubble { min-width: 70px; }
+  .chat-messages { padding-inline: 10px; gap: 4px; }
+  .chat-input-area, .chat-input-bar { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+}
+/* Tablets: sidebar header keeps its icons clear of the name */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .chat-sidebar-header { flex-direction: column !important; align-items: stretch !important; gap: 8px !important; }
+  .sidebar-actions { justify-content: flex-end; }
+}
+
+/* ── Dashboard ─────────────────────────────────────────────────────── */
+/* Cards use the space, centred, with a comfortable reading width */
+.page-container > * { max-width: 940px; margin-left: auto; margin-right: auto; }
+
+/* Stop the browser from pouring saved logins into these fields */
+input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--bg2, #0e1018) inset !important; -webkit-text-fill-color: var(--t1, #ecebf4) !important;
+  caret-color: var(--t1, #ecebf4); transition: background-color 9999s ease-out; }
+
+/* Softer focus ring everywhere */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 8px; }
+button, .btn { -webkit-tap-highlight-color: transparent; }

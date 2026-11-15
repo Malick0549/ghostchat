@@ -21,6 +21,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/icons/icon-192.png" />
+  <link rel="stylesheet" href="css/polish.css" />
 </head>
 <body data-theme="dark">
 
@@ -45,7 +46,7 @@
     </div>
     <div class="input-section">
       <label for="encryptPassword">Session Password (shared secret)</label>
-      <input type="password" id="encryptPassword" placeholder="Password used to encrypt/decrypt" />
+      <input type="password" id="encryptPassword" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="Password used to encrypt/decrypt" />
     </div>
     <button id="encryptBtn" class="btn btn-primary btn-lg">
       <i class="fas fa-ghost"></i> Encrypt &amp; Obfuscate
@@ -77,7 +78,7 @@
     </div>
     <div class="input-section">
       <label for="decryptPassword">Session Password</label>
-      <input type="password" id="decryptPassword" placeholder="Same password used to encrypt" />
+      <input type="password" id="decryptPassword" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="Same password used to encrypt" />
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
       <button id="decryptBtn" class="btn btn-primary btn-lg">

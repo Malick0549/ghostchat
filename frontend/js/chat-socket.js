@@ -457,9 +457,7 @@ class GhostChatRealtime {
             html += `
             <div class="msg-wrapper ${isMine ? 'mine' : 'theirs'}" id="msg-${msg.id}">
                 <div class="msg-bubble ${isMine ? 'bubble-mine' : 'bubble-theirs'}">
-                    <div class="msg-content" id="content-${msg.id}">
-                        ${state === 'encrypted' ? '🔒 ' : ''}${displayContent}
-                    </div>
+                    <div class="msg-content${state === 'encrypted' ? ' is-cipher' : ''}" id="content-${msg.id}"${state === 'encrypted' ? ' title="Tap to show or hide the full code"' : ''}>${state === 'encrypted' ? '<span class="cipher-tag"><i class="fas fa-lock"></i> Encrypted message</span>' : ''}${displayContent}</div>
                     <button class="msg-menu-toggle" title="Message actions" aria-label="Message actions"
                         onclick="window.chat.toggleMsgMenu('${msg.id}', event)">
                         <i class="fas fa-ellipsis-vertical"></i>
@@ -527,14 +525,14 @@ class GhostChatRealtime {
         const contentEl = document.getElementById(`content-${msgId}`);
         if (!contentEl) return;
 
-        const encryptedContent = this.decryptData?.[msgId] || contentEl.textContent.replace('🔒 ', '').trim();
+        const encryptedContent = this.decryptData?.[msgId] || contentEl.textContent.replace('Encrypted message','').replace('🔒 ', '').trim();
 
         try {
             if (window.GhostE2E?.isPw?.(encryptedContent)) {
                 const plain = await window.GhostE2E.pwDecrypt(encryptedContent, password);     // in the browser
                 this._plainData[msgId] = plain;
                 this._msgViewState[msgId] = 'plain';
-                contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(plain)}</span>`;
+                contentEl.classList.remove('is-cipher'); contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(plain)}</span>`;
                 this._swapCryptoButton(msgId, 'plain');
                 this._toast('Message decrypted!', 'success');
                 return;
@@ -559,7 +557,7 @@ class GhostChatRealtime {
                 this._plainData[msgId] = data.decrypted_message;
                 this._msgViewState[msgId] = 'plain';
 
-                contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(data.decrypted_message)}</span>`;
+                contentEl.classList.remove('is-cipher'); contentEl.innerHTML = `<span style="color:var(--green);">🔓 ${this._esc(data.decrypted_message)}</span>`;
                 this._swapCryptoButton(msgId, 'plain');
                 this._toast('Opened. This is an old-format message, so the server handled your password. New messages never do.', 'info');
             } else {
@@ -595,7 +593,7 @@ class GhostChatRealtime {
             const emoji = await window.GhostE2E.pwEncrypt(plainText, password);      // runs in this browser; password never leaves it
             this.decryptData[msgId] = emoji;
             this._msgViewState[msgId] = 'encrypted';
-            contentEl.innerHTML = `🔒 ${this._esc(emoji)}`;
+            contentEl.classList.add('is-cipher'); contentEl.innerHTML = `<span class="cipher-tag"><i class="fas fa-lock"></i> Encrypted message</span>${this._esc(emoji)}`;
             this._swapCryptoButton(msgId, 'encrypted');
             this._toast('Message encrypted', 'success');
         } catch (_) {

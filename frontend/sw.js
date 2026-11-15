@@ -5,7 +5,7 @@
 //   - never a response that says no-store/private, or that is not a plain 200
 // Pages and scripts are fetched from the network first (so a new release is used at once);
 // the cache is only a fallback when the network is down.
-const VERSION = 'ghostchat-v2';
+const VERSION = 'ghostchat-v3';
 const SHELL = ['/offline.html', '/assets/icons/icon-192.png', '/assets/icons/icon-512.png'];
 const NEVER = [/^\/api\//, /^\/socket\.io\//, /^\/health/, /^\/uploads\//, /^\/avatar/, /^\/admin/];
 
