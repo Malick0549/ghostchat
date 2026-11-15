@@ -65,6 +65,7 @@ window.DecryptionModule = {
 
     async _decrypt() {
         let packet = (document.getElementById('ciphertext')?.value || '').trim();
+        const original = packet;   // the emoji form, kept for History
         if (window.GhostE2E?.unwrap) packet = window.GhostE2E.unwrap(packet);
         const password = (document.getElementById('decryptPassword')?.value  || '').trim();
 
@@ -115,7 +116,7 @@ window.DecryptionModule = {
                 if (window.HistoryModule?.addMessage) {
                     window.HistoryModule.addMessage(
                         result.decrypted_message,
-                        packet,
+                        original,
                         'decryption'
                     );
                 }

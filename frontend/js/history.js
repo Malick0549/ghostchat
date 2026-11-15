@@ -26,7 +26,15 @@ window.HistoryModule = {
         try {
             const d = await window.GhostChatAPI.getMessageHistory(100, 0);
             if (d.success && Array.isArray(d.messages)) {
-                this.messages = d.messages;
+                // The server never sees readable text. Keep the readable text this browser already has,
+                // matched by the encrypted packet, so History keeps showing words and not just emoji.
+                let local = [];
+                try { local = JSON.parse(localStorage.getItem('ghostchat_message_history') || '[]'); } catch (_) {}
+                const byPacket = new Map(local.filter(m => m.plaintext_full).map(m => [this._emoji(m.encrypted_content || m.emoji_content), m]));
+                this.messages = d.messages.map(m => {
+                    const hit = byPacket.get(this._emoji(m.encrypted_content || m.emoji_content));
+                    return hit ? { ...m, plaintext_preview: hit.plaintext_preview, plaintext_full: hit.plaintext_full } : m;
+                });
                 this._saveLocal();
                 this.render();
                 return;
@@ -44,6 +52,13 @@ window.HistoryModule = {
         this.render();
     },
 
+    // Packets are always shown and copied in their emoji form, even if they were saved as raw text.
+    _emoji(t) {
+        t = String(t || '');
+        if (!t || /[\u{1F300}-\u{1F64F}]/u.test(t)) return t;
+        try { return window.GhostE2E?.toEmoji ? GhostE2E.toEmoji(t) : t; } catch (_) { return t; }
+    },
+
     _saveLocal() {
         try {
             localStorage.setItem(
@@ -56,7 +71,7 @@ window.HistoryModule = {
     // ── Add a new message (called from encrypt.js / decrypt.js) ──────────────
 
     async addMessage(plaintext, encrypted, type = 'encryption') {
-        const fullEncrypted = encrypted || '';
+        const fullEncrypted = this._emoji(encrypted || '');
 
         const item = {
             id:                String(Date.now()),
@@ -123,7 +138,7 @@ window.HistoryModule = {
                   })
                 : '—';
 
-            const fullEncrypted = msg.encrypted_content || msg.emoji_content || '';
+            const fullEncrypted = this._emoji(msg.encrypted_content || msg.emoji_content || '');
             const fullEncryptedEscaped = this._esc(fullEncrypted);
 
             const preview = msg.plaintext_preview

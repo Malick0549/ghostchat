@@ -47,19 +47,62 @@ window.UI = {
     if (txt) txt.textContent = active ? 'Secure Session' : 'Session Ended';
   },
 
+  // ── Sound ────────────────────────────────────────────────────────────────
+  // One shared AudioContext. Phones only allow sound after a tap, so the first tap anywhere unlocks it;
+  // creating a new context for every sound (the old way) stayed silent on phones.
+  _audio: null,
+  _audioInit() {
+    if (this._audioBound) return;
+    this._audioBound = true;
+    const unlock = () => {
+      try {
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (!C) return;
+        if (!this._audio) this._audio = new C();
+        if (this._audio.state === 'suspended') this._audio.resume();
+        // a silent tick completes the unlock on iPhones
+        const b = this._audio.createBuffer(1, 1, 22050), src = this._audio.createBufferSource();
+        src.buffer = b; src.connect(this._audio.destination); src.start(0);
+      } catch (_) {}
+    };
+    ['pointerdown', 'touchend', 'click', 'keydown'].forEach(ev => window.addEventListener(ev, unlock, { passive: true }));
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this._audio && this._audio.state === 'suspended') this._audio.resume().catch(() => {});
+    });
+  },
+
+  // Soft bell: two-partial tone, quick fade-in and long fade-out, so there is no click.
+  _tone(freq, start, dur, vol) {
+    const ctx = this._audio, t = ctx.currentTime + start;
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    out.connect(ctx.destination);
+    [[1, 1], [2, 0.18]].forEach(([mult, amp]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = freq * mult; g.gain.value = amp;
+      o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.05);
+    });
+  },
+
   playSound(type) {
     try {
       const s = localStorage.getItem('ghostchat_settings');
       if (s && !JSON.parse(s).soundEffects) return;
-      const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-      const osc  = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = type === 'success' ? 880 : type === 'error' ? 220 : 440;
-      gain.gain.value = 0.08;
-      osc.start();
-      setTimeout(() => { osc.stop(); ctx.close(); }, 200);
+      this._audioInit();
+      if (!this._audio) {
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (!C) return;
+        this._audio = new C();
+      }
+      const go = () => {
+        if (type === 'success')      { this._tone(659.25, 0, 0.45, 0.12); this._tone(880.00, 0.11, 0.6, 0.11); }   // E5 then A5, friendly
+        else if (type === 'error')   { this._tone(392.00, 0, 0.4, 0.10); this._tone(311.13, 0.13, 0.55, 0.09); }  // soft falling pair
+        else                         { this._tone(783.99, 0, 0.35, 0.10); this._tone(1046.5, 0.09, 0.5, 0.09); }  // new message: gentle ding
+      };
+      if (this._audio.state === 'suspended') this._audio.resume().then(go).catch(() => {}); else go();
+      if (type !== 'error' && navigator.vibrate) { try { navigator.vibrate(type === 'info' ? [60] : [30]); } catch (_) {} }
     } catch (_) {}
   },
 
@@ -107,6 +150,7 @@ window.UI = {
       });
   },
 };
+window.UI._audioInit();
 
 /* ── Theme Manager (dark / light only) ──────────────────────────── */
 class ThemeManager {
