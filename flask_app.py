@@ -204,7 +204,9 @@ def create_app(test_config=None):
         SESSION_COOKIE_NAME         = 'ghostchat_sess',
         SESSION_COOKIE_HTTPONLY     = True,
         SESSION_COOKIE_SECURE       = IS_PROD,
-        SESSION_COOKIE_SAMESITE     = 'None' if IS_PROD else 'Lax',
+        # Lax: the browser never sends the login cookie on requests started by other sites.
+        # The frontend and API share one origin, so nothing needs 'None'. Override with COOKIE_SAMESITE only if you split them.
+        SESSION_COOKIE_SAMESITE     = os.environ.get('COOKIE_SAMESITE', 'Lax'),
     )
 
     # ── Database ───────────────────────────────────────────────────────────────
@@ -305,13 +307,13 @@ def create_app(test_config=None):
                 db.session.rollback()
 
     # ── CORS ───────────────────────────────────────────────────────────────────
-    allowed_origins = [
-        'http://localhost:5000',
-        'http://127.0.0.1:5000',
-        'https://ghostchat-5slo.onrender.com',
-        'https://ghostchat-production-6c0b.up.railway.app',
-        'null',
-    ]
+    # Only this app's own addresses. No 'null' (sandboxed pages and local files) and no old hostnames:
+    # an abandoned hostname that someone else registers could otherwise make signed-in requests to this site.
+    allowed_origins = ['http://localhost:5000', 'http://127.0.0.1:5000']
+    for _o in os.environ.get('EXTRA_ALLOWED_ORIGINS', '').split(','):
+        _o = _o.strip().rstrip('/')
+        if _o.startswith('https://') and _o not in allowed_origins:
+            allowed_origins.append(_o)
     render_url = os.environ.get('RENDER_EXTERNAL_URL', '').rstrip('/')
     if render_url and render_url not in allowed_origins:
         allowed_origins.append(render_url)
@@ -330,6 +332,13 @@ def create_app(test_config=None):
         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     )
     log.info(f'Allowed origins: {allowed_origins}')
+
+    @app.before_request
+    def _reject_malformed_json():
+        # Broken JSON is the caller's mistake (400), not a server fault (500).
+        if request.method in ('POST', 'PUT', 'PATCH', 'DELETE') and request.mimetype == 'application/json' and request.content_length:
+            if request.get_json(silent=True) is None and request.get_data(cache=True).strip() != b'null':
+                return jsonify({'error': 'Malformed JSON'}), 400
 
     # ── Blueprints ─────────────────────────────────────────────────────────────
     app.register_blueprint(crypto_bp)
@@ -391,7 +400,7 @@ def create_app(test_config=None):
             CSRF_COOKIE,
             token,
             httponly=False,
-            samesite='None' if secure_cookie else 'Lax',
+            samesite=os.environ.get('COOKIE_SAMESITE', 'Lax'),
             secure=secure_cookie,
             max_age=3600,
             path='/',
@@ -528,7 +537,7 @@ def create_app(test_config=None):
         resp.set_cookie(
             CSRF_COOKIE, token,
             httponly=False,
-            samesite='None' if secure_cookie else 'Lax',
+            samesite=os.environ.get('COOKIE_SAMESITE', 'Lax'),
             secure=secure_cookie,
             max_age=3600, path='/',
         )
@@ -1382,7 +1391,13 @@ def create_app(test_config=None):
 
     @app.route('/assets/uploads/<path:filename>')
     def serve_upload(filename):
-        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+        user, err = _require_auth()          # uploads are for signed-in users only
+        if err: return err
+        resp = send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+        resp.headers['Content-Security-Policy'] = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
+        resp.headers['Cache-Control'] = 'private, max-age=3600'
+        return resp
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENCRYPT / DECRYPT  (password-based — used by encrypt.js / decrypt.js)

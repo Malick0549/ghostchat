@@ -80,3 +80,19 @@ button, .btn { -webkit-tap-highlight-color: transparent; }
 .gc-unread.on-link { margin-left: 8px; }
 @keyframes gcPop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .gc-unread { animation: none; } }
+
+/* Pop-up alert for a new message */
+.gc-alerts { position: fixed; z-index: 99999; right: 18px; top: 74px; display: grid; gap: 10px; width: min(360px, calc(100vw - 24px)); }
+.gc-alert { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; text-decoration: none; color: var(--t1, #ecebf4);
+  background: rgba(24,22,42,.96); border: 1px solid rgba(185,167,255,.45); box-shadow: 0 12px 34px rgba(0,0,0,.5); backdrop-filter: blur(10px);
+  animation: gcSlide .35s cubic-bezier(.2,1.2,.4,1); transition: opacity .3s, transform .3s; }
+.gc-alert:hover { border-color: var(--primary); }
+.gc-alert.out { opacity: 0; transform: translateX(30px); }
+.gc-alert-ico { flex: 0 0 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(135deg, #b9a7ff, #7f6bd8); color: #150f33; }
+.gc-alert-txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.gc-alert-txt b { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-alert-txt small { color: var(--t2, #aaa); font-size: .8rem; }
+.gc-alert-go { font-size: .78rem; font-weight: 700; color: var(--primary); }
+@keyframes gcSlide { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (max-width: 760px) { .gc-alerts { right: 12px; left: 12px; top: 64px; width: auto; } }
+@media (prefers-reduced-motion: reduce) { .gc-alert { animation: none; } }

@@ -11,6 +11,8 @@
 | `RESET_URL_BASE` | Public base URL used in reset and verification links |
 | `REDIS_URL` / `RATE_LIMIT_STORAGE_URL` | Rate-limit storage (default in memory, resets on restart) |
 | `LOG_RETENTION_DAYS` | Activity-log retention (default 180) |
+| `EXTRA_ALLOWED_ORIGINS` | Comma-separated `https://` origins allowed to call the API (your own custom domain). Leave empty if the site is served from one address. |
+| `COOKIE_SAMESITE` | Default `Lax`. Set `None` only if you ever host the frontend on a different site from the API. |
 | `ADMIN_2FA_REQUIRED` | Default on: admins need an emailed code. `0` = break-glass only |
 | `GC_LOG_SECRETS` | `1` prints codes and links in logs. **Development only** |
 | `BRUTE_FORCE_THRESHOLD`, `AUDIT_ALERTS` | Failed-login alert settings |

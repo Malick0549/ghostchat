@@ -41,6 +41,16 @@ GhostChat can be installed on phones and desktops. The service worker (`sw.js`) 
 icons, plus public static files as a fallback. It never caches `/api`, sockets, uploads, media or private responses,
 and it always fetches from the network first so updates apply immediately.
 
+## Network and cookie protections
+- Login and CSRF cookies are `SameSite=Lax`, `HttpOnly` (session) and `Secure` in production, so other websites cannot make signed-in requests for you.
+- Cross-origin access (CORS) is limited to this app's own address. Sandboxed pages (`null`) and old hostnames are refused.
+- Uploaded files are served only to signed-in users, in a sandbox that blocks scripts.
+- Broken JSON gets a 400 answer, never a server error. Dependencies are checked with `pip-audit` (clean at release).
+
+## Known limits
+- The content security policy still allows inline scripts, because pages use inline handlers. All user text is escaped before display, but moving to a strict script policy is the next hardening step.
+- There is no forward secrecy yet (see above).
+
 ## Account and server protections
 Password hashing (bcrypt), email verification, optional 2FA by email, CSRF double-submit tokens on every write,
 rate limits, session idle and absolute timeouts, session revocation on password reset, reset tokens stored only as

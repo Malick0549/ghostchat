@@ -7,7 +7,7 @@
 (function () {
   'use strict';
   const EVERY = 10000;
-  let last = null;
+  let last = null, lastAlert = 0;
 
   function badge(host, n, cls) {
     if (!host) return;
@@ -25,7 +25,8 @@
     const back = document.querySelector('a.back, a[href="dashboard.html"]');
     if (back && document.body.dataset.page !== 'dashboard') badge(back, n, 'on-link');
     document.title = (n ? '(' + n + ') ' : '') + document.title.replace(/^\(\d+\)\s*/, '');
-    if (last !== null && n > last && window.UI && UI.playSound) UI.playSound('info');
+    // Fallback if the live connection is down: the 10-second check raises the alert instead.
+    if (last !== null && n > last && Date.now() - lastAlert > 6000) { lastAlert = Date.now(); popup('New message', 'Open Chat to read it.'); if (window.UI && UI.playSound) UI.playSound('info'); }
     last = n;
   }
 
@@ -35,12 +36,57 @@
       if (!r.ok) return;
       const d = await r.json();
       const list = d.contacts || d.data || [];
-      show(list.reduce((s, c) => s + (c.unread_count || 0), 0));
+      list.forEach(c => { names[c.contact_id] = c.username || c.name || names[c.contact_id]; });
+      show(list.reduce((s, c) => s + (c.unread_count || 0), 0) + groupPending);
     } catch (_) { /* offline: keep the last count */ }
   }
+
+  // ── Instant alert ─────────────────────────────────────────────────────────
+  // A live connection tells the dashboard the moment a message arrives: a pop-up with the sender's name,
+  // the chime, the Chat badge, and (if allowed and the tab is hidden) a system notification.
+  // The alert never contains the message itself, because messages are encrypted.
+  const names = {}; let groupPending = 0, me = null, tray = null;
+  const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function popup(title, text) {
+    if (!tray) { tray = document.createElement('div'); tray.className = 'gc-alerts'; tray.setAttribute('aria-live', 'polite'); document.body.appendChild(tray); }
+    const a = document.createElement('a'); a.className = 'gc-alert'; a.href = 'chat.html';
+    a.innerHTML = '<span class="gc-alert-ico"><i class="fas fa-comment-dots"></i></span><span class="gc-alert-txt"><b>' + esc(title) + '</b><small>' + esc(text) + '</small></span><span class="gc-alert-go">Open</span>';
+    tray.appendChild(a);
+    while (tray.children.length > 3) tray.firstChild.remove();
+    setTimeout(() => { a.classList.add('out'); setTimeout(() => a.remove(), 300); }, 9000);
+  }
+
+  function incoming(d, isGroup) {
+    if (!d || d.sender_id === me) return;
+    lastAlert = Date.now();
+    const who = d.sender || names[d.sender_id] || 'Someone';
+    if (isGroup) groupPending++;
+    popup(isGroup ? 'New group message' : 'New message from ' + who, isGroup ? who + ' wrote in a group. Open Chat to read it.' : 'Open Chat to read it.');
+    if (window.UI && UI.playSound) UI.playSound('info');
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      try { const n = new Notification(isGroup ? 'New group message' : who, { body: 'New encrypted message', tag: 'gc-msg', icon: 'assets/icons/icon-192.png' }); n.onclick = () => { window.focus(); location.href = 'chat.html'; }; } catch (_) {}
+    }
+    poll();
+  }
+
+  async function live() {
+    try {
+      const r = await fetch('/api/auth/me', { credentials: 'include', headers: { 'Accept': 'application/json' } });
+      if (!r.ok) return; const d = await r.json(); me = (d.user && d.user.id) || d.id; if (!me) return;
+      if (!window.io) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.socket.io/4.7.2/socket.io.min.js'; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); });
+      const sock = io({ path: '/socket.io', transports: ['websocket', 'polling'], withCredentials: true, reconnectionDelayMax: 15000 });
+      sock.on('connect', () => sock.emit('join_user_room', { user_id: me }));
+      sock.on('receive_message', d => incoming(d, false));
+      sock.on('group_message', d => incoming(d, true));
+    } catch (_) { /* polling still keeps the badge correct */ }
+  }
+  // Ask once, politely, so alerts can also appear when this tab is in the background.
+  document.addEventListener('click', () => { if ('Notification' in window && Notification.permission === 'default' && !sessionStorage.getItem('gc_notif_asked')) { sessionStorage.setItem('gc_notif_asked', '1'); try { Notification.requestPermission(); } catch (_) {} } }, { once: true });
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
   window.addEventListener('focus', poll);
   window.addEventListener('ghostchat:unread-check', poll);
   poll(); setInterval(poll, EVERY);
+  if (!location.pathname.endsWith('chat.html')) live();
 })();
