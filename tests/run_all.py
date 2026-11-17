@@ -9,6 +9,7 @@ runs the suite against it, and stops the server. Nothing touches your real datab
 Needs:  pip install -r requirements.txt  requests python-socketio[client] pillow
 Exit code is 0 only if every check in every suite passes.
 """
+import os as _o; _o.environ.setdefault('LOCATION_REQUIRED', '0')
 import json, os, subprocess, sys, tempfile, time, socket, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,7 +47,7 @@ def run_suite(name):
     tmp = tempfile.mkdtemp(prefix='gc_test_')
     port = free_port()
     env = dict(os.environ, GC_ROOT=ROOT, GC_TEST_DB=os.path.join(tmp, 'test.db'), GC_IDS=os.path.join(tmp, 'ids.json'),
-               DATABASE_URL='sqlite:///' + os.path.join(tmp, 'test.db'), FLASK_SECRET='x' * 40, ADMIN_EMAILS='alice@x.com',
+               DATABASE_URL='sqlite:///' + os.path.join(tmp, 'test.db'), LOCATION_REQUIRED='0', FLASK_SECRET='x' * 40, ADMIN_EMAILS='alice@x.com',
                PORT=str(port), GC_BASE=f'http://127.0.0.1:{port}', EXTRA_CORS_ORIGINS=f'http://127.0.0.1:{port}',
                TRUSTED_PROXY_HOPS='1', GC_LOG_SECRETS='', ADMIN_2FA_REQUIRED='1' if name == 'test_admin_2fa.py' else '0')
     subprocess.run([sys.executable, '-c', SEED], env=env, cwd=ROOT, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

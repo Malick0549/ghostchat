@@ -29,6 +29,8 @@ from datetime import datetime, timedelta
 from flask import Response, jsonify, request, session
 from sqlalchemy import and_, func, or_
 
+from backend.place import effective as _effective, is_fresh as _fresh
+
 from backend.models import db
 
 
@@ -54,6 +56,7 @@ class AdminEmail(db.Model):
 # ═════════════════════════════════════════════════════════════════════════════
 EVENTS = {
     # sign-in and account access
+    'location_shared':          ('Shared location',        'info',     'account'),
     'login':                    ('Signed in',               'info',     'auth'),
     'login_failed':             ('Failed sign-in',          'warning',  'auth'),
     'login_blocked_disabled':   ('Blocked: disabled account', 'warning', 'auth'),
@@ -487,8 +490,20 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
             'label': EVENTS.get(row.event_type, (row.event_type.replace('_', ' ').capitalize(), '', ''))[0],
             'severity': sev_of(row), 'category': EVENTS.get(row.event_type, ('', '', 'system'))[2],
             'user_id': row.user_id, 'username': username, 'description': row.description,
-            'ip': row.ip_address, 'location': row.location, 'device': row.device,
+            'ip': row.ip_address, 'location': row.location, 'loc_src': 'ip', 'device': row.device,
         }
+
+    def upgrade(events):
+        """Where the person shared their location and the event came from their usual network, show that place."""
+        ids = {e['user_id'] for e in events if e.get('user_id')}
+        if not ids:
+            return events
+        by = {u.id: u for u in User.query.filter(User.id.in_(ids)).all()}
+        for e in events:
+            u = by.get(e.get('user_id'))
+            if u and _fresh(u) and e.get('ip') and e['ip'] == u.last_ip:
+                e['location'], e['loc_src'] = u.geo_place, 'gps'
+        return events
 
     def usernames(ids):
         ids = [i for i in set(ids) if i]
@@ -551,14 +566,25 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
                 series[ev][d] = n
         trend = {'days': days, **{k: [v[d] for d in days] for k, v in series.items()}}
 
-        # where users are
-        locs = (db.session.query(User.last_location, func.count(User.id))
-                .filter(User.last_location.isnot(None)).group_by(User.last_location).all())
-        by_country = {}
-        for loc, n in locs:
+        # where users are (shared place when given, otherwise the IP estimate; old "Unknown" rows are repaired)
+        urows = User.query.filter(or_(User.last_location.isnot(None), User.last_ip.isnot(None), User.geo_place.isnot(None))).limit(5000).all()
+        fx = fill_unknown([u.last_ip for u in urows if u.last_ip and not _fresh(u) and _is_unknown(u.last_location)])
+        places, by_country, unknown = {}, {}, 0
+        for u in urows:
+            loc, src = _effective(u)
+            if _is_unknown(loc) and u.last_ip in fx:
+                loc, src = fx[u.last_ip], 'ip'
+            if _is_unknown(loc) or loc in ('Local', 'Private network'):
+                unknown += 1
+                continue
             c = country_of(loc)
-            by_country[c] = by_country.get(c, 0) + n
+            by_country[c] = by_country.get(c, 0) + 1
+            p = places.setdefault(loc, {'place': loc, 'users': 0, 'gps': 0})
+            p['users'] += 1
+            p['gps'] += 1 if src == 'gps' else 0
         countries = sorted(({'country': c, 'users': n} for c, n in by_country.items()), key=lambda x: -x['users'])[:10]
+        top_places = sorted(places.values(), key=lambda x: -x['users'])[:10]
+        shared = User.query.filter(User.geo_consent == True).count()  # noqa: E712
 
         attention = (ActivityLog.query.filter(ActivityLog.created_at >= d7).order_by(ActivityLog.created_at.desc())
                      .filter(or_(ActivityLog.severity.in_(['critical', 'warning']),
@@ -566,7 +592,8 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
                                      [e for e, v in EVENTS.items() if v[1] != 'info'])))).limit(12).all())
         names = usernames([r.user_id for r in attention])
         return jsonify({'success': True, 'totals': totals, 'trend': trend, 'countries': countries,
-                        'attention': [ev_row(r, names.get(r.user_id)) for r in attention],
+                        'places': top_places, 'places_unknown': unknown, 'places_shared': shared,
+                        'attention': upgrade([ev_row(r, names.get(r.user_id)) for r in attention]),
                         'email_configured': email_configured(), 'generated': _iso(now)})
 
     # ── audit log ───────────────────────────────────────────────────────────
@@ -614,6 +641,7 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         for e in events:
             if e['ip'] in fixed and _is_unknown(e['location']):
                 e['location'] = fixed[e['ip']]
+        upgrade(events)
         return jsonify({'success': True, 'total': total, 'limit': limit, 'offset': offset,
                         'events': events,
                         'catalogue': {k: {'label': v[0], 'severity': v[1], 'category': v[2]} for k, v in EVENTS.items()}})
@@ -684,11 +712,16 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
             for e in out:
                 if e['ip'] in fx and _is_unknown(e['location']):
                     e['location'] = fx[e['ip']]
-            return out
+            return upgrade(out)
 
         admins = [{'id': u.id, 'username': u.username, 'email': u.email, 'last_login': _iso(u.last_login),
-                   'last_ip': u.last_ip, 'location': u.last_location, 'two_factor': bool(u.two_factor_enabled)}
+                   'last_ip': u.last_ip, 'location': _effective(u)[0], 'loc_src': _effective(u)[1],
+                   'two_factor': bool(u.two_factor_enabled)}
                   for u in User.query.filter_by(is_admin=True).all()]
+        fa = fill_unknown([a['last_ip'] for a in admins if a['last_ip'] and _is_unknown(a['location'])])
+        for a in admins:
+            if a['last_ip'] in fa and _is_unknown(a['location']):
+                a['location'] = fa[a['last_ip']]
         hops = os.environ.get('TRUSTED_PROXY_HOPS', '0')
         checks = [
             {'ok': email_configured(), 'text': 'Email sending is configured' if email_configured()
@@ -729,8 +762,8 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
                 'is_active': u.is_active is not False, 'is_verified': bool(u.is_verified),
                 'two_factor': bool(u.two_factor_enabled), 'online': online,
                 'created_at': _iso(u.created_at), 'last_login': _iso(u.last_login), 'last_seen': _iso(u.last_seen),
-                'last_ip': u.last_ip, 'location': u.last_location, 'device': u.last_device,
-                'messages_sent': sent, 'failed_logins_7d': fails}
+                'last_ip': u.last_ip, 'location': _effective(u)[0], 'loc_src': _effective(u)[1],
+                'device': u.last_device, 'messages_sent': sent, 'failed_logins_7d': fails}
 
     @app.route(f'{P}/users', methods=['GET'])
     @admin_only
@@ -754,7 +787,7 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         if a.get('q'):
             like = f"%{a['q'].strip()[:80]}%"
             q = q.filter(or_(User.username.ilike(like), User.email.ilike(like), User.last_ip.ilike(like),
-                             User.last_location.ilike(like)))
+                             User.last_location.ilike(like), User.geo_place.ilike(like)))
         order = {'seen': User.last_seen.desc(), 'login': User.last_login.desc(), 'name': User.username.asc()}.get(
             a.get('sort'), User.created_at.desc())
         total = q.count()
@@ -768,7 +801,7 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
                      .filter(ActivityLog.user_id.in_(ids), ActivityLog.event_type == 'login_failed',
                              ActivityLog.created_at >= now - timedelta(days=7))
                      .group_by(ActivityLog.user_id).all()) if ids else {}
-        fixed = fill_unknown([u.last_ip for u in users if _is_unknown(u.last_location)])
+        fixed = fill_unknown([u.last_ip for u in users if u.last_ip and not _fresh(u) and _is_unknown(u.last_location)])
         rows_out = [user_row(u, sent.get(u.id, 0), fails.get(u.id, 0)) for u in users]
         for r_ in rows_out:
             if r_['last_ip'] in fixed and _is_unknown(r_['location']):
@@ -800,8 +833,10 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         d = user_row(u, sent, fails)
         d.update({'messages_received': recv, 'contacts': contacts, 'about': u.about, 'phone': u.phone})
         return jsonify({'success': True, 'user': d,
-                        'events': [ev_row(r, u.username) for r in events],
-                        'ips': [{'ip': i, 'location': l, 'count': c, 'last': _iso(t)} for i, l, c, t in ips],
+                        'events': upgrade([ev_row(r, u.username) for r in events]),
+                        'ips': [{'ip': i, 'location': (_effective(u)[0] if (_fresh(u) and i == u.last_ip) else l),
+                                 'loc_src': 'gps' if (_fresh(u) and i == u.last_ip) else 'ip',
+                                 'count': c, 'last': _iso(t)} for i, l, c, t in ips],
                         'devices': [{'device': dv, 'count': c} for dv, c in devices],
                         'emails': [{'id': m.id, 'time': _iso(m.created_at), 'kind': m.kind, 'subject': m.subject, 'status': m.status}
                                    for m in mails]})

@@ -280,6 +280,8 @@ def create_app(test_config=None):
             _migrate_columns(User, {
                 'last_ip': 'VARCHAR(45)', 'last_location': 'VARCHAR(200)', 'last_device': 'VARCHAR(200)',
             })
+            _migrate_columns(User, {'geo_consent': 'BOOLEAN', 'geo_place': 'VARCHAR(200)', 'geo_lat': 'FLOAT',
+                                    'geo_lon': 'FLOAT', 'geo_at': 'DATETIME'})
             _migrate_columns(ActivityLog, {'location': 'VARCHAR(200)', 'device': 'VARCHAR(200)'})
             _migrate_columns(ActivityLog, {'severity': 'VARCHAR(10)', 'meta': 'TEXT'})
             _migrate_columns(Message, {'deleted_at': 'DATETIME', 'deleted_by': 'VARCHAR(36)'})
@@ -2261,6 +2263,8 @@ def create_app(test_config=None):
             send_email=_send_email, require_admin=_require_admin, limiter=limiter,
             admin_limit=ADMIN_MUTATION_LIMIT, socketio=socketio, log=log, db_available=DB_AVAILABLE,
         )
+        from backend.place import install_place
+        install_place(app, db, limiter, _require_auth, _log_activity, User)
     @socketio.on('connect')
     def handle_connect():
         log.info(f'Socket connected: {request.sid}')
@@ -2378,6 +2382,14 @@ def create_app(test_config=None):
                         f'without a matching authenticated session — rejected')
             emit('message_failed', {'temp_id': temp_id, 'error': 'Authentication mismatch'})
             return
+
+        if DB_AVAILABLE:
+            from backend.place import blocked as _loc_blocked
+            _me = User.query.get(sender_id)
+            if _me and _loc_blocked(_me):
+                emit('message_failed', {'temp_id': temp_id, 'error': 'Turn on location sharing to keep using GhostChat.',
+                                        'code': 'location_required'})
+                return
 
         if len(content) > 20000:
             emit('message_failed', {'temp_id': temp_id, 'error': 'Message too long'})

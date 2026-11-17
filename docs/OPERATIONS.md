@@ -50,3 +50,15 @@ Locations come from the visitor's IP address, so two things must be right:
 2. **Lookup services** – GhostChat tries ipwho.is, then geojs.io, then ipapi.co. For the most reliable results set the optional `GEOIP_TOKEN` (a free ipinfo.io token).
 
 Old rows showing "Unknown" are repaired automatically the next time the admin opens the audit, users or user-detail views (up to 6 new addresses per view, then cached for 7 days).
+
+### Location sharing is compulsory
+
+Every non-admin account must share its location. Until it does, the app shows a full-screen "Location is required" notice, the server refuses all app requests (HTTP 403 `location_required`) and sending messages is refused. Signing out is always possible. A shared place unlocks the app for 48 hours and is renewed quietly each time the app opens. Users cannot turn it off. Admins are exempt so you can never be locked out, and may share optionally.
+
+* Switch the rule off with the environment variable `LOCATION_REQUIRED=0` (on by default).
+* A browser always has the final say: a user who taps Block cannot use the app until they allow location in their browser's site settings.
+* Add this to your Privacy Policy and Terms (what is collected: town-level place, rounded to ~1 km; why: account security; who sees it: admins; retention) and show it at registration. Collecting location is personal data under Ghana's Data Protection Act 2012, so have your lawyer approve the wording.
+* Place names come from OpenStreetMap Nominatim, then BigDataCloud; if both fail the rounded coordinates are stored.
+
+
+Why it is needed: a network address can only give an approximate place. Ghanaian mobile networks route traffic through Accra, so someone in Navrongo shows as Accra. The shared place is rounded to about 1 km and shown to admins only, marked **GPS**.

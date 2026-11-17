@@ -156,30 +156,31 @@
   <a href="dashboard.html" class="btn btn-primary">Back to dashboard</a>
 </div>
 
-<div id="app" class="shell" style="display:none;">
-  <div class="topbar">
-    <h1><i class="fas fa-shield-halved"></i> Admin console</h1>
-    <div class="row">
-      <button class="btn btn-ghost btn-sm" id="refreshBtn"><i class="fas fa-rotate"></i> Refresh</button>
-      <a class="back btn btn-ghost btn-sm" href="dashboard.html"><i class="fas fa-arrow-left"></i> Dashboard</a>
-    </div>
-  </div>
-
-  <nav class="tabs" role="tablist" id="tabs">
-    <button class="tab active" data-tab="overview" role="tab"><i class="fas fa-gauge-high"></i> Overview</button>
-    <button class="tab" data-tab="audit" role="tab"><i class="fas fa-clipboard-list"></i> Audit log</button>
-    <button class="tab" data-tab="security" role="tab"><i class="fas fa-user-shield"></i> Security <span class="count" id="secCount" hidden></span></button>
-    <button class="tab" data-tab="users" role="tab"><i class="fas fa-users"></i> Users</button>
-    <button class="tab" data-tab="reports" role="tab"><i class="fas fa-flag"></i> Reports <span class="count" id="repCount" hidden></span></button>
-    <button class="tab" data-tab="emails" role="tab"><i class="fas fa-envelope"></i> Email</button>
-  </nav>
-
-  <section id="p-overview"></section>
-  <section id="p-audit" hidden></section>
-  <section id="p-security" hidden></section>
-  <section id="p-users" hidden></section>
-  <section id="p-reports" hidden></section>
-  <section id="p-emails" hidden></section>
+<div id="app" class="frame" style="display:none;">
+  <aside class="side" aria-label="Admin navigation">
+    <div class="brand"><span class="logo"><i class="fas fa-ghost"></i></span><div><b>GhostChat</b><small>Admin console</small></div></div>
+    <nav class="tabs" role="tablist" id="tabs">
+      <button class="tab active" data-tab="overview" role="tab"><i class="fas fa-gauge-high"></i><span>Overview</span></button>
+      <button class="tab" data-tab="audit" role="tab"><i class="fas fa-clipboard-list"></i><span>Audit log</span></button>
+      <button class="tab" data-tab="security" role="tab"><i class="fas fa-user-shield"></i><span>Security</span><span class="count" id="secCount" hidden></span></button>
+      <button class="tab" data-tab="users" role="tab"><i class="fas fa-users"></i><span>Users</span></button>
+      <button class="tab" data-tab="reports" role="tab"><i class="fas fa-flag"></i><span>Reports</span><span class="count" id="repCount" hidden></span></button>
+      <button class="tab" data-tab="emails" role="tab"><i class="fas fa-envelope"></i><span>Email</span></button>
+    </nav>
+    <a class="side-link" href="dashboard.html"><i class="fas fa-arrow-left"></i><span>Back to app</span></a>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div><h1 id="pageTitle">Overview</h1><p id="pageSub">Live health of your GhostChat</p></div>
+      <div class="row"><button class="btn btn-ghost btn-sm" id="refreshBtn"><i class="fas fa-rotate"></i> <span>Refresh</span></button></div>
+    </header>
+    <section id="p-overview"></section>
+    <section id="p-audit" hidden></section>
+    <section id="p-security" hidden></section>
+    <section id="p-users" hidden></section>
+    <section id="p-reports" hidden></section>
+    <section id="p-emails" hidden></section>
+  </main>
 </div>
 
 <div class="scrim" id="scrim"></div>
@@ -209,12 +210,20 @@
     return fmt(iso);
   }
   const sev = s => `<span class="sev ${esc(s)}">${esc(s)}</span>`;
+  /* A place: the shared (GPS) location is marked, an IP estimate is only approximate. */
+  const place = (loc, src) => loc && loc !== 'Unknown'
+    ? `<span class="place">${esc(loc)}${src === 'gps' ? ' <span class="pill acc" title="Shared by the user from their device">GPS</span>' : ''}</span>`
+    : `<span class="faint" title="No location yet. It appears once the user signs in from a public address.">—</span>`;
   let catalogue = {};
   const loaded = {};
 
   /* ── tabs ───────────────────────────────────────────── */
   function show(tab) {
     $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    const T = { overview: ['Overview', 'Live health of your GhostChat'], audit: ['Audit log', 'Every sign-in, change and security event'],
+      security: ['Security', 'Attacks, admin access and configuration checks'], users: ['Users', 'Accounts, activity and where they sign in from'],
+      reports: ['Reports', 'Messages users have flagged'], emails: ['Email', 'Messages sent to users from here'] }[tab] || ['', ''];
+    $('#pageTitle').textContent = T[0]; $('#pageSub').textContent = T[1]; document.title = T[0] + ' · Admin · GhostChat';
     ['overview', 'audit', 'security', 'users', 'reports', 'emails'].forEach(t => $('#p-' + t).hidden = t !== tab);
     if (!loaded[tab]) { loaded[tab] = true; ({ overview, audit, security, users, reports, emails })[tab](); }
     try { history.replaceState(null, '', '#' + tab); } catch (_) {}
@@ -244,11 +253,14 @@
       </div>
       <div class="grid cols">
         <div class="card"><h2>Last 14 days <small>days are in UTC</small></h2>${chart(d.trend)}</div>
-        <div class="card"><h2>Where users are</h2>${countries(d.countries)}</div>
+        <div class="card"><h2>Where users are <small>${num(d.places_shared)} sharing GPS</small></h2>${countries(d.countries)}
+          ${d.places.length ? `<h3 class="sub">Top places</h3><ul class="list">${d.places.slice(0, 6).map(p => `<li><div class="grow">${esc(p.place)}${p.gps ? ' <span class="pill acc">GPS</span>' : ''}</div><b>${num(p.users)}</b></li>`).join('')}</ul>` : ''}
+          ${d.places_unknown ? `<div class="faint" style="margin-top:8px">${num(d.places_unknown)} user(s) have no location yet.</div>` : ''}
+          <div class="faint" style="margin-top:8px">Places from the network are estimates and can be a city away. Users who choose to share their location are marked GPS.</div></div>
       </div>
       <div class="card"><h2>Needs attention <small>warnings and critical events, last 7 days</small>
         <button class="btn btn-ghost btn-sm" data-go="audit:warning">Open audit log</button></h2>
-        ${d.attention.length ? `<ul class="list">${d.attention.map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b> ${e.username ? '· ' + esc(e.username) : ''}<div class="muted">${esc(e.description)}</div><div class="faint">${esc(ago(e.time))} · ${esc(e.ip || '')} ${e.location ? '· ' + esc(e.location) : ''}</div></div></li>`).join('')}</ul>` : '<div class="empty">Nothing needs attention.</div>'}
+        ${d.attention.length ? `<ul class="list">${d.attention.map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b> ${e.username ? '· ' + esc(e.username) : ''}<div class="muted">${esc(e.description)}</div><div class="faint">${esc(ago(e.time))} · ${esc(e.ip || '')} · ${place(e.location, e.loc_src)}</div></div></li>`).join('')}</ul>` : '<div class="empty">Nothing needs attention.</div>'}
       </div>`;
     const crit = d.totals.critical_24h + d.totals.failed_logins_24h;
     const c = $('#secCount'); c.hidden = !d.totals.critical_24h; c.textContent = d.totals.critical_24h;
@@ -315,7 +327,7 @@
       <tr><td data-l="Time" class="nowrap">${esc(fmt(e.time))}</td><td data-l="Severity">${sev(e.severity)}</td><td data-l="Event"><b>${esc(e.label)}</b></td>
       <td data-l="User">${e.user_id ? `<button class="lnk" data-user="${esc(e.user_id)}">${esc(e.username || 'user')}</button>` : '<span class="faint">unknown</span>'}</td>
       <td data-l="Details" class="desc">${esc(e.description)}</td>
-      <td data-l="IP">${e.ip ? `<button class="lnk" data-ip="${esc(e.ip)}">${esc(e.ip)}</button>` : ''}</td><td data-l="Place">${esc(e.location || '')}</td><td data-l="Device">${esc(e.device || '')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No events match these filters.</div>';
+      <td data-l="IP">${e.ip ? `<button class="lnk" data-ip="${esc(e.ip)}">${esc(e.ip)}</button>` : ''}</td><td data-l="Place">${place(e.location, e.loc_src)}</td><td data-l="Device">${esc(e.device || '')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No events match these filters.</div>';
     $('#apage').textContent = d.total ? `${off + 1}–${Math.min(off + A.limit, d.total)} of ${num(d.total)}` : '';
     $('#aprev').disabled = off === 0; $('#anext').disabled = off + A.limit >= d.total;
   }
@@ -329,13 +341,13 @@
   async function security() {
     const el = $('#p-security'); el.innerHTML = '<div class="empty">Loading…</div>';
     const d = await get('/security');
-    const evList = (rows, empty) => rows.length ? `<ul class="list">${rows.map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b>${e.username ? ' · <button class="lnk" data-user="' + esc(e.user_id) + '">' + esc(e.username) + '</button>' : ''}<div class="muted">${esc(e.description)}</div><div class="faint">${esc(fmt(e.time))} · ${e.ip ? `<button class="lnk" data-ip="${esc(e.ip)}">${esc(e.ip)}</button>` : ''} ${esc(e.location || '')}</div></div></li>`).join('')}</ul>` : `<div class="empty">${empty}</div>`;
+    const evList = (rows, empty) => rows.length ? `<ul class="list">${rows.map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b>${e.username ? ' · <button class="lnk" data-user="' + esc(e.user_id) + '">' + esc(e.username) + '</button>' : ''}<div class="muted">${esc(e.description)}</div><div class="faint">${esc(fmt(e.time))} · ${e.ip ? `<button class="lnk" data-ip="${esc(e.ip)}">${esc(e.ip)}</button>` : ''} ${place(e.location, e.loc_src)}</div></div></li>`).join('')}</ul>` : `<div class="empty">${empty}</div>`;
     el.innerHTML = `
       <div class="card"><h2>Security checklist</h2>${d.checks.map(c => `<div class="check ${c.ok ? 'ok' : 'no'}"><i class="fas ${c.ok ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i><div>${esc(c.text)}</div></div>`).join('')}
         <div class="row" style="margin-top:8px"><button class="btn btn-ghost btn-sm" id="diagBtn"><i class="fas fa-stethoscope"></i> Check how visitor IPs are read</button></div><div id="diagOut" class="faint" style="margin-top:8px"></div></div>
       <div class="grid cols">
         <div class="card"><h2>Failed sign-ins by IP <small>${num(d.failed_24h)} in the last 24 hours</small></h2>
-          ${d.top_ips.length ? `<table class="t"><thead><tr><th>IP</th><th>Place</th><th>Attempts</th><th>Names tried</th><th>Last</th></tr></thead><tbody>${d.top_ips.map(i => `<tr><td data-l="IP"><button class="lnk" data-ip="${esc(i.ip)}">${esc(i.ip)}</button></td><td data-l="Place">${esc(i.location || '')}</td><td data-l="Attempts"><b>${i.count}</b></td><td data-l="Tried">${i.tried.map(esc).join(', ')}</td><td data-l="Last" class="nowrap">${esc(ago(i.last))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No failed sign-ins in the last 24 hours.</div>'}</div>
+          ${d.top_ips.length ? `<table class="t"><thead><tr><th>IP</th><th>Place</th><th>Attempts</th><th>Names tried</th><th>Last</th></tr></thead><tbody>${d.top_ips.map(i => `<tr><td data-l="IP"><button class="lnk" data-ip="${esc(i.ip)}">${esc(i.ip)}</button></td><td data-l="Place">${place(i.location, i.loc_src)}</td><td data-l="Attempts"><b>${i.count}</b></td><td data-l="Tried">${i.tried.map(esc).join(', ')}</td><td data-l="Last" class="nowrap">${esc(ago(i.last))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No failed sign-ins in the last 24 hours.</div>'}</div>
         <div class="card"><h2>Most targeted names</h2>${d.top_targets.length ? `<ul class="list">${d.top_targets.map(t => `<li><div class="grow">${esc(t.name)}</div><b>${t.count}</b></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}</div>
       </div>
       <div class="grid cols">
@@ -348,7 +360,7 @@
       </div>
       <div class="card"><h2>Sensitive changes <small>last 30 days</small></h2>${evList(d.changes, 'None.')}</div>
       <div class="grid cols">
-        <div class="card"><h2>Admin accounts</h2><ul class="list">${d.admins.map(a => `<li><div class="grow"><b>${esc(a.username)}</b> ${a.two_factor ? '<span class="pill on">2FA on</span>' : '<span class="pill warn">2FA off</span>'}<div class="faint">${esc(a.email)} · last sign-in ${esc(ago(a.last_login))} from ${esc(a.last_ip || '?')} ${esc(a.location || '')}</div></div></li>`).join('')}</ul></div>
+        <div class="card"><h2>Admin accounts</h2><ul class="list">${d.admins.map(a => `<li><div class="grow"><b>${esc(a.username)}</b> ${a.two_factor ? '<span class="pill on">2FA on</span>' : '<span class="pill warn">2FA off</span>'}<div class="faint">${esc(a.email)} · last sign-in ${esc(ago(a.last_login))} from ${esc(a.last_ip || '?')} · ${place(a.location, a.loc_src)}</div></div></li>`).join('')}</ul></div>
         <div class="card"><h2>Disabled accounts</h2>${d.disabled_accounts.length ? `<ul class="list">${d.disabled_accounts.map(u => `<li><div class="grow"><button class="lnk" data-user="${esc(u.id)}">${esc(u.username)}</button><div class="faint">${esc(u.email)}</div></div></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}</div>
       </div>`;
     $('#diagBtn').onclick = async () => {
@@ -380,7 +392,7 @@
       <tr class="click" data-user="${esc(u.id)}"><td data-l="User"><b>${esc(u.username)}</b><div class="faint">${esc(u.email)}</div></td>
       <td data-l="Status">${u.online ? '<span class="pill on">online</span>' : ''}${u.is_active ? '' : '<span class="pill off">disabled</span>'}${u.is_verified ? '' : '<span class="pill warn">unverified</span>'}${u.is_admin ? '<span class="pill acc">admin</span>' : ''}${u.two_factor ? '<span class="pill">2FA</span>' : ''}</td>
       <td data-l="Seen" class="nowrap">${esc(ago(u.last_seen))}</td><td data-l="Sign-in" class="nowrap">${esc(ago(u.last_login))}</td>
-      <td data-l="Place">${esc(u.location || '—')}<div class="faint">${esc(u.last_ip || '')}</div></td><td data-l="Device">${esc(u.device || '—')}</td>
+      <td data-l="Place">${place(u.location, u.loc_src)}<div class="faint">${esc(u.last_ip || '')}</div></td><td data-l="Device">${esc(u.device || '—')}</td>
       <td data-l="Msgs">${num(u.messages_sent)}</td><td data-l="Failed">${u.failed_logins_7d ? `<b style="color:var(--amber)">${u.failed_logins_7d}</b>` : '0'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No users match.</div>';
     $('#upage').textContent = d.total ? `${off + 1}–${Math.min(off + U.limit, d.total)} of ${num(d.total)}` : '';
     $('#uprev').disabled = off === 0; $('#unext').disabled = off + U.limit >= d.total;
@@ -407,7 +419,7 @@
         <div style="margin-top:6px">${u.online ? '<span class="pill on">online</span>' : '<span class="pill">offline</span>'}${u.is_active ? '' : '<span class="pill off">disabled</span>'}${u.is_verified ? '' : '<span class="pill warn">unverified</span>'}${u.is_admin ? '<span class="pill acc">admin</span>' : ''}${u.two_factor ? '<span class="pill on">2FA</span>' : '<span class="pill warn">no 2FA</span>'}</div></div>
         <button class="btn btn-ghost btn-sm" id="dClose" aria-label="Close"><i class="fas fa-xmark"></i></button></div>
       <dl class="kv"><dt>Joined</dt><dd>${esc(fmt(u.created_at))}</dd><dt>Last seen</dt><dd>${esc(ago(u.last_seen))}</dd><dt>Last sign-in</dt><dd>${esc(fmt(u.last_login))}</dd>
-        <dt>From</dt><dd>${esc(u.location || '—')} · ${esc(u.last_ip || '—')}</dd><dt>Device</dt><dd>${esc(u.device || '—')}</dd>
+        <dt>From</dt><dd>${place(u.location, u.loc_src)} · ${esc(u.last_ip || '—')}</dd><dt>Device</dt><dd>${esc(u.device || '—')}</dd>
         <dt>Activity</dt><dd>${num(u.messages_sent)} sent · ${num(u.messages_received)} received · ${num(u.contacts)} contacts</dd><dt>Failed sign-ins</dt><dd>${u.failed_logins_7d} in the last 7 days</dd></dl>
       <div class="row" style="margin-top:12px"><button class="btn btn-ghost btn-sm" data-act="all-events"><i class="fas fa-clipboard-list"></i> All activity</button>
         ${u.is_admin ? '' : `${u.is_verified ? '<button class="btn btn-ghost btn-sm" data-act="unverify"><i class="fas fa-circle-minus"></i> Mark unverified</button>' : '<button class="btn btn-ghost btn-sm" data-act="verify"><i class="fas fa-circle-check"></i> Mark verified</button>'}
@@ -419,8 +431,8 @@
       <div class="field"><label for="dMsg">Message <span class="faint">(use {{username}} to insert their name)</span></label><textarea id="dMsg" maxlength="5000"></textarea></div>
       <button class="btn btn-primary" id="dSend"><i class="fas fa-paper-plane"></i> Send to ${esc(u.email)}</button>
       <h4>Recent activity</h4>
-      ${d.events.length ? `<ul class="list">${d.events.slice(0, 20).map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b><div class="muted">${esc(e.description)}</div><div class="faint">${esc(fmt(e.time))} · ${esc(e.ip || '')} ${esc(e.location || '')}</div></div></li>`).join('')}</ul>` : '<div class="empty">No activity recorded.</div>'}
-      <h4>Where they sign in from</h4>${d.ips.length ? `<ul class="list">${d.ips.map(i => `<li><div class="grow"><button class="lnk" data-ip="${esc(i.ip)}">${esc(i.ip)}</button> · ${esc(i.location || '')}<div class="faint">${i.count} events · last ${esc(ago(i.last))}</div></div></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}
+      ${d.events.length ? `<ul class="list">${d.events.slice(0, 20).map(e => `<li>${sev(e.severity)}<div class="grow"><b>${esc(e.label)}</b><div class="muted">${esc(e.description)}</div><div class="faint">${esc(fmt(e.time))} · ${esc(e.ip || '')} · ${place(e.location, e.loc_src)}</div></div></li>`).join('')}</ul>` : '<div class="empty">No activity recorded.</div>'}
+      <h4>Where they sign in from</h4>${d.ips.length ? `<ul class="list">${d.ips.map(i => `<li><div class="grow"><button class="lnk" data-ip="${esc(i.ip)}">${esc(i.ip)}</button> · ${place(i.location, i.loc_src)}<div class="faint">${i.count} events · last ${esc(ago(i.last))}</div></div></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}
       <h4>Devices</h4>${d.devices.length ? `<ul class="list">${d.devices.map(v => `<li><div class="grow">${esc(v.device)}</div><span class="faint">${v.count}</span></li>`).join('')}</ul>` : '<div class="empty">None.</div>'}
       <h4>Emails you sent them</h4>${d.emails.length ? `<ul class="list">${d.emails.map(m => `<li><div class="grow"><b>${esc(m.subject)}</b><div class="faint">${esc(m.kind)} · ${esc(fmt(m.time))} · ${esc(m.status)}</div></div></li>`).join('')}</ul>` : '<div class="empty">None yet.</div>'}`;
     setKind('guide');
@@ -580,7 +592,7 @@
   async function init() {
     try { const p = await window.GhostChatAPI.getProfile(); if (!p?.user?.is_admin) throw new Error('no'); }
     catch (_) { $('#deniedView').style.display = 'block'; return; }
-    $('#app').style.display = 'block';
+    $('#app').style.display = 'grid';
     const start = (location.hash || '#overview').slice(1);
     show(['overview', 'audit', 'security', 'users', 'reports', 'emails'].includes(start) ? start : 'overview');
     refreshRepCount();

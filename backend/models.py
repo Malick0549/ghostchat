@@ -55,6 +55,13 @@ class User(db.Model):
     last_ip = db.Column(db.String(45), nullable=True)
     last_location = db.Column(db.String(200), nullable=True)
     last_device = db.Column(db.String(200), nullable=True)
+
+    # Opt-in precise location (rounded ~1 km). geo_consent: None = never asked, True = sharing, False = declined
+    geo_consent = db.Column(db.Boolean, nullable=True)
+    geo_place = db.Column(db.String(200), nullable=True)
+    geo_lat = db.Column(db.Float, nullable=True)
+    geo_lon = db.Column(db.Float, nullable=True)
+    geo_at = db.Column(db.DateTime, nullable=True)
     
     # Avatar image stored in the database so it survives Render restarts
     avatar_data = db.Column(db.LargeBinary, nullable=True)
