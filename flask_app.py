@@ -255,21 +255,34 @@ def create_app(test_config=None):
             db.create_all()
             log.info('Database ready')
 
+            def _pg_ddl(ddl: str) -> str:
+                """SQLite-style column types -> PostgreSQL (DATETIME/BLOB/DEFAULT 0 do not exist there)."""
+                if db.engine.dialect.name != 'postgresql':
+                    return ddl
+                return (ddl.replace('DATETIME', 'TIMESTAMP').replace('BLOB', 'BYTEA')
+                           .replace('BOOLEAN DEFAULT 0', 'BOOLEAN DEFAULT FALSE').replace('BOOLEAN DEFAULT 1', 'BOOLEAN DEFAULT TRUE'))
+
             def _migrate_columns(model, cols: dict):
-                """cols: {column_name: sql_type_ddl}. Adds any missing columns."""
+                """cols: {column_name: sql_type_ddl}. Adds any missing columns, one at a time so a single failure
+                can never leave the others missing."""
+                from sqlalchemy import inspect, text
+                table = model.__tablename__
                 try:
-                    from sqlalchemy import inspect, text
-                    inspector = inspect(db.engine)
-                    table = model.__tablename__
-                    existing = [c['name'] for c in inspector.get_columns(table)]
-                    for col, ddl in cols.items():
-                        if col not in existing:
-                            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
-                            log.info(f"Migrated: added '{col}' column to {table}")
-                    db.session.commit()
+                    existing = [c['name'] for c in inspect(db.engine).get_columns(table)]
                 except Exception as e:
-                    log.error(f'Migration check failed for {model.__tablename__}: {e}')
+                    log.error(f'Migration check failed for {table}: {e}')
                     db.session.rollback()
+                    return
+                for col, ddl in cols.items():
+                    if col in existing:
+                        continue
+                    try:
+                        db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {_pg_ddl(ddl)}"))
+                        db.session.commit()
+                        log.info(f"Migrated: added '{col}' column to {table}")
+                    except Exception as e:
+                        db.session.rollback()
+                        log.error(f"Migration failed for {table}.{col}: {e}")
 
             _migrate_columns(Message, {'media_data': 'BLOB', 'media_type': 'VARCHAR(100)'})
             _migrate_columns(User, {
