@@ -131,7 +131,7 @@ def add_security_headers(response):
         )
 
     response.headers["Permissions-Policy"] = (
-        "geolocation=(), camera=(self), microphone=(self), payment=(), "
+        "geolocation=(self), camera=(self), microphone=(self), payment=(), "
         "usb=(), magnetometer=(), gyroscope=(), interest-cohort=()"
     )
     response.headers["X-GhostChat-API"] = "v3"
