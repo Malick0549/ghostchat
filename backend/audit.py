@@ -18,6 +18,7 @@ import io
 import json
 import os
 import re
+import ipaddress
 import threading
 import time
 import urllib.error
@@ -194,33 +195,100 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
             ip = request.remote_addr or ''
         return ip[:45]
 
-    # ── geolocation with a cache that forgets failures ──────────────────────
+    # ── geolocation ─────────────────────────────────────────────────────────
+    # Free lookup services rate-limit or block cloud hosts, so several are tried in turn (HTTPS only).
+    # Add GEOIP_TOKEN (an ipinfo.io token) for a reliable first choice. Successes are remembered for a week,
+    # failures for two minutes, and a location already known for the same address is reused from the database.
     _geo = {}                      # ip -> (text, expires_at)
-    _GEO_OK, _GEO_FAIL = 7 * 86400, 600
+    _GEO_OK, _GEO_FAIL = 7 * 86400, 120
+
+    def _public_ip(ip):
+        try:
+            return ipaddress.ip_address(ip).is_global
+        except ValueError:
+            return False
+
+    def _fetch(url, timeout=2.5):
+        req = urllib.request.Request(url, headers={'User-Agent': 'GhostChat-admin/1.0', 'Accept': 'application/json'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+
+    def _providers(ip):
+        tok = os.environ.get('GEOIP_TOKEN', '').strip()
+        if tok:
+            yield (f'https://ipinfo.io/{ip}/json?token={tok}',
+                   lambda d: (d.get('city'), d.get('country')) if not d.get('bogon') and not d.get('error') else (None, None))
+        yield (f'https://ipwho.is/{ip}',
+               lambda d: (d.get('city'), d.get('country')) if d.get('success') is not False else (None, None))
+        yield (f'https://get.geojs.io/v1/ip/geo/{ip}.json', lambda d: (d.get('city'), d.get('country')))
+        yield (f'https://ipapi.co/{ip}/json/',
+               lambda d: (d.get('city'), d.get('country_name')) if not d.get('error') else (None, None))
+
+    def _known_for(ip):
+        """A real location already stored for this address, if any."""
+        try:
+            for model, col, loc in ((ActivityLog, ActivityLog.ip_address, ActivityLog.location),
+                                    (User, User.last_ip, User.last_location)):
+                row = (db.session.query(loc).filter(col == ip, loc.isnot(None), loc != 'Unknown', loc != '', loc != 'Private network', loc != 'Local')
+                       .limit(1).first())
+                if row and row[0]:
+                    return row[0]
+        except Exception:
+            db.session.rollback()
+        return None
 
     def geolocate(ip, lookup=True):
         if not ip or ip in ('127.0.0.1', 'localhost', '::1'):
             return 'Local'
-        if re.match(r'^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fc|fd)', ip):
+        if not _public_ip(ip):
             return 'Private network'
         hit = _geo.get(ip)
         if hit and hit[1] > time.time():
             return hit[0]
+        known = _known_for(ip)
+        if known:
+            _geo[ip] = (known, time.time() + _GEO_OK)
+            return known
         if not lookup:
             return 'Unknown'
-        try:
-            with urllib.request.urlopen(f'https://ipapi.co/{ip}/json/', timeout=2.5) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-            if data.get('error'):
-                raise ValueError(data.get('reason') or 'lookup error')
-            loc = ', '.join(p for p in (data.get('city'), data.get('country_name')) if p) or 'Unknown'
-            _geo[ip] = (loc, time.time() + (_GEO_OK if loc != 'Unknown' else _GEO_FAIL))
-        except Exception:
-            loc = 'Unknown'
-            _geo[ip] = (loc, time.time() + _GEO_FAIL)
+        loc = 'Unknown'
+        deadline = time.time() + 7
+        for url, parse in _providers(ip):
+            if time.time() > deadline:
+                break
+            try:
+                city, country = parse(_fetch(url))
+                text = ', '.join(p for p in (city, country) if p)
+                if text:
+                    loc = text
+                    break
+            except Exception:
+                continue
+        _geo[ip] = (loc, time.time() + (_GEO_OK if loc != 'Unknown' else _GEO_FAIL))
         if len(_geo) > 5000:
             _geo.clear()
         return loc
+
+    def _is_unknown(text):
+        return (not text) or text in ('Unknown', '')
+
+    def fill_unknown(ips):
+        """Look up addresses that were saved as Unknown, store the answer on every matching row, return {ip: location}."""
+        out = {}
+        for ip in list(dict.fromkeys(i for i in ips if i and _public_ip(i)))[:6]:
+            loc = geolocate(ip, lookup=True)
+            if _is_unknown(loc):
+                continue
+            out[ip] = loc
+            try:
+                ActivityLog.query.filter(ActivityLog.ip_address == ip, or_(ActivityLog.location.is_(None), ActivityLog.location.in_(['Unknown', ''])))\
+                    .update({'location': loc}, synchronize_session=False)
+                User.query.filter(User.last_ip == ip, or_(User.last_location.is_(None), User.last_location.in_(['Unknown', ''])))\
+                    .update({'last_location': loc}, synchronize_session=False)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        return out
 
     def parse_device(ua):
         if not ua:
@@ -541,8 +609,13 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         limit = min(request.args.get('limit', 50, type=int), 200)
         offset = max(request.args.get('offset', 0, type=int), 0)
         rows = q.offset(offset).limit(limit).all()
+        fixed = fill_unknown([r.ip_address for r, _ in rows if _is_unknown(r.location)])
+        events = [ev_row(r, n) for r, n in rows]
+        for e in events:
+            if e['ip'] in fixed and _is_unknown(e['location']):
+                e['location'] = fixed[e['ip']]
         return jsonify({'success': True, 'total': total, 'limit': limit, 'offset': offset,
-                        'events': [ev_row(r, n) for r, n in rows],
+                        'events': events,
                         'catalogue': {k: {'label': v[0], 'severity': v[1], 'category': v[2]} for k, v in EVENTS.items()}})
 
     @app.route(f'{P}/audit.csv', methods=['GET'])
@@ -593,6 +666,10 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
                 e['tried'].add(tried)
                 by_user[tried] = by_user.get(tried, 0) + 1
         top_ips = sorted(by_ip.values(), key=lambda x: -x['count'])[:15]
+        fx_ips = fill_unknown([e['ip'] for e in top_ips if _is_unknown(e.get('location'))])
+        for e in top_ips:
+            if e['ip'] in fx_ips and _is_unknown(e.get('location')):
+                e['location'] = fx_ips[e['ip']]
         for e in top_ips:
             e['last'] = _iso(e['last'])
             e['tried'] = sorted(e['tried'])[:6]
@@ -602,7 +679,12 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
             rows = (ActivityLog.query.filter(ActivityLog.event_type.in_(events), ActivityLog.created_at >= since)
                     .order_by(ActivityLog.created_at.desc()).limit(n).all())
             names = usernames([r.user_id for r in rows])
-            return [ev_row(r, names.get(r.user_id)) for r in rows]
+            fx = fill_unknown([r.ip_address for r in rows if _is_unknown(r.location)])
+            out = [ev_row(r, names.get(r.user_id)) for r in rows]
+            for e in out:
+                if e['ip'] in fx and _is_unknown(e['location']):
+                    e['location'] = fx[e['ip']]
+            return out
 
         admins = [{'id': u.id, 'username': u.username, 'email': u.email, 'last_login': _iso(u.last_login),
                    'last_ip': u.last_ip, 'location': u.last_location, 'two_factor': bool(u.two_factor_enabled)}
@@ -686,7 +768,12 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
                      .filter(ActivityLog.user_id.in_(ids), ActivityLog.event_type == 'login_failed',
                              ActivityLog.created_at >= now - timedelta(days=7))
                      .group_by(ActivityLog.user_id).all()) if ids else {}
-        return jsonify({'success': True, 'total': total, 'users': [user_row(u, sent.get(u.id, 0), fails.get(u.id, 0)) for u in users]})
+        fixed = fill_unknown([u.last_ip for u in users if _is_unknown(u.last_location)])
+        rows_out = [user_row(u, sent.get(u.id, 0), fails.get(u.id, 0)) for u in users]
+        for r_ in rows_out:
+            if r_['last_ip'] in fixed and _is_unknown(r_['location']):
+                r_['location'] = fixed[r_['last_ip']]
+        return jsonify({'success': True, 'total': total, 'users': rows_out})
 
     @app.route(f'{P}/users/<uid>', methods=['GET'])
     @admin_only
@@ -708,6 +795,8 @@ def install_audit(app, *, ActivityLog, User, Message, Contact, send_email, requi
         fails = ActivityLog.query.filter(ActivityLog.user_id == uid, ActivityLog.event_type == 'login_failed',
                                          ActivityLog.created_at >= now - timedelta(days=7)).count()
         mails = AdminEmail.query.filter_by(user_id=uid).order_by(AdminEmail.created_at.desc()).limit(15).all()
+        fixed = fill_unknown([i for i, l, _c, _t in ips if _is_unknown(l)])
+        ips = [(i, fixed.get(i, l) if _is_unknown(l) else l, c, t) for i, l, c, t in ips]
         d = user_row(u, sent, fails)
         d.update({'messages_received': recv, 'contacts': contacts, 'about': u.about, 'phone': u.phone})
         return jsonify({'success': True, 'user': d,

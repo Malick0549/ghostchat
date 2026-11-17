@@ -14,7 +14,7 @@ import json, os, subprocess, sys, tempfile, time, socket, urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERE = os.path.join(ROOT, 'tests')
 SUITES = ['test_security.py', 'test_moderation.py', 'test_groups.py', 'test_password_reset.py', 'test_admin_2fa.py']
-STANDALONE = ['test_retention.py', 'test_hardening2.py']          # builds its own app and database
+STANDALONE = ['test_retention.py', 'test_hardening2.py', 'test_audit_geo.py']          # builds its own app and database
 
 SEED = r'''
 import os, sys, json

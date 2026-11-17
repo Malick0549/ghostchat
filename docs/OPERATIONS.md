@@ -41,3 +41,12 @@ Credentials that were ever pasted in chat, email or a commit must be treated as 
 ## Routine checks
 Run `python tests/run_all.py` before every deploy. Keep dependencies updated (`pip list --outdated`). Review the
 audit log's failed-login and admin-denied events weekly.
+
+## Admin console locations
+
+Locations come from the visitor's IP address, so two things must be right:
+
+1. **`TRUSTED_PROXY_HOPS`** – on Render set it to `1` (check Admin → Security → Diagnostics to confirm the IP shown is yours, not a Render-internal one). If unset, you may see "Private network" or the wrong place.
+2. **Lookup services** – GhostChat tries ipwho.is, then geojs.io, then ipapi.co. For the most reliable results set the optional `GEOIP_TOKEN` (a free ipinfo.io token).
+
+Old rows showing "Unknown" are repaired automatically the next time the admin opens the audit, users or user-detail views (up to 6 new addresses per view, then cached for 7 days).
