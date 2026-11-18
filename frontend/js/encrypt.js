@@ -39,19 +39,31 @@ window.EncryptionModule = {
         const plain = this._$('plaintext');
         if (plain) plain.addEventListener('input', () => this._clearResult());
 
-        document.querySelectorAll('#encModes button').forEach(b =>
-            b.addEventListener('click', () => { this._mode = b.dataset.mode; this._clearResult(); this._paint(); }));
-        document.querySelectorAll('input[name="keyChoice"]').forEach(r =>
-            r.addEventListener('change', () => { this._keyChoice = r.value; this._paint(); }));
+        this._dd('encModeDD', [
+            { v: 'user', icon: 'fa-user-lock', t: 'To a GhostChat user', d: 'Locked so only that person\'s account can open it. No key to share.' },
+            { v: 'key',  icon: 'fa-key',       t: 'With a key',          d: 'Works for anyone, even without GhostChat. You pass the key separately.' },
+        ], () => this._mode, v => { this._mode = v; this._clearResult(); this._paint(); });
+        this._dd('keyChoiceDD', [
+            { v: 'generate', icon: 'fa-wand-magic-sparkles', t: 'Make a strong key for me', d: 'A new random key for every message. Nothing to invent.', badge: 'Recommended' },
+            { v: 'own',      icon: 'fa-pen',                 t: 'I\'ll type my own key',   d: 'At least 8 characters. A short key can be guessed.' },
+        ], () => this._keyChoice, v => { this._keyChoice = v; this._clearResult(); this._paint(); });
         this._$('genKeyNew')?.addEventListener('click', () => this._newKey());
         this._$('genKeyCopy')?.addEventListener('click', () => this._copyText(this._genKey, 'Key copied'));
 
         const q = this._$('recipientSearch');
         if (q) {
             q.addEventListener('input', () => { clearTimeout(this._searchTimer); this._searchTimer = setTimeout(() => this._search(q.value), 250); });
-            q.addEventListener('focus', () => { if (!q.value.trim()) this._search(''); });
+            q.addEventListener('focus', () => this._search(q.value));
+            q.addEventListener('click', () => this._search(q.value));
+            q.addEventListener('keydown', e => this._comboKeys(e));
         }
-        if (!this._docWired) { this._docWired = true; document.addEventListener('click', e => { const r = this._$('recipientResults'); if (r && !e.target.closest('#recipientPick')) r.innerHTML = ''; }); }
+        if (!this._docWired) {
+            this._docWired = true;
+            document.addEventListener('click', e => {
+                if (!e.target.closest('.gc-combo')) this._closeMenu();
+                document.querySelectorAll('.gc-dd.open').forEach(d => { if (!d.contains(e.target)) d.classList.remove('open'); });
+            });
+        }
         [
             ['exportWhatsApp', () => this._exportWhatsApp()],
             ['exportTelegram', () => this._exportTelegram()],
@@ -70,11 +82,42 @@ window.EncryptionModule = {
     },
 
 
+    // A labelled dropdown: a button showing the current choice (icon, title, one-line help) and a menu of options.
+    _dd(id, options, get, set) {
+        const root = this._$(id); if (!root) return;
+        root.innerHTML = '';
+        const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'gc-dd-btn'; btn.setAttribute('aria-haspopup', 'listbox'); btn.setAttribute('aria-expanded', 'false');
+        const menu = document.createElement('div'); menu.className = 'gc-menu gc-dd-menu'; menu.setAttribute('role', 'listbox');
+        const row = (o, sel) => `<span class="gc-dd-ic"><i class="fas ${o.icon}"></i></span><span class="gc-opt-t"><b>${this._esc(o.t)}${o.badge ? ` <em>${this._esc(o.badge)}</em>` : ''}</b><small>${this._esc(o.d)}</small></span>${sel ? '<i class="fas fa-check gc-dd-ck"></i>' : ''}`;
+        const render = () => {
+            const cur = options.find(o => o.v === get()) || options[0];
+            btn.innerHTML = row(cur, false) + '<i class="fas fa-chevron-down gc-dd-chev"></i>';
+            menu.innerHTML = '';
+            options.forEach(o => {
+                const it = document.createElement('button'); it.type = 'button'; it.setAttribute('role', 'option'); it.dataset.value = o.v;
+                it.setAttribute('aria-selected', o.v === cur.v ? 'true' : 'false'); it.className = 'gc-dd-opt' + (o.v === cur.v ? ' on' : '');
+                it.innerHTML = row(o, o.v === cur.v);
+                it.addEventListener('click', () => { root.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); if (o.v !== get()) set(o.v); render(); btn.focus(); });
+                menu.appendChild(it);
+            });
+        };
+        btn.addEventListener('click', () => { const o = root.classList.toggle('open'); btn.setAttribute('aria-expanded', o ? 'true' : 'false'); });
+        root.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { root.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); btn.focus(); }
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault(); root.classList.add('open'); btn.setAttribute('aria-expanded', 'true');
+                const opts = [...menu.querySelectorAll('button')], i = opts.indexOf(document.activeElement);
+                opts[(i + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length].focus();
+            }
+        });
+        root.appendChild(btn); root.appendChild(menu);
+        root._render = render; render();
+    },
+    _ddRefresh() { ['encModeDD', 'keyChoiceDD'].forEach(id => this._$(id)?._render?.()); },
+
     // ── choose-how-to-send screen ───────────────────────────────────────────
     _paint() {
-        document.querySelectorAll('#encModes button').forEach(b => {
-            const on = b.dataset.mode === this._mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
-        });
+        this._ddRefresh();
         const userMode = this._mode === 'user';
         if (this._$('encUserPane')) this._$('encUserPane').hidden = !userMode;
         if (this._$('encKeyPane')) this._$('encKeyPane').hidden = userMode;
@@ -105,10 +148,27 @@ window.EncryptionModule = {
         else navigator.clipboard?.writeText(t).then(() => { if (window.UI) UI.showToast(msg || 'Copied!', 'success'); });
     },
 
+    _closeMenu() {
+        const box = this._$('recipientResults'), q = this._$('recipientSearch');
+        if (box) box.hidden = true; if (q) q.setAttribute('aria-expanded', 'false');
+    },
+    _comboKeys(e) {
+        const box = this._$('recipientResults'); if (!box) return;
+        const opts = [...box.querySelectorAll('[role=option]')]; if (!opts.length && e.key !== 'Escape') return;
+        const cur = opts.findIndex(o => o.classList.contains('active'));
+        const go = i => { opts.forEach(o => o.classList.remove('active')); const o = opts[(i + opts.length) % opts.length]; o.classList.add('active'); o.scrollIntoView({ block: 'nearest' }); };
+        if (e.key === 'ArrowDown') { e.preventDefault(); box.hidden = false; go(cur + 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); go(cur < 0 ? opts.length - 1 : cur - 1); }
+        else if (e.key === 'Enter') { const o = opts[cur >= 0 ? cur : (opts.length === 1 ? 0 : -1)]; if (o) { e.preventDefault(); o.click(); } }
+        else if (e.key === 'Escape') this._closeMenu();
+    },
     async _search(raw) {
         const box = this._$('recipientResults'); if (!box) return;
         const q = String(raw || '').trim(), seq = ++this._searchSeq;
+        const input = this._$('recipientSearch');
         let people = [];
+        box.hidden = false; if (input) input.setAttribute('aria-expanded', 'true');
+        if (!box.children.length) box.innerHTML = '<div class="gc-menu-note"><i class="fas fa-spinner fa-spin"></i> Loading…</div>';
         try {
             if (q) {
                 const d = await window.GhostChatAPI._get('/api/contacts/search?q=' + encodeURIComponent(q));
@@ -117,19 +177,24 @@ window.EncryptionModule = {
                 const d = await window.GhostChatAPI._get('/api/contacts');
                 people = (d.contacts || []).map(c => ({ id: c.contact_id, name: c.display_name || c.username, sub: 'In your contacts' }));
             }
-        } catch (e) { if (seq === this._searchSeq) box.innerHTML = ''; return; }
+        } catch (e) { if (seq === this._searchSeq) box.innerHTML = '<div class="gc-menu-note">Could not load people. Try again.</div>'; return; }
         if (seq !== this._searchSeq) return;       // a newer search is running
-        box.innerHTML = people.length ? '' : `<div class="gc-hint" style="padding:12px;">${q ? 'No one found. Check the spelling.' : 'No contacts yet. Type a username to search.'}</div>`;
+        box.innerHTML = '';
+        const head = document.createElement('div'); head.className = 'gc-menu-head'; head.textContent = q ? 'People' : 'Your contacts'; box.appendChild(head);
+        if (!people.length) {
+            const n = document.createElement('div'); n.className = 'gc-menu-note';
+            n.textContent = q ? 'No one found. Check the spelling.' : 'No contacts yet. Type a username to search.'; box.appendChild(n);
+        }
         people.slice(0, 20).forEach(p => {
             const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'option');
-            b.innerHTML = `${this._avatar(p)}<span><b>${this._esc(p.name)}</b>${p.sub ? `<small>${this._esc(p.sub)}</small>` : ''}</span>`;
+            b.innerHTML = `${this._avatar(p)}<span class="gc-opt-t"><b>${this._esc(p.name)}</b>${p.sub ? `<small>${this._esc(p.sub)}</small>` : ''}</span>`;
             b.addEventListener('click', () => this._choose(p));
             box.appendChild(b);
         });
     },
     async _choose(p) {
         this._recipient = { id: p.id, name: p.name };
-        const box = this._$('recipientResults'); if (box) box.innerHTML = '';
+        this._closeMenu(); const rb = this._$('recipientResults'); if (rb) rb.innerHTML = '';
         const q = this._$('recipientSearch'); if (q) q.value = '';
         this._paint();
         this._hint('Checking that ' + p.name + ' can receive…');

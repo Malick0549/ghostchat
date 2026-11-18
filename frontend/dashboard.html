@@ -49,27 +49,28 @@
       </div>
     </div>
     <div class="input-section">
-      <label>How do you want to send it?</label>
-      <div class="gc-seg" id="encModes" role="group" aria-label="Sending method">
-        <button type="button" data-mode="user" class="on" aria-pressed="true"><b><i class="fas fa-user-lock"></i>To a GhostChat user</b><small>Locked so only that person's account can open it. No key or password to share.</small></button>
-        <button type="button" data-mode="key" aria-pressed="false"><b><i class="fas fa-key"></i>With a key</b><small>For anyone, even without GhostChat. You pass the key separately.</small></button>
-      </div>
+      <label id="encModeLabel">How do you want to send it?</label>
+      <div class="gc-dd" id="encModeDD" aria-labelledby="encModeLabel"></div>
     </div>
 
     <div id="encUserPane" class="gc-pane">
       <div class="input-section" id="recipientPick">
         <label for="recipientSearch">Send to</label>
-        <input type="search" id="recipientSearch" autocomplete="off" placeholder="Search by username…" aria-controls="recipientResults" />
-        <div id="recipientResults" class="gc-results" role="listbox" aria-label="People"></div>
+        <div class="gc-combo">
+          <i class="fas fa-magnifying-glass gc-combo-ic" aria-hidden="true"></i>
+          <input type="text" id="recipientSearch" role="combobox" aria-expanded="false" aria-controls="recipientResults" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Search by username" />
+          <i class="fas fa-chevron-down gc-combo-chev" aria-hidden="true"></i>
+          <div id="recipientResults" class="gc-menu" role="listbox" aria-label="People" hidden></div>
+        </div>
       </div>
       <div id="recipientChosen" hidden></div>
       <div id="recipientHint" class="gc-hint">Only accounts that have opened secure chat once can receive this way.</div>
     </div>
 
     <div id="encKeyPane" class="gc-pane" hidden>
-      <div class="gc-radios" role="radiogroup" aria-label="Key choice">
-        <label><input type="radio" name="keyChoice" value="generate" checked /><span><b>Make a strong key for me</b> (recommended)<small>A new random key for every message. Nothing to invent or remember.</small></span></label>
-        <label><input type="radio" name="keyChoice" value="own" /><span><b>I'll type my own key</b><small>Use at least 8 characters. A short key can be guessed.</small></span></label>
+      <div class="input-section">
+        <label id="keyChoiceLabel">Which key?</label>
+        <div class="gc-dd" id="keyChoiceDD" aria-labelledby="keyChoiceLabel"></div>
       </div>
       <div id="genKeyBox" class="gc-key">
         <div class="gc-hint" style="margin:0 0 6px;">Your key for this message</div>

@@ -43,7 +43,7 @@ async def main():
 
         # ── Encrypt screen and the recipient search ──
         await goto_page(pa, 'encrypt')
-        check('mode buttons are shown', await pa.locator('#encModes button').count() == 2)
+        check('mode buttons are shown', await pa.locator('#encModeDD .gc-dd-btn').count() == 1)
         await pa.fill('#plaintext', MSG)
         await pa.focus('#recipientSearch'); await pa.wait_for_selector('#recipientResults button', timeout=5000)
         check('focus lists your contacts first', 'bob' in (await pa.inner_text('#recipientResults')))
@@ -100,7 +100,7 @@ async def main():
 
         # ── Generated key mode ──
         await goto_page(pa, 'encrypt'); await pa.fill('#plaintext', MSG)
-        await pa.click('#encModes [data-mode=key]')
+        await pa.click('#encModeDD .gc-dd-btn'); await pa.click('#encModeDD .gc-dd-opt[data-value=key]')
         key1 = (await pa.inner_text('#genKeyValue')).strip()
         check('a strong key is generated (20 characters, 5 groups)', re.fullmatch(r'([2-9A-HJKMNP-Z]{4}-){4}[2-9A-HJKMNP-Z]{4}', key1) is not None, key1)
         await pa.click('#genKeyNew'); key2 = (await pa.inner_text('#genKeyValue')).strip()
@@ -124,7 +124,7 @@ async def main():
 
         # ── own key still works (old behaviour) ──
         await goto_page(pa, 'encrypt'); await pa.fill('#plaintext', 'plain old mode 🔐')
-        await pa.click('#encModes [data-mode=key]'); await pa.click('input[name=keyChoice][value=own]')
+        await pa.click('#encModeDD .gc-dd-btn'); await pa.click('#encModeDD .gc-dd-opt[data-value=key]'); await pa.click('#keyChoiceDD .gc-dd-btn'); await pa.click('#keyChoiceDD .gc-dd-opt[data-value=own]')
         await pa.fill('#encryptPassword', 'short'); await pa.click('#encryptBtn')
         await pa.wait_for_selector('#encryptResult :text("at least 8")', timeout=5000)
         check('own key must be 8+ characters', True)
@@ -158,7 +158,7 @@ async def main():
         cm, pm, _, em = await login(br, 'alice', mobile=True)
         await goto_page(pm, 'encrypt'); await pm.fill('#plaintext', 'hi'); await pm.fill('#recipientSearch', 'bob'); await pm.wait_for_selector('#recipientResults button')
         await pm.screenshot(path='/tmp/claude-0/shots/send-phone-user.png', full_page=True)
-        await pm.click('#encModes [data-mode=key]'); await pm.screenshot(path='/tmp/claude-0/shots/send-phone-key.png', full_page=True)
+        await pm.click('#encModeDD .gc-dd-btn'); await pm.click('#encModeDD .gc-dd-opt[data-value=key]'); await pm.screenshot(path='/tmp/claude-0/shots/send-phone-key.png', full_page=True)
         ow = await pm.evaluate("document.documentElement.scrollWidth - innerWidth")
         check('phone layout has no sideways scroll', ow <= 1, ow)
         await goto_page(pm, 'decrypt'); await paste(pm, packet2); await pm.screenshot(path='/tmp/claude-0/shots/send-phone-decrypt.png', full_page=True)
