@@ -130,7 +130,6 @@ class GhostChatDashboard {
         if (window.HistoryModule && window.HistoryModule.addMessage) {
             const originalAdd = window.HistoryModule.addMessage;
             window.HistoryModule.addMessage = (...args) => {
-                this._showNotification('Message saved to history', 'info');
                 return originalAdd.apply(window.HistoryModule, args);
             };
         }

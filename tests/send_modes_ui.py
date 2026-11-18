@@ -61,9 +61,9 @@ async def main():
 
         # ── Carol opens it by pasting; no key typed ──
         await goto_page(pc, 'decrypt'); await paste(pc, packet)
-        await pc.wait_for_selector('#decryptResult :text("DECRYPTION SUCCESSFUL")', timeout=15000)
+        await pc.wait_for_selector('#decryptResult .gc-plain', timeout=15000)
         shown = await pc.evaluate("document.querySelector('#decryptResult div div:last-of-type, #decryptResult').innerText")
-        got = await pc.evaluate("[...document.querySelectorAll('#decryptResult div')].map(d=>d.innerText).find(t=>t.includes('Ama'))||''")
+        got = await pc.evaluate("(document.getElementById('decPlain')||{}).innerText||''")
         check('carol sees the exact message by pasting (accents, Arabic, Chinese, ZWJ, flag, newline)', MSG in got, got[:120])
         check('password row is hidden for locked messages', await pc.evaluate("document.getElementById('decryptPwRow').hidden"))
 
@@ -83,7 +83,7 @@ async def main():
         check('a changed packet fails cleanly', True)
         # whitespace and line breaks added by chat apps are tolerated
         await paste(pc, '\n'.join(packet[i:i + 40] for i in range(0, len(packet), 40)))
-        await pc.wait_for_selector('#decryptResult :text("DECRYPTION SUCCESSFUL")', timeout=15000)
+        await pc.wait_for_selector('#decryptResult .gc-plain', timeout=15000)
         check('line breaks added by a chat app are tolerated', True)
 
         # ── Recipient without keys ──
@@ -118,8 +118,8 @@ async def main():
         await pb.wait_for_selector('#decryptResult :text("Wrong key")', timeout=20000)
         check('wrong key is refused', True)
         await pb.fill('#decryptPassword', shown_key.lower().replace('-', '')); await pb.press('#decryptPassword', 'Enter')
-        await pb.wait_for_selector('#decryptResult :text("DECRYPTION SUCCESSFUL")', timeout=20000)
-        got = await pb.evaluate("[...document.querySelectorAll('#decryptResult div')].map(d=>d.innerText).find(t=>t.includes('Ama'))||''")
+        await pb.wait_for_selector('#decryptResult .gc-plain', timeout=20000)
+        got = await pb.evaluate("(document.getElementById('decPlain')||{}).innerText||''")
         check('key typed in lower case without dashes still opens it, message intact', MSG in got, got[:100])
 
         # ── own key still works (old behaviour) ──
@@ -131,7 +131,7 @@ async def main():
         await pa.fill('#encryptPassword', 'my-own-key-2026'); await pa.click('#encryptBtn'); await pa.wait_for_selector('#encPacketText', timeout=20000)
         packet3 = (await pa.inner_text('#encPacketText')).strip()
         await goto_page(pb, 'decrypt'); await paste(pb, packet3); await pb.fill('#decryptPassword', 'my-own-key-2026'); await pb.press('#decryptPassword', 'Enter')
-        await pb.wait_for_selector('#decryptResult :text("DECRYPTION SUCCESSFUL")', timeout=20000)
+        await pb.wait_for_selector('#decryptResult .gc-plain', timeout=20000)
         check('own-key mode still works as before', True)
 
         # ── emoji picker ──

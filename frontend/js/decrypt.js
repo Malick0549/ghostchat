@@ -182,7 +182,6 @@ window.DecryptionModule = {
 
             if (result.success) {
                 this._showResult(result.decrypted_message, result.algorithm);
-                if (window.UI) UI.showToast('Message decrypted!', 'success');
                 if (window.UI?.playSound) window.UI.playSound('success');
                 window.dispatchEvent(new CustomEvent('ghostchat:decrypt', {}));
 
@@ -214,31 +213,20 @@ window.DecryptionModule = {
         const div = document.getElementById('decryptResult');
         if (!div) return;
         div.innerHTML = `
-            <div style="margin-top:20px;padding:16px;
-                        background:rgba(0,255,136,0.07);
-                        border:1px solid rgba(0,255,136,0.2);
-                        border-radius:var(--r2);">
-                <p style="font-family:var(--mono);font-size:.75rem;
-                           color:var(--green);margin-bottom:12px;">
-                    ✓ DECRYPTION SUCCESSFUL — ${this._esc(algorithm || 'AES-256')}
-                </p>
-                <label style="font-family:var(--mono);font-size:.7rem;
-                              letter-spacing:.1em;text-transform:uppercase;
-                              color:var(--t2);display:block;margin-bottom:8px;">
-                    Original Message
-                </label>
-                <div style="background:rgba(0,0,0,.35);border:1px solid var(--border);
-                            border-radius:var(--r2);padding:14px;
-                            font-size:.9rem;line-height:1.7;color:var(--t1);
-                            white-space:pre-wrap;word-break:break-word;
-                            max-height:300px;overflow-y:auto;">
-                    ${this._esc(plaintext)}
+            <section class="gc-result" aria-live="polite">
+                <header class="gc-result-head">
+                    <span class="gc-result-ic"><i class="fas fa-lock-open"></i></span>
+                    <div><b>Decrypted</b><small>${this._esc(algorithm || 'AES-256-GCM')}. Done in your browser.</small></div>
+                </header>
+                <div class="gc-plain" id="decPlain">${this._esc(plaintext)}</div>
+                <div class="gc-result-bar">
+                    <button type="button" class="btn btn-primary btn-sm" id="decCopy"><i class="fas fa-copy"></i> Copy message</button>
                 </div>
-                <button onclick="HistoryModule._copyItem('${this._esc(plaintext).replace(/'/g,"\\'")}');"
-                    class="btn btn-ghost btn-sm" style="margin-top:10px;">
-                    <i class="fas fa-copy"></i> Copy plaintext
-                </button>
-            </div>`;
+            </section>`;
+        document.getElementById('decCopy')?.addEventListener('click', () => {
+            if (window.secureCopy) window.secureCopy(plaintext);
+            else navigator.clipboard?.writeText(plaintext).then(() => { if (window.UI) UI.showToast('Copied', 'success'); });
+        });
     },
 
     _showError(html) {

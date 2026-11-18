@@ -181,7 +181,6 @@ window.EncryptionModule = {
                 this._showResult(result);
                 this._showExport(true);
                 if (result.key) this._newKey();       // the next message gets a different key
-                if (window.UI) UI.showToast('Message encrypted successfully!', 'success');
                 if (window.UI?.playSound) window.UI.playSound('success');
                 window.dispatchEvent(new CustomEvent('ghostchat:encrypt', { detail: { length: plaintext.length } }));
 
@@ -212,37 +211,35 @@ window.EncryptionModule = {
     _showResult(result) {
         const div = this._$('encryptResult');
         if (!div) return;
-        const note = result.key
-            ? `<div class="gc-keyresult"><b>Send this key separately</b> (a call, SMS or another app, not the same chat as the message):
-                 <code style="display:block;margin:8px 0;font-size:1.1rem;letter-spacing:.08em;word-break:break-all;user-select:all;">${this._esc(result.key)}</code>
-                 <button type="button" class="btn btn-ghost btn-sm" id="resKeyCopy"><i class="fas fa-copy"></i> Copy key</button></div>`
-            : result.forUser
-                ? `<p style="font-size:.8rem;color:var(--green);margin-top:10px;"><i class="fas fa-user-lock"></i> Locked for <b>${this._esc(result.forUser)}</b>. Only their account can open it, and no key needs to be shared. You will not be able to open this packet yourself (it stays in your History).</p>`
-                : '';
+        const count = Array.from(result.emoji_message || '').length;
+        const sub = result.forUser
+            ? `Locked to <b>${this._esc(result.forUser)}</b>. Only their account can open it.`
+            : 'Protected by your key. Anyone who has the packet and the key can read it.';
+        const key = result.key ? `
+            <div class="gc-keyresult">
+                <div class="gc-keyresult-t"><i class="fas fa-key"></i> Send this key separately</div>
+                <p>Use a call, SMS or another app. Not the same chat as the packet.</p>
+                <code>${this._esc(result.key)}</code>
+                <button type="button" class="btn btn-ghost btn-sm" id="resKeyCopy"><i class="fas fa-copy"></i> Copy key</button>
+            </div>` : '';
+        const foot = result.forUser
+            ? 'You cannot reopen this packet yourself. It stays in your History as the original text.'
+            : 'Copy the whole packet. Every emoji matters.';
         div.innerHTML = `
-            <div style="margin-top:20px;padding:16px;background:rgba(0,255,136,0.07);
-                        border:1px solid rgba(0,255,136,0.2);border-radius:var(--r2);">
-                <p style="font-family:var(--mono);font-size:.75rem;color:var(--green);margin-bottom:12px;">
-                    ✓ ENCRYPTION COMPLETE — ${this._esc(result.algorithm || 'AES-256-GCM')} + EMOJI ENCODING · DONE IN YOUR BROWSER
-                </p>
-                <label style="font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
-                              text-transform:uppercase;color:var(--t2);display:block;margin-bottom:8px;">
-                    Encrypted Packet (copy the entire string below)
-                </label>
-                <div id="encPacketText" style="background:rgba(0,0,0,.35);border:1px solid var(--border);
-                            border-radius:var(--r2);padding:14px;word-break:break-all;
-                            font-family:var(--mono);font-size:.75rem;line-height:1.7;
-                            color:var(--t1);max-height:180px;overflow-y:auto;">
-                    ${this._esc(result.emoji_message || '')}
+            <section class="gc-result" aria-live="polite">
+                <header class="gc-result-head">
+                    <span class="gc-result-ic"><i class="fas fa-check"></i></span>
+                    <div><b>Encrypted</b><small>${sub}</small></div>
+                </header>
+                <div id="encPacketText" class="gc-packet" tabindex="0" aria-label="Encrypted packet">${this._esc(result.emoji_message || '')}</div>
+                <div class="gc-result-bar">
+                    <button type="button" class="btn btn-primary btn-sm" id="resPacketCopy"><i class="fas fa-copy"></i> Copy packet</button>
+                    <span class="gc-count">${count} emoji · ${this._esc(result.algorithm || 'AES-256-GCM')} · done in your browser</span>
                 </div>
-                <p style="font-size:.75rem;color:var(--t3);margin-top:8px;">
-                    <i class="fas fa-info-circle"></i>
-                    Copy the <strong>entire</strong> string above (every emoji, nothing missed)
-                    and paste it into the Decrypt panel.
-                </p>
-                ${note}
-            </div>
-        `;
+                ${key}
+                <p class="gc-result-note">${foot}</p>
+            </section>`;
+        this._$('resPacketCopy')?.addEventListener('click', () => this._copyPacket());
         this._$('resKeyCopy')?.addEventListener('click', () => this._copyText(result.key, 'Key copied'));
     },
 
