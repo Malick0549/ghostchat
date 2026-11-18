@@ -9,7 +9,9 @@
  */
 (function () {
   'use strict';
-  const MAX_LINK = 1800; // characters in the finished link that apps reliably keep
+  const MAX_LINK = 1800; // links up to this size are reliable everywhere
+  const LONG_LINK = 8000; // desktop apps/WhatsApp Web usually still keep the text up to about here
+  const touch = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
 
   const toast = (m, t) => { if (window.UI && UI.showToast) UI.showToast(m, t || 'info'); else console.log(m); };
 
@@ -56,9 +58,15 @@
   async function viaLink(name, makeLink, openPlain, text) {
     const link = makeLink(encodeURIComponent(text));
     const copied = await copy(text);
-    if (link.length <= MAX_LINK) {
+    const note = copied ? ' A copy is also on your clipboard.' : '';
+    // Long packet on a phone: the share sheet carries the whole text, whatever its length. Pick the app there.
+    if (link.length > MAX_LINK && touch() && navigator.share) {
+      try { await navigator.share({ text }); toast('Choose ' + name + ' in the list to send it.' + note, 'success'); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    if (link.length <= LONG_LINK) {
       window.open(link, '_blank', 'noopener');
-      toast(`Opening ${name}.` + (copied ? ' A copy is also on your clipboard.' : ''), 'success');
+      toast(`Opening ${name} with your message.` + (link.length > MAX_LINK ? ' If the box is empty, paste it (Ctrl+V).' : '') + note, 'success');
     } else {
       window.open(openPlain, '_blank', 'noopener');
       toast(copied ? `Message copied. It is too long for a link, so paste it into ${name}.` : `Too long for a link. Copy the message and paste it into ${name}.`, copied ? 'success' : 'warning');
