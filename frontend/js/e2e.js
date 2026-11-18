@@ -19,7 +19,7 @@
  * tell whether the other has the SAME key before a message is sent.
  */
 window.GhostE2E = (() => {
-    const P1 = '🔐E2E1:', P2 = '🔐E2E2:', P3 = '🔐E2E3:';
+    const P1 = '🔐E2E1:', P2 = '🔐E2E2:', P3 = '🔐E2E3:', P4 = '🔐E2E4:';
     const VAULT_ITER = 600000;
     const enc = new TextEncoder(), dec = new TextDecoder();
     const subtle = (globalThis.crypto || {}).subtle;
@@ -579,8 +579,110 @@ window.GhostE2E = (() => {
         } catch (_) { throw new Error('wrong_password'); }
     }
 
+
+    // ── "For a GhostChat user": hybrid encryption for the main-page Encrypt / Decrypt tool ─────────────
+    // 1. A fresh random 256-bit CONTENT KEY encrypts the message (AES-256-GCM).
+    // 2. The content key is LOCKED to the receiver's public key: a fresh one-time key pair is made, ECDH with the
+    //    receiver's public key + HKDF gives a key-wrapping key, and AES-GCM wraps the content key with it.
+    // Packet = P4 + base64( ver(1) | oneTimePublicKey(65) | wraps(1) | wraps x [ keyTag(8) | iv(12) | wrappedKey(48) ] | iv(12) | ciphertext+tag ), shown as emoji.
+    // Only the receiver's private key (never leaves his device) can unwrap the content key. Nothing is shared in advance.
+    const SEAL_LABEL = enc.encode('gcseal1');
+    const concatBytes = (...a) => { const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let i = 0; for (const x of a) { o.set(x, i); i += x.length; } return o; };
+    async function keyTag(jwk) {
+        const h = new Uint8Array(await subtle.digest('SHA-256', enc.encode('gcseal-tag|' + jwk.x + '|' + jwk.y)));
+        return h.slice(0, 8);
+    }
+    async function _kek(secretBits, tag, eph) {
+        const hk = await subtle.importKey('raw', secretBits, 'HKDF', false, ['deriveKey']);
+        return subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: enc.encode('ghostchat-seal-v1'), info: concatBytes(tag, eph) }, hk, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    }
+    // Look a person up by id and return their public key, or throw a readable error.
+    async function _publicKeyOf(userId) {
+        const r = await api('GET', `/api/keys/${encodeURIComponent(userId)}`);
+        if (r.network) throw new Error('You appear to be offline. Check your connection.');
+        if (!r.ok) throw new Error(r.status === 403 && r.data && r.data.code === 'location_required' ? 'Turn on location sharing first.' : 'Could not look that person up.');
+        if (!r.data.public_key) throw new Error('not_ready');
+        return cleanJwk(r.data.public_key);
+    }
+    async function sealTo(recipientIds, text) {
+        if (!subtle) throw new Error('This browser cannot do secure encryption');
+        const ids = Array.isArray(recipientIds) ? recipientIds : [recipientIds];
+        if (!ids.length || ids.length > 5) throw new Error('Choose one to five recipients');
+        const pubs = []; for (const id of ids) pubs.push(await _publicKeyOf(id));
+        const eph = await subtle.generateKey(ECDH, true, ['deriveBits']);
+        const ephRaw = new Uint8Array(await subtle.exportKey('raw', eph.publicKey));             // 65 bytes
+        const content = crypto.getRandomValues(new Uint8Array(32));
+        const aes = await aesFromRaw(content);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: concatBytes(SEAL_LABEL, ephRaw) }, aes, enc.encode(String(text))));
+        const wraps = [];
+        for (const jwk of pubs) {
+            const pub = await subtle.importKey('jwk', jwk, ECDH, false, []);
+            const bits = await subtle.deriveBits({ name: 'ECDH', public: pub }, eph.privateKey, 256);
+            const tag = await keyTag(jwk), wiv = crypto.getRandomValues(new Uint8Array(12));
+            const kek = await _kek(bits, tag, ephRaw);
+            const wct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv: wiv, additionalData: concatBytes(SEAL_LABEL, tag) }, kek, content));   // 48 bytes
+            wraps.push(concatBytes(tag, wiv, wct));
+        }
+        const packet = concatBytes(Uint8Array.of(1), ephRaw, Uint8Array.of(wraps.length), ...wraps, iv, ct);
+        content.fill(0);
+        return toEmoji(P4 + b64(packet));
+    }
+    async function canSealTo(userId) { try { await _publicKeyOf(userId); return true; } catch (_) { return false; } }
+    const isSeal = s => { try { return unwrap(String(s || '').trim()).startsWith(P4); } catch (_) { return false; } };
+    async function openSeal(packet) {
+        if (_locked) throw new Error('locked');
+        const p = unwrap(String(packet || '').trim());
+        if (!p.startsWith(P4)) throw new Error('not_seal_packet');
+        let raw; try { raw = unb64(p.slice(P4.length).replace(/\s+/g, '')); } catch (_) { throw new Error('damaged'); }
+        if (raw.length < 1 + 65 + 1 + 68 + 12 + 16 || raw[0] !== 1) throw new Error('damaged');
+        const ephRaw = raw.slice(1, 66), n = raw[66];
+        if (n < 1 || n > 5 || raw.length < 67 + n * 68 + 28) throw new Error('damaged');
+        if (!(await ensureAuto()) || !_priv) throw new Error(_locked ? 'locked' : 'no_keys');
+        const mine = await keyTag(_pubJwk);
+        let wrap = null;
+        for (let i = 0; i < n; i++) {
+            const w = raw.slice(67 + i * 68, 67 + (i + 1) * 68);
+            if (w.slice(0, 8).every((b, k) => b === mine[k])) { wrap = w; break; }
+        }
+        if (!wrap) throw new Error('not_for_you');
+        const rest = raw.slice(67 + n * 68);
+        let content;
+        try {
+            const eph = await subtle.importKey('raw', ephRaw, ECDH, false, []);
+            const bits = await subtle.deriveBits({ name: 'ECDH', public: eph }, _priv, 256);
+            const kek = await _kek(bits, wrap.slice(0, 8), ephRaw);
+            content = new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv: wrap.slice(8, 20), additionalData: concatBytes(SEAL_LABEL, wrap.slice(0, 8)) }, kek, wrap.slice(20)));
+        } catch (_) { throw new Error('not_for_you'); }
+        try {
+            const aes = await aesFromRaw(content);
+            return dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: rest.slice(0, 12), additionalData: concatBytes(SEAL_LABEL, ephRaw) }, aes, rest.slice(12)));
+        } catch (_) { throw new Error('damaged'); }
+        finally { content.fill(0); }
+    }
+
+    // ── Generated key for password mode: 20 characters from an alphabet without look-alikes (about 99 bits) ──
+    const KEY_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';   // no 0 O 1 I L
+    function generateKey() {
+        const out = []; const lim = 256 - (256 % KEY_ALPHABET.length);
+        while (out.length < 20) {
+            for (const b of crypto.getRandomValues(new Uint8Array(32))) { if (b < lim && out.length < 20) out.push(KEY_ALPHABET[b % KEY_ALPHABET.length]); }
+        }
+        return out.join('').match(/.{4}/g).join('-');
+    }
+    // A typed key may use lower case, spaces or no dashes: rebuild the exact generated form (or return null).
+    function normalizeGeneratedKey(t) {
+        const c = String(t || '').toUpperCase().replace(/[\s\-_.]/g, '');
+        return c.length === 20 && [...c].every(ch => KEY_ALPHABET.includes(ch)) ? c.match(/.{4}/g).join('-') : null;
+    }
+    function packetKind(s) {
+        let p; try { p = unwrap(String(s || '').trim()); } catch (_) { return null; }
+        if (typeof p !== 'string') return null;
+        return p.startsWith(P4) ? 'seal' : p.startsWith(P3) ? 'password' : (p.startsWith(P1) || p.startsWith(P2)) ? 'chat' : /GHOST/.test(p) ? 'legacy' : null;
+    }
+
     return {
-        P1, P2, P3,
+        P1, P2, P3, P4,
         wrap: s => toEmoji(String(s)),
         unwrap: s => unwrap(String(s)),
         toEmoji: s => toEmoji(String(s)),                    // used by group chats to show their packets as emoji
@@ -607,6 +709,7 @@ window.GhostE2E = (() => {
         getMode, getDefault, getOverride, setDefault, setOverride,
         // send / receive
         encryptFor, decrypt,
+        sealTo, openSeal, isSeal, canSealTo, generateKey, normalizeGeneratedKey, packetKind,
         pwEncrypt, pwDecrypt, isPw: s => { try { return unwrap(String(s || '').trim()).startsWith(P3); } catch (_) { return false; } },
         // status
         manualStatus, manualInfo, manualShare,

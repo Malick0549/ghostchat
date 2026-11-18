@@ -11,6 +11,7 @@
        anywhere — the dashboard (the largest surface of the app) had zero
        benefit from it. Now included. -->
   <link rel="stylesheet" href="css/mobile-responsive.css" />
+  <link rel="stylesheet" href="css/send-modes.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="stylesheet" href="css/ghost-ui.css" />
   <link rel="manifest" href="/manifest.json" />
@@ -39,16 +40,53 @@
 <template id="encrypt-page">
   <div class="cyber-panel">
     <h2><i class="fas fa-lock"></i> Encrypt Message</h2>
-    <p class="section-desc text-muted" style="margin-bottom:24px;">Write your message → AES-256-GCM encryption in your browser → emoji encoding. Your message and password never leave this device. Copy and share anywhere.</p>
+    <p class="section-desc text-muted" style="margin-bottom:24px;">Write your message, choose how to send it, and get an emoji packet you can share anywhere. Everything is encrypted in your browser: your message and keys never reach the server.</p>
     <div class="input-section">
       <label for="plaintext">Your Message</label>
-      <textarea id="plaintext" data-voice rows="5" placeholder="Type or speak the message you want to encrypt…"></textarea>
+      <div class="gc-fieldwrap">
+        <textarea id="plaintext" data-voice rows="5" placeholder="Type or speak the message you want to encrypt…"></textarea>
+        <button type="button" class="gc-emo-btn" data-emoji-for="#plaintext" title="Add an emoji" aria-label="Add an emoji">😀</button>
+      </div>
     </div>
     <div class="input-section">
-      <label for="encryptPassword">Session Password (shared secret)</label>
-      <input type="password" id="encryptPassword" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="Password used to encrypt/decrypt" />
+      <label>How do you want to send it?</label>
+      <div class="gc-seg" id="encModes" role="group" aria-label="Sending method">
+        <button type="button" data-mode="user" class="on" aria-pressed="true"><b><i class="fas fa-user-lock"></i>To a GhostChat user</b><small>Locked so only that person's account can open it. No key or password to share.</small></button>
+        <button type="button" data-mode="key" aria-pressed="false"><b><i class="fas fa-key"></i>With a key</b><small>For anyone, even without GhostChat. You pass the key separately.</small></button>
+      </div>
     </div>
-    <button id="encryptBtn" class="btn btn-primary btn-lg">
+
+    <div id="encUserPane" class="gc-pane">
+      <div class="input-section" id="recipientPick">
+        <label for="recipientSearch">Send to</label>
+        <input type="search" id="recipientSearch" autocomplete="off" placeholder="Search by username…" aria-controls="recipientResults" />
+        <div id="recipientResults" class="gc-results" role="listbox" aria-label="People"></div>
+      </div>
+      <div id="recipientChosen" hidden></div>
+      <div id="recipientHint" class="gc-hint">Only accounts that have opened secure chat once can receive this way.</div>
+    </div>
+
+    <div id="encKeyPane" class="gc-pane" hidden>
+      <div class="gc-radios" role="radiogroup" aria-label="Key choice">
+        <label><input type="radio" name="keyChoice" value="generate" checked /><span><b>Make a strong key for me</b> (recommended)<small>A new random key for every message. Nothing to invent or remember.</small></span></label>
+        <label><input type="radio" name="keyChoice" value="own" /><span><b>I'll type my own key</b><small>Use at least 8 characters. A short key can be guessed.</small></span></label>
+      </div>
+      <div id="genKeyBox" class="gc-key">
+        <div class="gc-hint" style="margin:0 0 6px;">Your key for this message</div>
+        <code id="genKeyValue" aria-live="polite"></code>
+        <div class="row">
+          <button type="button" class="btn btn-ghost btn-sm" id="genKeyCopy"><i class="fas fa-copy"></i> Copy key</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="genKeyNew"><i class="fas fa-rotate"></i> New key</button>
+        </div>
+      </div>
+      <div class="input-section" id="ownKeyRow" hidden style="margin-top:12px;">
+        <label for="encryptPassword">Your key (shared secret)</label>
+        <input type="password" id="encryptPassword" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="Key used to encrypt and decrypt" />
+      </div>
+      <div class="gc-hint">Send the key by a <b>different route</b> from the message (a call, SMS or another app). Anyone who has both can read it.</div>
+    </div>
+
+    <button id="encryptBtn" class="btn btn-primary btn-lg" style="margin-top:18px;">
       <i class="fas fa-ghost"></i> Encrypt &amp; Obfuscate
     </button>
     <div id="encryptResult"></div>
@@ -71,14 +109,15 @@
 <template id="decrypt-page">
   <div class="cyber-panel">
     <h2><i class="fas fa-lock-open"></i> Decrypt Message</h2>
-    <p class="section-desc text-muted" style="margin-bottom:24px;">Paste the emoji-encoded message you received. Provide the session password to reveal it.</p>
+    <p class="section-desc text-muted" style="margin-bottom:24px;">Paste the emoji message you received. If it was locked to your account it opens by itself. If it needs a key, type the key you were given.</p>
     <div class="input-section">
       <label for="ciphertext">Emoji-Encoded Message</label>
       <textarea id="ciphertext" rows="5" placeholder="Paste encrypted emoji message here… 🌙🎯🔮💫🎭"></textarea>
+      <div id="decryptDetect" class="gc-detect" role="status" aria-live="polite"></div>
     </div>
-    <div class="input-section">
-      <label for="decryptPassword">Session Password</label>
-      <input type="password" id="decryptPassword" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="Same password used to encrypt" />
+    <div class="input-section" id="decryptPwRow">
+      <label for="decryptPassword">Key / Password</label>
+      <input type="password" id="decryptPassword" autocomplete="new-password" data-lpignore="true" data-1p-ignore placeholder="The key you were given" />
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
       <button id="decryptBtn" class="btn btn-primary btn-lg">
@@ -320,6 +359,7 @@
 <script src="js/network-status.js"></script>
 <script src="js/api.js"></script>
 <script src="js/voice.js"></script>
+<script src="js/emoji-picker.js"></script>
 <script src="js/encrypt.js"></script>
 <script src="js/decrypt.js"></script>
 <script src="js/history.js"></script>

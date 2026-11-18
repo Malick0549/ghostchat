@@ -12,22 +12,46 @@
 
 window.EncryptionModule = {
     _lastPacket: null,
+    _mode: 'user',            // 'user' = locked to a GhostChat account, 'key' = key / password
+    _recipient: null,         // { id, name }
+    _keyChoice: 'generate',   // 'generate' | 'own'
+    _genKey: '',
+    _searchTimer: null,
+    _searchSeq: 0,
 
     init() {
+        this._mode = 'user'; this._recipient = null; this._keyChoice = 'generate';
         this._wire();
+        this._newKey();
+        this._paint();
     },
 
+    _$(id) { return document.getElementById(id); },
+
     _wire() {
-        const btn = document.getElementById('encryptBtn');
+        const btn = this._$('encryptBtn');
         if (btn) {
             const fresh = btn.cloneNode(true);
             btn.parentNode.replaceChild(fresh, btn);
             fresh.addEventListener('click', () => this._encrypt());
         }
 
-        const plain = document.getElementById('plaintext');
+        const plain = this._$('plaintext');
         if (plain) plain.addEventListener('input', () => this._clearResult());
 
+        document.querySelectorAll('#encModes button').forEach(b =>
+            b.addEventListener('click', () => { this._mode = b.dataset.mode; this._clearResult(); this._paint(); }));
+        document.querySelectorAll('input[name="keyChoice"]').forEach(r =>
+            r.addEventListener('change', () => { this._keyChoice = r.value; this._paint(); }));
+        this._$('genKeyNew')?.addEventListener('click', () => this._newKey());
+        this._$('genKeyCopy')?.addEventListener('click', () => this._copyText(this._genKey, 'Key copied'));
+
+        const q = this._$('recipientSearch');
+        if (q) {
+            q.addEventListener('input', () => { clearTimeout(this._searchTimer); this._searchTimer = setTimeout(() => this._search(q.value), 250); });
+            q.addEventListener('focus', () => { if (!q.value.trim()) this._search(''); });
+        }
+        if (!this._docWired) { this._docWired = true; document.addEventListener('click', e => { const r = this._$('recipientResults'); if (r && !e.target.closest('#recipientPick')) r.innerHTML = ''; }); }
         [
             ['exportWhatsApp', () => this._exportWhatsApp()],
             ['exportTelegram', () => this._exportTelegram()],
@@ -45,28 +69,118 @@ window.EncryptionModule = {
         });
     },
 
-    async _encrypt() {
-        const plaintext = (document.getElementById('plaintext')?.value || '').trim();
-        const password  = (document.getElementById('encryptPassword')?.value || '').trim();
 
+    // ── choose-how-to-send screen ───────────────────────────────────────────
+    _paint() {
+        document.querySelectorAll('#encModes button').forEach(b => {
+            const on = b.dataset.mode === this._mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        const userMode = this._mode === 'user';
+        if (this._$('encUserPane')) this._$('encUserPane').hidden = !userMode;
+        if (this._$('encKeyPane')) this._$('encKeyPane').hidden = userMode;
+        const gen = this._keyChoice === 'generate';
+        if (this._$('genKeyBox')) this._$('genKeyBox').hidden = !gen;
+        if (this._$('ownKeyRow')) this._$('ownKeyRow').hidden = gen;
+        const chosen = !!this._recipient;
+        if (this._$('recipientPick')) this._$('recipientPick').hidden = chosen;
+        const chip = this._$('recipientChosen');
+        if (chip) {
+            chip.hidden = !chosen;
+            chip.innerHTML = chosen ? `<div class="gc-chip">${this._avatar(this._recipient)}<div><b>${this._esc(this._recipient.name)}</b><small style="display:block;color:var(--t3)">Only this account can open the message</small></div><button type="button" class="x" id="recipientClear" aria-label="Choose someone else">×</button></div>` : '';
+            this._$('recipientClear')?.addEventListener('click', () => { this._recipient = null; this._hint('Only accounts that have opened secure chat once can receive this way.'); this._paint(); this._$('recipientSearch')?.focus(); });
+        }
+    },
+    _hint(text, kind) { const h = this._$('recipientHint'); if (h) { h.textContent = text; h.className = 'gc-hint' + (kind ? ' ' + kind : ''); } },
+    _avatar(u) {
+        const ch = this._esc((u.name || '?').trim().charAt(0).toUpperCase());
+        return `<span class="gc-av">${ch}</span>`;
+    },
+    _newKey() {
+        try { this._genKey = window.GhostE2E.generateKey(); } catch (_) { this._genKey = ''; }
+        const el = this._$('genKeyValue'); if (el) el.textContent = this._genKey;
+    },
+    _copyText(t, msg) {
+        if (!t) return;
+        if (window.secureCopy) window.secureCopy(t);
+        else navigator.clipboard?.writeText(t).then(() => { if (window.UI) UI.showToast(msg || 'Copied!', 'success'); });
+    },
+
+    async _search(raw) {
+        const box = this._$('recipientResults'); if (!box) return;
+        const q = String(raw || '').trim(), seq = ++this._searchSeq;
+        let people = [];
+        try {
+            if (q) {
+                const d = await window.GhostChatAPI._get('/api/contacts/search?q=' + encodeURIComponent(q));
+                people = (d.users || []).map(u => ({ id: u.id, name: u.username, sub: u.is_contact ? 'In your contacts' : '' }));
+            } else {
+                const d = await window.GhostChatAPI._get('/api/contacts');
+                people = (d.contacts || []).map(c => ({ id: c.contact_id, name: c.display_name || c.username, sub: 'In your contacts' }));
+            }
+        } catch (e) { if (seq === this._searchSeq) box.innerHTML = ''; return; }
+        if (seq !== this._searchSeq) return;       // a newer search is running
+        box.innerHTML = people.length ? '' : `<div class="gc-hint" style="padding:12px;">${q ? 'No one found. Check the spelling.' : 'No contacts yet. Type a username to search.'}</div>`;
+        people.slice(0, 20).forEach(p => {
+            const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'option');
+            b.innerHTML = `${this._avatar(p)}<span><b>${this._esc(p.name)}</b>${p.sub ? `<small>${this._esc(p.sub)}</small>` : ''}</span>`;
+            b.addEventListener('click', () => this._choose(p));
+            box.appendChild(b);
+        });
+    },
+    async _choose(p) {
+        this._recipient = { id: p.id, name: p.name };
+        const box = this._$('recipientResults'); if (box) box.innerHTML = '';
+        const q = this._$('recipientSearch'); if (q) q.value = '';
+        this._paint();
+        this._hint('Checking that ' + p.name + ' can receive…');
+        const ok = await window.GhostE2E.canSealTo(p.id);
+        if (!this._recipient || this._recipient.id !== p.id) return;
+        this._hint(ok ? p.name + ' is ready to receive.' : p.name + ' has not set up secure messages yet. Ask them to open GhostChat chat once, or use "With a key".', ok ? 'ok' : 'bad');
+        this._recipient.ready = ok;
+    },
+    async _myId() {
+        try { const u = JSON.parse(localStorage.getItem('ghostchat_user') || 'null'); if (u && u.id) return String(u.id); } catch (_) {}
+        const d = await window.GhostChatAPI._get('/api/auth/me'); return String(d.user.id);
+    },
+
+    async _encrypt() {
+        const plaintext = (this._$('plaintext')?.value || '').trim();
         if (!plaintext) { this._showError('Please enter a message to encrypt'); return; }
-        if (!password)  { this._showError('Please enter an encryption password'); return; }
-        if (password.length < 8) { this._showError('Use a password of at least 8 characters. A short password can be guessed.'); return; }
+
+        let password = '', keyShown = '';
+        if (this._mode === 'user') {
+            if (!this._recipient) { this._showError('Search for the person you are sending to, and pick them from the list.'); return; }
+        } else if (this._keyChoice === 'generate') {
+            password = keyShown = this._genKey;
+            if (!password) { this._showError('Could not make a key in this browser. Choose "I\'ll type my own key".'); return; }
+        } else {
+            password = (this._$('encryptPassword')?.value || '').trim();
+            if (!password)  { this._showError('Please enter an encryption key'); return; }
+            if (password.length < 8) { this._showError('Use a key of at least 8 characters. A short key can be guessed.'); return; }
+        }
 
         this._setLoading(true);
 
         try {
             let result;
             try {
-                result = { success: true, algorithm: 'AES-256-GCM', emoji_message: await window.GhostE2E.pwEncrypt(plaintext, password) };
+                if (this._mode === 'user') {
+                    window.GhostE2E.bindUser(await this._myId());
+                    result = { success: true, algorithm: 'AES-256-GCM · locked to ' + this._recipient.name, emoji_message: await window.GhostE2E.sealTo(this._recipient.id, plaintext), forUser: this._recipient.name };
+                } else {
+                    result = { success: true, algorithm: 'AES-256-GCM', emoji_message: await window.GhostE2E.pwEncrypt(plaintext, password), key: keyShown };
+                }
             } catch (e) {
-                result = { success: false, error: e.message || 'Encryption failed' };
+                result = { success: false, error: e.message === 'not_ready'
+                    ? `${this._recipient?.name || 'That person'} has not set up secure messages yet. Ask them to open GhostChat chat once, or choose "With a key".`
+                    : (e.message || 'Encryption failed') };
             }
 
             if (result.success) {
                 this._lastPacket = result.emoji_message;
                 this._showResult(result);
                 this._showExport(true);
+                if (result.key) this._newKey();       // the next message gets a different key
                 if (window.UI) UI.showToast('Message encrypted successfully!', 'success');
                 if (window.UI?.playSound) window.UI.playSound('success');
                 window.dispatchEvent(new CustomEvent('ghostchat:encrypt', { detail: { length: plaintext.length } }));
@@ -96,19 +210,26 @@ window.EncryptionModule = {
     },
 
     _showResult(result) {
-        const div = document.getElementById('encryptResult');
+        const div = this._$('encryptResult');
         if (!div) return;
+        const note = result.key
+            ? `<div class="gc-keyresult"><b>Send this key separately</b> (a call, SMS or another app, not the same chat as the message):
+                 <code style="display:block;margin:8px 0;font-size:1.1rem;letter-spacing:.08em;word-break:break-all;user-select:all;">${this._esc(result.key)}</code>
+                 <button type="button" class="btn btn-ghost btn-sm" id="resKeyCopy"><i class="fas fa-copy"></i> Copy key</button></div>`
+            : result.forUser
+                ? `<p style="font-size:.8rem;color:var(--green);margin-top:10px;"><i class="fas fa-user-lock"></i> Locked for <b>${this._esc(result.forUser)}</b>. Only their account can open it, and no key needs to be shared. You will not be able to open this packet yourself (it stays in your History).</p>`
+                : '';
         div.innerHTML = `
             <div style="margin-top:20px;padding:16px;background:rgba(0,255,136,0.07);
                         border:1px solid rgba(0,255,136,0.2);border-radius:var(--r2);">
                 <p style="font-family:var(--mono);font-size:.75rem;color:var(--green);margin-bottom:12px;">
-                    ✓ ENCRYPTION COMPLETE — ${result.algorithm || 'AES-256-GCM'} + EMOJI ENCODING · DONE IN YOUR BROWSER
+                    ✓ ENCRYPTION COMPLETE — ${this._esc(result.algorithm || 'AES-256-GCM')} + EMOJI ENCODING · DONE IN YOUR BROWSER
                 </p>
                 <label style="font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;
                               text-transform:uppercase;color:var(--t2);display:block;margin-bottom:8px;">
                     Encrypted Packet (copy the entire string below)
                 </label>
-                <div style="background:rgba(0,0,0,.35);border:1px solid var(--border);
+                <div id="encPacketText" style="background:rgba(0,0,0,.35);border:1px solid var(--border);
                             border-radius:var(--r2);padding:14px;word-break:break-all;
                             font-family:var(--mono);font-size:.75rem;line-height:1.7;
                             color:var(--t1);max-height:180px;overflow-y:auto;">
@@ -119,8 +240,10 @@ window.EncryptionModule = {
                     Copy the <strong>entire</strong> string above (every emoji, nothing missed)
                     and paste it into the Decrypt panel.
                 </p>
+                ${note}
             </div>
         `;
+        this._$('resKeyCopy')?.addEventListener('click', () => this._copyText(result.key, 'Key copied'));
     },
 
     _showExport(show) {
